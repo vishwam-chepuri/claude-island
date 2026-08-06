@@ -21,7 +21,9 @@ final class IslandViewModel {
     private(set) var snapshot = HUDSnapshot()
     private(set) var geometry: NotchGeometry?
     var isHovered = false
-    var isPinnedOpen = false
+    /// Set by clicking the island. Keeps the card open after the cursor leaves,
+    /// so it can actually be read; hover alone collapses the moment you move.
+    private(set) var isPinnedOpen = false
     /// Set false by the menu bar extra; the HUD hides and all timers stop.
     var isEnabled = true
 
@@ -91,13 +93,24 @@ final class IslandViewModel {
         geometry = g
     }
 
+    func togglePinned() {
+        isPinnedOpen.toggle()
+    }
+
+    func unpin() {
+        isPinnedOpen = false
+    }
+
     func apply(_ snapshot: HUDSnapshot) {
         self.snapshot = snapshot
+        // Nothing left to pin open once the last session goes away.
+        if snapshot.primary == nil { isPinnedOpen = false }
         syncTicker()
     }
 
     func setEnabled(_ enabled: Bool) {
         isEnabled = enabled
+        if !enabled { isPinnedOpen = false }
         syncTicker()
     }
 

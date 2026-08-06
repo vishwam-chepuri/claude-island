@@ -139,7 +139,18 @@ animations moved.
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
 | Tests | 90 passing |
-| Self-test | 18 checks passing |
+| Self-test | 26 checks passing |
+
+## Interaction
+
+**Hover** the island to preview the expanded card. **Click** it to pin the card
+open so it can be read without holding the cursor still; click it again, or
+click anywhere outside, to dismiss. The pin clears itself when the last session
+ends.
+
+When no session is active the island is dormant and deliberately unreachable —
+the mouse monitor is torn down entirely, which is what keeps idle CPU at
+0.000% rather than merely low. Use the menu bar extra in that state.
 
 ## Verification
 

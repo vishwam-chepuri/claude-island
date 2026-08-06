@@ -56,6 +56,13 @@ struct IslandView: View {
         }
         .frame(width: model.shapeSize.width, height: model.shapeSize.height)
         .clipShape(RoundedRectangle(cornerRadius: model.cornerRadius, style: .continuous))
+        // contentShape limits the tap target to the drawn shape; without it the
+        // gesture would claim the surrounding transparent frame too.
+        .contentShape(RoundedRectangle(cornerRadius: model.cornerRadius, style: .continuous))
+        .onTapGesture {
+            guard model.mode != .dormant else { return }
+            model.togglePinned()
+        }
     }
 
     private var contentPadding: CGFloat {

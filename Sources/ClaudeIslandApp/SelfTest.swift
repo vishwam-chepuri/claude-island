@@ -253,6 +253,11 @@ enum SelfTest {
                 passed: panel.ignoresMouseEvents && !monitor.isRunning,
                 detail: "running=\(monitor.isRunning)"))
 
+        // --- Pinning ---
+
+        model.apply(activeSnapshot())
+        await expandCheck(&checks, model: model, panel: panel)
+
         // --- Idle ---
 
         model.apply(HUDSnapshot())
@@ -294,6 +299,67 @@ enum SelfTest {
         }
         print("\(failures) of \(checks.count) checks FAILED (\(passed) passed, \(skipped) skipped)")
         return 1
+    }
+
+    /// Click-to-pin, checked at the model level. Delivering a synthetic click
+    /// needs Accessibility permission, so the gesture itself is confirmed by
+    /// hand; this pins down everything the gesture drives.
+    private static func expandCheck(
+        _ checks: inout [Check], model: IslandViewModel, panel: IslandPanel
+    ) async {
+        model.isHovered = false
+        checks.append(
+            Check(
+                name: "unhovered and unpinned shows the compact pill",
+                passed: model.mode == .compact && !model.isPinnedOpen,
+                detail: "mode=\(model.mode) pinned=\(model.isPinnedOpen)"))
+
+        let compactRect = model.interactiveScreenRect
+        model.togglePinned()
+        checks.append(
+            Check(
+                name: "clicking pins the card open",
+                passed: model.mode == .expanded && model.isPinnedOpen,
+                detail: "mode=\(model.mode) pinned=\(model.isPinnedOpen)"))
+        checks.append(
+            Check(
+                name: "the pinned card stays open with the cursor away",
+                passed: !model.isHovered && model.mode == .expanded,
+                detail: "hovered=\(model.isHovered) mode=\(model.mode)"))
+        checks.append(
+            Check(
+                name: "the hit region grows with the pinned card",
+                passed: model.interactiveScreenRect.height > compactRect.height,
+                detail: "pinned=\(model.interactiveScreenRect) compact=\(compactRect)"))
+
+        model.togglePinned()
+        checks.append(
+            Check(
+                name: "clicking again unpins",
+                passed: model.mode == .compact && !model.isPinnedOpen,
+                detail: "mode=\(model.mode)"))
+
+        model.togglePinned()
+        model.unpin()
+        checks.append(
+            Check(
+                name: "a click outside dismisses the pinned card",
+                passed: !model.isPinnedOpen && model.mode == .compact,
+                detail: "mode=\(model.mode)"))
+
+        model.togglePinned()
+        model.apply(HUDSnapshot())
+        checks.append(
+            Check(
+                name: "the last session ending clears the pin",
+                passed: !model.isPinnedOpen && model.mode == .dormant,
+                detail: "pinned=\(model.isPinnedOpen) mode=\(model.mode)"))
+
+        checks.append(
+            Check(
+                name: "the panel still refuses key after the tap gesture exists",
+                passed: !panel.canBecomeKey && !NSApp.isActive,
+                detail: "canBecomeKey=\(panel.canBecomeKey) active=\(NSApp.isActive)"))
     }
 
     private static func activeSnapshot() -> HUDSnapshot {

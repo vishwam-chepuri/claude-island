@@ -62,6 +62,11 @@ final class AppController: NSObject, NSApplicationDelegate {
             // immediately or the cursor can end up outside its own target.
             self.syncInteractiveRect()
         }
+        hoverMonitor.onClickOutside = { [weak self] in
+            guard let self, self.model.isPinnedOpen else { return }
+            self.model.unpin()
+            self.syncInteractiveRect()
+        }
 
         // orderFrontRegardless, never makeKeyAndOrderFront: the latter would
         // defeat the entire point of a non-activating panel.
@@ -71,10 +76,12 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func syncInteractiveRect() {
-        guard model.isEnabled, !model.snapshot.isDormant || model.isPinnedOpen else {
+        guard model.isEnabled, !model.snapshot.isDormant else {
             hoverMonitor.setInteractiveRect(.zero)
             return
         }
+        // While pinned the region is the expanded card, so a second click can
+        // land on it to unpin.
         hoverMonitor.setInteractiveRect(model.interactiveScreenRect)
     }
 

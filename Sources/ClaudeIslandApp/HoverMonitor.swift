@@ -25,6 +25,9 @@ final class HoverMonitor {
 
     /// Called when the cursor enters or leaves the island shape.
     var onHoverChange: ((Bool) -> Void)?
+    /// Called when a click lands anywhere outside the island shape, so a pinned
+    /// card can dismiss itself the way a popover would.
+    var onClickOutside: (() -> Void)?
 
     init(panel: NSPanel) {
         self.panel = panel
@@ -34,14 +37,16 @@ final class HoverMonitor {
 
     func start() {
         guard globalMonitor == nil else { return }
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) {
-            [weak self] event in
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [
+            .mouseMoved, .leftMouseDown, .rightMouseDown,
+        ]) { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) }
         }
         // The global monitor is silent while our own app is active, which
         // happens whenever the menu bar extra's menu is open.
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) {
-            [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [
+            .mouseMoved, .leftMouseDown, .rightMouseDown,
+        ]) { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) }
             return event
         }
@@ -67,7 +72,18 @@ final class HoverMonitor {
     // MARK: - Private
 
     private func handle(_ event: NSEvent) {
-        evaluate(at: NSEvent.mouseLocation)
+        let location = NSEvent.mouseLocation
+        evaluate(at: location)
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown:
+            // A global mouse-down is by definition in another app; a local one
+            // outside the shape is a click on our own transparent area.
+            if interactiveRect.isEmpty || !interactiveRect.contains(location) {
+                onClickOutside?()
+            }
+        default:
+            break
+        }
     }
 
     private func evaluate(at location: CGPoint) {
