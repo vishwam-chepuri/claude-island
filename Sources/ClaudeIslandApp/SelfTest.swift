@@ -178,18 +178,32 @@ enum SelfTest {
             panel.ignoresMouseEvents = false
             await tick(0.35)
 
-            let hitOverShape = windowNumber(at: overShape)
-            let hitOverTransparent = windowNumber(at: overTransparent)
+            let ourLevel = panel.level.rawValue
+            if let conflict = occluder(
+                at: overShape, ourLevel: ourLevel, ourWindow: panel.windowNumber)
+            {
+                checks.append(
+                    Check(name: "with events enabled, the shape receives clicks", skipped: conflict)
+                )
+            } else {
+                checks.append(
+                    Check(
+                        name: "with events enabled, the shape receives clicks",
+                        passed: windowNumber(at: overShape) == panel.windowNumber,
+                        detail: "hit=\(windowNumber(at: overShape)) ours=\(panel.windowNumber)"))
+            }
+
+            // macOS hit-tests a window by its frame rect, not per-pixel alpha:
+            // measured directly, a fully transparent region of a non-opaque
+            // panel still claims the click. That is exactly why HoverMonitor
+            // has to gate ignoresMouseEvents — without it this panel would
+            // swallow every click in its 420x260 frame.
             checks.append(
                 Check(
-                    name: "with events enabled, the shape receives clicks",
-                    passed: hitOverShape == panel.windowNumber,
-                    detail: "hit=\(hitOverShape) ours=\(panel.windowNumber)"))
-            checks.append(
-                Check(
-                    name: "transparent panel area passes clicks through per-pixel",
-                    passed: hitOverTransparent != panel.windowNumber,
-                    detail: "hit=\(hitOverTransparent) ours=\(panel.windowNumber)"))
+                    name: "frame-rect hit testing confirmed (so the monitor is required)",
+                    passed: windowNumber(at: overTransparent) == panel.windowNumber,
+                    detail:
+                        "hit=\(windowNumber(at: overTransparent)) ours=\(panel.windowNumber)"))
         }
 
         panel.ignoresMouseEvents = true
@@ -209,6 +223,7 @@ enum SelfTest {
         // event path from a headless run is not possible; this exercises the
         // same evaluation the monitor performs on each move.
         monitor.setInteractiveRectForTesting(shape, cursorAt: overShape)
+        await tick(0.3)
         checks.append(
             Check(
                 name: "cursor inside the shape enables mouse events",
@@ -216,11 +231,20 @@ enum SelfTest {
                 detail: "ignoresMouseEvents=\(panel.ignoresMouseEvents) shape=\(shape)"))
 
         monitor.setInteractiveRectForTesting(shape, cursorAt: overTransparent)
+        // ignoresMouseEvents reaches the window server on the next runloop
+        // turn, so the flag and the server's view of it disagree until we pump.
+        await tick(0.3)
         checks.append(
             Check(
                 name: "cursor outside the shape restores click-through",
                 passed: panel.ignoresMouseEvents,
                 detail: "ignoresMouseEvents=\(panel.ignoresMouseEvents)"))
+        checks.append(
+            Check(
+                name: "with the monitor gating, the transparent area passes through",
+                passed: windowNumber(at: overTransparent) != panel.windowNumber,
+                detail:
+                    "hit=\(windowNumber(at: overTransparent)) ours=\(panel.windowNumber)"))
 
         monitor.stop()
         checks.append(
@@ -264,7 +288,7 @@ enum SelfTest {
         if failures == 0 {
             print("\(passed) checks passed\(skipped > 0 ? ", \(skipped) skipped" : "")")
             if skipped > 0 {
-                print("Re-run with the screen unlocked to evaluate the skipped checks.")
+                print("Skipped checks could not be evaluated here — see the reason on each.")
             }
             return skipped > 0 ? 2 : 0
         }
@@ -284,6 +308,27 @@ enum SelfTest {
     /// ground truth for click-through, and needs no special permission.
     private static func windowNumber(at point: CGPoint) -> Int {
         NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+    }
+
+    /// Describes any window sitting above ours at `point`.
+    ///
+    /// Other notch HUDs exist, and some sit at window levels far above
+    /// `.statusBar + 1`. When one covers the probe point the click-through
+    /// measurement is about that app, not about us, so it is reported as a
+    /// conflict rather than counted as a failure.
+    private static func occluder(at point: CGPoint, ourLevel: Int, ourWindow: Int) -> String? {
+        let hit = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+        guard hit != 0, hit != ourWindow,
+            let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
+                as? [[String: Any]]
+        else { return nil }
+        for window in list where (window[kCGWindowNumber as String] as? Int) == hit {
+            let owner = (window[kCGWindowOwnerName as String] as? String) ?? "unknown"
+            let layer = (window[kCGWindowLayer as String] as? Int) ?? 0
+            guard layer > ourLevel else { return nil }
+            return "\(owner) is above us at layer \(layer) (we are \(ourLevel))"
+        }
+        return nil
     }
 
     private static func tick(_ seconds: TimeInterval) async {
