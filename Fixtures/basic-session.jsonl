@@ -1,0 +1,10 @@
+{"session_id":"aaaaaaaa-1111-2222-3333-444444444444","hook_event_name":"SessionStart","cwd":"/Users/dev/code/widgets","transcript_path":"/Users/dev/.claude/projects/-Users-dev-code-widgets/aaaaaaaa-1111-2222-3333-444444444444.jsonl","source":"startup","_delayMs":0}
+{"session_id":"aaaaaaaa-1111-2222-3333-444444444444","hook_event_name":"UserPromptSubmit","cwd":"/Users/dev/code/widgets","prompt":"add a retry to the fetcher","_delayMs":1500}
+{"session_id":"aaaaaaaa-1111-2222-3333-444444444444","hook_event_name":"PreToolUse","cwd":"/Users/dev/code/widgets","tool_name":"Read","tool_input":{"file_path":"/Users/dev/code/widgets/Sources/Fetcher.swift"},"_delayMs":2000}
+{"session_id":"aaaaaaaa-1111-2222-3333-444444444444","hook_event_name":"PostToolUse","cwd":"/Users/dev/code/widgets","tool_name":"Read","tool_input":{"file_path":"/Users/dev/code/widgets/Sources/Fetcher.swift"},"_delayMs":320}
+{"session_id":"aaaaaaaa-1111-2222-3333-444444444444","hook_event_name":"PreToolUse","cwd":"/Users/dev/code/widgets","tool_name":"Edit","tool_input":{"file_path":"/Users/dev/code/widgets/Sources/Fetcher.swift","old_string":"a","new_string":"b"},"_delayMs":900}
+{"session_id":"aaaaaaaa-1111-2222-3333-444444444444","hook_event_name":"PostToolUse","cwd":"/Users/dev/code/widgets","tool_name":"Edit","_delayMs":140}
+{"session_id":"aaaaaaaa-1111-2222-3333-444444444444","hook_event_name":"PreToolUse","cwd":"/Users/dev/code/widgets","tool_name":"Bash","tool_input":{"command":"swift test --filter FetcherTests"},"_delayMs":600}
+{"session_id":"aaaaaaaa-1111-2222-3333-444444444444","hook_event_name":"PostToolUse","cwd":"/Users/dev/code/widgets","tool_name":"Bash","_delayMs":8400}
+{"session_id":"aaaaaaaa-1111-2222-3333-444444444444","hook_event_name":"Stop","cwd":"/Users/dev/code/widgets","_delayMs":1200}
+{"session_id":"aaaaaaaa-1111-2222-3333-444444444444","hook_event_name":"SessionEnd","cwd":"/Users/dev/code/widgets","reason":"exit","_delayMs":4000}

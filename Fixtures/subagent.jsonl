@@ -1,0 +1,8 @@
+{"session_id":"cccccccc-1111-2222-3333-444444444444","hook_event_name":"SessionStart","cwd":"/Users/dev/code/mono","source":"startup","_delayMs":0}
+{"session_id":"cccccccc-1111-2222-3333-444444444444","hook_event_name":"UserPromptSubmit","cwd":"/Users/dev/code/mono","_delayMs":500}
+{"session_id":"cccccccc-1111-2222-3333-444444444444","hook_event_name":"PreToolUse","cwd":"/Users/dev/code/mono","tool_name":"Task","tool_input":{"description":"audit auth module","subagent_type":"Explore"},"_delayMs":1500}
+{"session_id":"cccccccc-1111-2222-3333-444444444444","hook_event_name":"PreToolUse","cwd":"/Users/dev/code/mono","tool_name":"Grep","tool_input":{"pattern":"authenticate\\(","path":"/Users/dev/code/mono/Sources"},"_delayMs":900}
+{"session_id":"cccccccc-1111-2222-3333-444444444444","hook_event_name":"PostToolUse","cwd":"/Users/dev/code/mono","tool_name":"Grep","_delayMs":400}
+{"session_id":"cccccccc-1111-2222-3333-444444444444","hook_event_name":"SubagentStop","cwd":"/Users/dev/code/mono","_delayMs":2000}
+{"session_id":"cccccccc-1111-2222-3333-444444444444","hook_event_name":"PostToolUse","cwd":"/Users/dev/code/mono","tool_name":"Task","_delayMs":100}
+{"session_id":"cccccccc-1111-2222-3333-444444444444","hook_event_name":"Stop","cwd":"/Users/dev/code/mono","_delayMs":1500}

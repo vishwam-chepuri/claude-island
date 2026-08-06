@@ -1,0 +1,8 @@
+{"session_id":"bbbbbbbb-1111-2222-3333-444444444444","hook_event_name":"SessionStart","cwd":"/Users/dev/code/api","source":"startup","_delayMs":0}
+{"session_id":"bbbbbbbb-1111-2222-3333-444444444444","hook_event_name":"UserPromptSubmit","cwd":"/Users/dev/code/api","_delayMs":800}
+{"session_id":"bbbbbbbb-1111-2222-3333-444444444444","hook_event_name":"PermissionRequest","cwd":"/Users/dev/code/api","tool_name":"Bash","tool_input":{"command":"rm -rf ./build && make release"},"_delayMs":2200}
+{"session_id":"bbbbbbbb-1111-2222-3333-444444444444","hook_event_name":"PreToolUse","cwd":"/Users/dev/code/api","tool_name":"Bash","tool_input":{"command":"rm -rf ./build && make release"},"_delayMs":6100}
+{"session_id":"bbbbbbbb-1111-2222-3333-444444444444","hook_event_name":"PostToolUseFailure","cwd":"/Users/dev/code/api","tool_name":"Bash","_delayMs":3300}
+{"session_id":"bbbbbbbb-1111-2222-3333-444444444444","hook_event_name":"Notification","cwd":"/Users/dev/code/api","message":"Claude is waiting for your input","_delayMs":9000}
+{"session_id":"bbbbbbbb-1111-2222-3333-444444444444","hook_event_name":"PreCompact","cwd":"/Users/dev/code/api","trigger":"auto","_delayMs":2000}
+{"session_id":"bbbbbbbb-1111-2222-3333-444444444444","hook_event_name":"Stop","cwd":"/Users/dev/code/api","_delayMs":5000}

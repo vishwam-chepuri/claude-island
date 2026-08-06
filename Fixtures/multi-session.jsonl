@@ -1,0 +1,8 @@
+{"session_id":"11111111-aaaa-bbbb-cccc-dddddddddddd","hook_event_name":"SessionStart","cwd":"/Users/dev/worktrees/feature-a","source":"startup","_delayMs":0}
+{"session_id":"22222222-aaaa-bbbb-cccc-dddddddddddd","hook_event_name":"SessionStart","cwd":"/Users/dev/worktrees/feature-b","source":"startup","_delayMs":100}
+{"session_id":"22222222-aaaa-bbbb-cccc-dddddddddddd","hook_event_name":"PermissionRequest","cwd":"/Users/dev/worktrees/feature-b","tool_name":"Write","tool_input":{"file_path":"/Users/dev/worktrees/feature-b/Sources/New.swift"},"_delayMs":500}
+{"session_id":"11111111-aaaa-bbbb-cccc-dddddddddddd","hook_event_name":"PreToolUse","cwd":"/Users/dev/worktrees/feature-a","tool_name":"Read","tool_input":{"file_path":"/Users/dev/worktrees/feature-a/README.md"},"_delayMs":300}
+{"session_id":"11111111-aaaa-bbbb-cccc-dddddddddddd","hook_event_name":"PostToolUse","cwd":"/Users/dev/worktrees/feature-a","tool_name":"Read","_delayMs":200}
+{"session_id":"22222222-aaaa-bbbb-cccc-dddddddddddd","hook_event_name":"PostToolUse","cwd":"/Users/dev/worktrees/feature-b","tool_name":"Write","_delayMs":4000}
+{"session_id":"11111111-aaaa-bbbb-cccc-dddddddddddd","hook_event_name":"Stop","cwd":"/Users/dev/worktrees/feature-a","_delayMs":1000}
+{"session_id":"22222222-aaaa-bbbb-cccc-dddddddddddd","hook_event_name":"Stop","cwd":"/Users/dev/worktrees/feature-b","_delayMs":800}

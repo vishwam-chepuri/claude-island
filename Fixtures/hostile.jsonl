@@ -1,0 +1,9 @@
+{"session_id":"dddddddd-1111-2222-3333-444444444444","hook_event_name":"SessionStart","cwd":"/Users/dev/code/secrets","_delayMs":0}
+not json at all
+{"no_session_id":true,"hook_event_name":"PreToolUse"}
+{"session_id":"dddddddd-1111-2222-3333-444444444444","hook_event_name":"FutureEventFromNewerClaude","cwd":"/Users/dev/code/secrets","_delayMs":100}
+{"session_id":"dddddddd-1111-2222-3333-444444444444","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl -H 'Authorization: Bearer sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789' https://api.example.com/v1/deploy --token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"},"_delayMs":200}
+{"session_id":"dddddddd-1111-2222-3333-444444444444","hook_event_name":"PostToolUse","tool_name":"Bash","_delayMs":300}
+{"session_id":"dddddddd-1111-2222-3333-444444444444","hook_event_name":"PreToolUse","tool_name":"BrandNewToolNobodyHasSeen","tool_input":{"mystery_field":"x","command":"echo hello"},"_delayMs":150}
+{"session_id":"dddddddd-1111-2222-3333-444444444444","hook_event_name":"Notification","message":"Claude needs your permission to use Bash","_delayMs":400}
+{"session_id":"dddddddd-1111-2222-3333-444444444444","hook_event_name":"Stop","_delayMs":900}
