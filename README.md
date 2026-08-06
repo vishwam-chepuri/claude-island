@@ -64,6 +64,9 @@ all. That is what lets the whole pipeline run headlessly.
 - `SessionStore` — an actor keyed by `session_id`, publishing snapshots.
 - `TranscriptWatcher` — FSEvents (never polling) on each tracked transcript's
   directory; seeks to a stored byte offset and reads only what was appended.
+- `TaskProgress` — replays the session's plan from the transcript. `TodoWrite`
+  writes snapshots, `TaskCreate`/`TaskUpdate` write deltas; both fold into one
+  list so the HUD does not care which a session uses.
 
 **The HUD** — an `NSPanel`, not a `Window`. Borderless, `.nonactivatingPanel`,
 `level = .statusBar + 1`, refusing both key and main. The panel stays at
@@ -106,6 +109,14 @@ reads as a **hit ratio** rather than a millions-scale raw sum. Subagent
 (`isSidechain`) messages count toward spend but not toward context, since they
 run in their own window.
 
+**Branch, effort and plan progress come from the transcript, not hooks.** Hook
+payloads carry none of them; transcript lines carry `gitBranch` and `effort`,
+and tool calls carry the plan. One trap: `tool_use` blocks arrive on assistant
+lines that *share a requestId* with the response's text and thinking blocks, so
+the usage dedupe has to be applied to token counting only — folding task parsing
+into it silently drops any plan update that was not the first line of a
+response.
+
 **Redaction happens at the store boundary**, not in a view, so the redacted
 string is the only string the UI can ever hold. Truncation to 60 characters
 happens *after* redaction — truncating first could cut a secret in half and
@@ -138,15 +149,29 @@ animations moved.
 | Compact, animating | 0.2% |
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
-| Tests | 90 passing |
-| Self-test | 26 checks passing |
+| Tests | 98 passing |
+| Self-test | 35 checks passing |
 
 ## Interaction
 
-**Hover** the island to preview the expanded card. **Click** it to pin the card
-open so it can be read without holding the cursor still; click it again, or
-click anywhere outside, to dismiss. The pin clears itself when the last session
-ends.
+Three levels of detail, each earning its own layout.
+
+**Compact** — glyph, then the session name, with the status word and indicator
+on the right. While a tool is running the name is replaced by that tool's
+target, since in that moment it is the more informative of the two; it returns
+to the name when the tool finishes.
+
+**Peek** (hover) — adds the identity line (branch, model, effort, elapsed),
+context and output tokens, and plan progress with the task currently in flight.
+
+**Expanded** (click) — a switcher. Every active session is listed and
+clickable; selecting one shows its detail below. Click the island again, or
+anywhere outside, to dismiss.
+
+A permission request always takes over the view, even from an explicit
+selection — missing a prompt is worse than losing your place. The selection is
+kept rather than discarded, the takeover is labelled, and the view returns to
+your session once the prompt is answered.
 
 When no session is active the island is dormant and deliberately unreachable —
 the mouse monitor is torn down entirely, which is what keeps idle CPU at
@@ -155,7 +180,7 @@ the mouse monitor is torn down entirely, which is what keeps idle CPU at
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 90 tests
+swift build && swift run ClaudeIslandTests      # 98 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display

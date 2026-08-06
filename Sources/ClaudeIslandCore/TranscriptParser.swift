@@ -4,51 +4,68 @@ public struct TranscriptUpdate: Sendable, Equatable {
     public let sessionID: String
     public var model: String?
     public var tokens: TokenStats
+    public var gitBranch: String?
+    public var effort: String?
+    public var tasks: TaskProgress
 
-    public init(sessionID: String, model: String?, tokens: TokenStats) {
+    public init(
+        sessionID: String, model: String?, tokens: TokenStats,
+        gitBranch: String? = nil, effort: String? = nil, tasks: TaskProgress = TaskProgress()
+    ) {
         self.sessionID = sessionID
         self.model = model
         self.tokens = tokens
+        self.gitBranch = gitBranch
+        self.effort = effort
+        self.tasks = tasks
     }
 }
 
-/// Incremental accumulator over a transcript's assistant lines.
+/// Incremental accumulator over a transcript's lines.
 ///
 /// Holds the running totals for one session so the watcher can feed it only the
 /// newly-appended tail and never re-read the file.
 public struct TranscriptAccumulator: Sendable {
     public private(set) var tokens = TokenStats()
     public private(set) var model: String?
+    public private(set) var gitBranch: String?
+    public private(set) var effort: String?
+    public private(set) var tasks = TaskProgress()
 
     /// Claude Code writes one JSONL line per content block, and every line of a
     /// single API response repeats that response's `usage`. Measured on a real
     /// transcript: 55 assistant lines carrying 26 distinct `requestId`s. Summing
     /// without deduping overcounts output tokens by roughly 2x.
-    private var lastRequestID: String?
-    /// Small ring of recently-counted ids, in case sidechain lines interleave
-    /// and break the contiguity that `lastRequestID` alone assumes.
-    private var recentRequestIDs: [String] = []
+    private var countedRequestIDs: [String] = []
     private static let recentWindow = 64
 
     public init() {}
 
     public mutating func consume(line: Data) {
-        guard let row = try? JSONDecoder().decode(AssistantRow.self, from: line),
-            row.type == "assistant",
-            let message = row.message
-        else { return }
+        guard let row = try? JSONDecoder().decode(TranscriptRow.self, from: line) else { return }
 
-        if let m = message.model, !m.isEmpty, row.isSidechain != true {
-            model = m
+        // Present on nearly every line type, not just assistant ones.
+        if let branch = row.gitBranch, !branch.isEmpty { gitBranch = branch }
+        if let effortValue = row.effort, !effortValue.isEmpty { effort = effortValue }
+
+        guard row.type == "assistant", let message = row.message else { return }
+
+        if let m = message.model, !m.isEmpty, row.isSidechain != true { model = m }
+
+        // Task calls are parsed on EVERY assistant line. They arrive on a line
+        // that shares its requestId with the response's text and thinking
+        // blocks, so folding this into the usage dedupe below would drop them
+        // whenever the tool_use block was not the first line of the response.
+        for block in message.content ?? [] where block.type == "tool_use" {
+            guard let name = block.name else { continue }
+            tasks.apply(toolName: name, input: block.input)
         }
 
         guard let usage = message.usage else { return }
-
         if let rid = row.requestID {
-            if rid == lastRequestID || recentRequestIDs.contains(rid) { return }
-            lastRequestID = rid
-            recentRequestIDs.append(rid)
-            if recentRequestIDs.count > Self.recentWindow { recentRequestIDs.removeFirst() }
+            if countedRequestIDs.contains(rid) { return }
+            countedRequestIDs.append(rid)
+            if countedRequestIDs.count > Self.recentWindow { countedRequestIDs.removeFirst() }
         }
 
         tokens.messageCount += 1
@@ -67,22 +84,44 @@ public struct TranscriptAccumulator: Sendable {
         }
     }
 
-    struct AssistantRow: Decodable {
+    struct TranscriptRow: Decodable {
         let type: String?
         let requestID: String?
         let isSidechain: Bool?
+        let gitBranch: String?
+        let effort: String?
         let message: Message?
 
         enum CodingKeys: String, CodingKey {
             case type
             case requestID = "requestId"
             case isSidechain
+            case gitBranch
+            case effort
             case message
         }
 
         struct Message: Decodable {
             let model: String?
             let usage: Usage?
+            let content: [ContentBlock]?
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                model = try? c.decodeIfPresent(String.self, forKey: .model)
+                usage = try? c.decodeIfPresent(Usage.self, forKey: .usage)
+                // `content` is a string on user lines and an array on assistant
+                // lines; only the array form carries tool calls.
+                content = try? c.decodeIfPresent([ContentBlock].self, forKey: .content)
+            }
+
+            enum CodingKeys: String, CodingKey { case model, usage, content }
+        }
+
+        struct ContentBlock: Decodable {
+            let type: String?
+            let name: String?
+            let input: JSONValue?
         }
 
         struct Usage: Decodable {
@@ -101,8 +140,8 @@ public struct TranscriptAccumulator: Sendable {
     }
 }
 
-/// Splits an appended byte range into complete lines, returning any trailing
-/// partial line so the caller can rewind its offset.
+/// Splits an appended byte range into complete lines, returning the length of
+/// any trailing partial line so the caller can rewind its offset.
 ///
 /// A transcript is appended to while we read it, so the tail routinely ends
 /// mid-line. Parsing that fragment would silently drop a message.

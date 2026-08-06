@@ -158,7 +158,10 @@ public final class TranscriptWatcher: @unchecked Sendable {
             TranscriptUpdate(
                 sessionID: entry.sessionID,
                 model: entry.accumulator.model,
-                tokens: entry.accumulator.tokens))
+                tokens: entry.accumulator.tokens,
+                gitBranch: entry.accumulator.gitBranch,
+                effort: entry.accumulator.effort,
+                tasks: entry.accumulator.tasks))
     }
 }
 

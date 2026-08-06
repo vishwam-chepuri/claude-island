@@ -35,6 +35,9 @@ public struct Session: Sendable, Equatable, Identifiable {
     /// label; falls back to the cwd basename.
     public var sessionName: String?
     public var model: String?
+    public var gitBranch: String?
+    public var effort: String?
+    public var tasks = TaskProgress()
     public var tokens = TokenStats()
     public var startedAt: Date
     public var lastEventAt: Date

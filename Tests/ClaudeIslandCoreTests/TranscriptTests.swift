@@ -183,3 +183,95 @@ private final class UpdateBox: @unchecked Sendable {
         return updates.last
     }
 }
+
+private func toolUseLine(
+    _ name: String, _ input: String, requestID: String = "r1", branch: String? = nil,
+    effort: String? = nil
+) -> Data {
+    var extras = ""
+    if let branch { extras += ",\"gitBranch\":\"\(branch)\"" }
+    if let effort { extras += ",\"effort\":\"\(effort)\"" }
+    return Data(
+        """
+        {"type":"assistant","requestId":"\(requestID)","isSidechain":false\(extras),"message":{"model":"claude-opus-5","content":[{"type":"tool_use","name":"\(name)","input":\(input)}]}}
+        """.utf8)
+}
+
+func registerTaskProgressTests() {
+    suite("Task progress") {
+
+        test("TaskCreate appends with 1-based ids, TaskUpdate mutates by id") {
+            var acc = TranscriptAccumulator()
+            acc.consume(line: toolUseLine("TaskCreate", #"{"subject":"Write parser"}"#))
+            acc.consume(line: toolUseLine("TaskCreate", #"{"subject":"Add tests"}"#))
+            acc.consume(line: toolUseLine("TaskUpdate", #"{"taskId":"1","status":"completed"}"#))
+            acc.consume(line: toolUseLine("TaskUpdate", #"{"taskId":"2","status":"in_progress"}"#))
+
+            await expectEqual(acc.tasks.total, 2)
+            await expectEqual(acc.tasks.completed, 1)
+            await expectEqual(acc.tasks.summary, "1/2")
+            await expectEqual(acc.tasks.current?.subject, "Add tests")
+            await expectEqual(acc.tasks.current?.status, .inProgress)
+        }
+
+        test("Task calls are read even when they share a requestId with other blocks") {
+            // Claude Code splits one response across lines that repeat the
+            // requestId. The usage dedupe must not swallow the tool_use line.
+            var acc = TranscriptAccumulator()
+            acc.consume(line: assistantLine(requestID: "shared", output: 100))
+            acc.consume(line: toolUseLine("TaskCreate", #"{"subject":"Later block"}"#,
+                                          requestID: "shared"))
+            await expectEqual(acc.tasks.total, 1, "tool_use on a deduped line was dropped")
+            await expectEqual(acc.tokens.cumulativeOutput, 100, "usage was double counted")
+        }
+
+        test("TodoWrite replaces the whole list") {
+            var acc = TranscriptAccumulator()
+            acc.consume(line: toolUseLine("TaskCreate", #"{"subject":"stale"}"#))
+            acc.consume(
+                line: toolUseLine(
+                    "TodoWrite",
+                    #"{"todos":[{"content":"A","status":"completed"},{"content":"B","status":"in_progress"}]}"#
+                ))
+            await expectEqual(acc.tasks.total, 2)
+            await expectEqual(acc.tasks.summary, "1/2")
+            await expectEqual(acc.tasks.current?.subject, "B")
+        }
+
+        test("A deleted task leaves the list") {
+            var acc = TranscriptAccumulator()
+            acc.consume(line: toolUseLine("TaskCreate", #"{"subject":"one"}"#))
+            acc.consume(line: toolUseLine("TaskUpdate", #"{"taskId":"1","status":"deleted"}"#))
+            await expectEqual(acc.tasks.total, 0)
+        }
+
+        test("An update for an unknown id is ignored") {
+            var acc = TranscriptAccumulator()
+            acc.consume(line: toolUseLine("TaskUpdate", #"{"taskId":"99","status":"completed"}"#))
+            await expectEqual(acc.tasks.total, 0)
+        }
+
+        test("current prefers in_progress, else the first pending") {
+            var p = TaskProgress()
+            p.applyCreate(.object(["subject": .string("a")]))
+            p.applyCreate(.object(["subject": .string("b")]))
+            await expectEqual(p.current?.subject, "a")
+            p.applyUpdate(.object(["taskId": .string("2"), "status": .string("in_progress")]))
+            await expectEqual(p.current?.subject, "b")
+        }
+
+        test("Branch and effort are picked up from any line") {
+            var acc = TranscriptAccumulator()
+            acc.consume(
+                line: toolUseLine(
+                    "TaskCreate", #"{"subject":"x"}"#, branch: "feature/auth", effort: "xhigh"))
+            await expectEqual(acc.gitBranch, "feature/auth")
+            await expectEqual(acc.effort, "xhigh")
+        }
+
+        test("An empty plan reports no summary") {
+            await expectEqual(TaskProgress().summary, nil)
+            await expect(TaskProgress().isEmpty)
+        }
+    }
+}

@@ -115,6 +115,9 @@ public actor SessionStore {
     public func applyTranscript(_ update: TranscriptUpdate) {
         guard var s = sessions[update.sessionID] else { return }
         if let model = update.model { s.model = model }
+        if let branch = update.gitBranch { s.gitBranch = branch }
+        if let effort = update.effort { s.effort = effort }
+        if !update.tasks.isEmpty { s.tasks = update.tasks }
         s.tokens = update.tokens
         sessions[update.sessionID] = s
         publish()

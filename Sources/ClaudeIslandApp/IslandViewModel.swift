@@ -7,11 +7,13 @@ import SwiftUI
 enum IslandMode: Equatable {
     /// Exactly notch-shaped, invisible against the cutout. No sessions.
     case dormant
-    /// Pill with a tool glyph, elapsed timer and an activity indicator.
+    /// Pill: glyph + session name (or the live tool target), status on the right.
     case compact
     /// A permission request. Loud.
     case alert
-    /// The card, on hover or click.
+    /// Hover. Adds branch, model, effort, context and plan progress.
+    case peek
+    /// Click. A switcher across every active session, plus that session's detail.
     case expanded
 }
 
@@ -33,17 +35,51 @@ final class IslandViewModel {
     private(set) var tick = Date()
     private var tickTimer: Timer?
 
+    /// The switcher selection. Nil means "follow automatic priority".
+    private(set) var selectedSessionID: String?
+
     var mode: IslandMode {
-        guard isEnabled, let primary = snapshot.primary else { return .dormant }
-        if isPinnedOpen || isHovered { return .expanded }
-        if primary.state.isAlert { return .alert }
-        if case .idle = primary.state, snapshot.sessionCount == 1 { return .dormant }
-        if case .done = primary.state { return .dormant }
+        guard isEnabled, let shown = displaySession else { return .dormant }
+        if isPinnedOpen { return .expanded }
+        if isHovered { return .peek }
+        if shown.state.isAlert { return .alert }
+        if case .idle = shown.state, snapshot.sessionCount == 1 { return .dormant }
+        if case .done = shown.state { return .dormant }
         return .compact
     }
 
     var primary: Session? { snapshot.primary }
     var others: [Session] { snapshot.others }
+
+    /// Every tracked session, already ranked by the store.
+    var allSessions: [Session] {
+        guard let primary = snapshot.primary else { return [] }
+        return [primary] + snapshot.others
+    }
+
+    /// The session whose details are on screen.
+    ///
+    /// A permission prompt always takes over, even from an explicit selection —
+    /// missing one is worse than losing your place. The selection is kept, not
+    /// cleared, so the view returns to it once the prompt is answered.
+    var displaySession: Session? {
+        if let alerting = allSessions.first(where: { $0.state.isAlert }) { return alerting }
+        if let id = selectedSessionID,
+            let selected = allSessions.first(where: { $0.id == id })
+        {
+            return selected
+        }
+        return snapshot.primary
+    }
+
+    func select(_ id: String) {
+        selectedSessionID = (selectedSessionID == id) ? nil : id
+    }
+
+    var isOverriddenByAlert: Bool {
+        guard let id = selectedSessionID, let shown = displaySession else { return false }
+        return shown.id != id
+    }
 
     /// Size of the drawn shape for the current mode.
     var shapeSize: CGSize {
@@ -56,11 +92,16 @@ final class IslandViewModel {
             return CGSize(width: max(base.width + 170, 300), height: base.height + 6)
         case .alert:
             return CGSize(width: max(base.width + 210, 340), height: base.height + 14)
+        case .peek:
+            let taskRow: CGFloat = (displaySession?.tasks.isEmpty == false) ? 18 : 0
+            return CGSize(width: 360, height: base.height + 74 + taskRow)
         case .expanded:
-            let rows = min(others.count, 3)
+            let rows = CGFloat(min(allSessions.count, 4))
+            let tools = CGFloat(min(displaySession?.recentTools.count ?? 0, 3))
+            let taskBlock: CGFloat = (displaySession?.tasks.isEmpty == false) ? 34 : 0
             return CGSize(
                 width: NotchGeometryResolver.panelWidth - 24,
-                height: 150 + CGFloat(rows) * 22 + base.height)
+                height: base.height + 118 + rows * 22 + tools * 15 + taskBlock)
         }
     }
 
@@ -69,6 +110,7 @@ final class IslandViewModel {
         case .dormant: geometry?.hasNotch == true ? 12 : 16
         case .compact: 18
         case .alert: 20
+        case .peek: 22
         case .expanded: 26
         }
     }
@@ -104,13 +146,25 @@ final class IslandViewModel {
     func apply(_ snapshot: HUDSnapshot) {
         self.snapshot = snapshot
         // Nothing left to pin open once the last session goes away.
-        if snapshot.primary == nil { isPinnedOpen = false }
+        if snapshot.primary == nil {
+            isPinnedOpen = false
+            selectedSessionID = nil
+        }
+        // Drop a selection whose session has ended.
+        if let id = selectedSessionID, !snapshot.others.contains(where: { $0.id == id }),
+            snapshot.primary?.id != id
+        {
+            selectedSessionID = nil
+        }
         syncTicker()
     }
 
     func setEnabled(_ enabled: Bool) {
         isEnabled = enabled
-        if !enabled { isPinnedOpen = false }
+        if !enabled {
+            isPinnedOpen = false
+            selectedSessionID = nil
+        }
         syncTicker()
     }
 
@@ -139,7 +193,34 @@ final class IslandViewModel {
 
 // MARK: - Formatting
 
+extension SessionState {
+    /// The single word shown on the compact pill's right side.
+    var statusWord: String {
+        switch self {
+        case .running: "working"
+        case .thinking: "thinking"
+        case .prompting: "sent"
+        case .awaitingPermission: "waiting"
+        case .compacting: "compacting"
+        case .done: "done"
+        case .error: "failed"
+        case .idle(let waiting): waiting ? "waiting" : "idle"
+        }
+    }
+}
+
 enum Format {
+    /// Session names are user-chosen and can be long; the pill has a fixed slot.
+    static func name(_ raw: String, limit: Int = 24) -> String {
+        raw.count <= limit ? raw : String(raw.prefix(limit - 1)) + "\u{2026}"
+    }
+
+    /// `HEAD` means detached, which reads better than showing the literal.
+    static func branch(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        return raw == "HEAD" ? "detached" : name(raw, limit: 20)
+    }
+
     static func duration(_ seconds: TimeInterval) -> String {
         let s = max(0, Int(seconds))
         if s < 60 { return "\(s)s" }

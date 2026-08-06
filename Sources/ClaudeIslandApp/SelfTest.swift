@@ -314,6 +314,14 @@ enum SelfTest {
                 passed: model.mode == .compact && !model.isPinnedOpen,
                 detail: "mode=\(model.mode) pinned=\(model.isPinnedOpen)"))
 
+        model.isHovered = true
+        checks.append(
+            Check(
+                name: "hovering peeks rather than fully expanding",
+                passed: model.mode == .peek,
+                detail: "mode=\(model.mode)"))
+        model.isHovered = false
+
         let compactRect = model.interactiveScreenRect
         model.togglePinned()
         checks.append(
@@ -360,6 +368,84 @@ enum SelfTest {
                 name: "the panel still refuses key after the tap gesture exists",
                 passed: !panel.canBecomeKey && !NSApp.isActive,
                 detail: "canBecomeKey=\(panel.canBecomeKey) active=\(NSApp.isActive)"))
+
+        await switcherChecks(&checks, model: model)
+    }
+
+    /// The session switcher, including the rule that a permission prompt takes
+    /// over from an explicit selection but does not discard it.
+    private static func switcherChecks(_ checks: inout [Check], model: IslandViewModel) async {
+        model.apply(twoSessionSnapshot(alerting: false))
+        checks.append(
+            Check(
+                name: "the switcher lists every active session",
+                passed: model.allSessions.count == 2,
+                detail: "\(model.allSessions.map(\.id))"))
+        checks.append(
+            Check(
+                name: "with no selection the ranked primary is shown",
+                passed: model.displaySession?.id == "alpha",
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+
+        model.select("beta")
+        checks.append(
+            Check(
+                name: "selecting a session switches the detail to it",
+                passed: model.displaySession?.id == "beta",
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+
+        // Alpha raises a permission prompt while beta is selected.
+        model.apply(twoSessionSnapshot(alerting: true))
+        checks.append(
+            Check(
+                name: "a permission prompt takes over from the selection",
+                passed: model.displaySession?.id == "alpha",
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+        checks.append(
+            Check(
+                name: "the takeover is signalled rather than silent",
+                passed: model.isOverriddenByAlert,
+                detail: "overridden=\(model.isOverriddenByAlert)"))
+
+        // Prompt answered: the selection was kept, so we go back to it.
+        model.apply(twoSessionSnapshot(alerting: false))
+        checks.append(
+            Check(
+                name: "the selection resumes once the prompt is answered",
+                passed: model.displaySession?.id == "beta",
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+
+        model.select("beta")
+        checks.append(
+            Check(
+                name: "selecting the shown session again clears the selection",
+                passed: model.selectedSessionID == nil && model.displaySession?.id == "alpha",
+                detail: "selected=\(model.selectedSessionID ?? "nil")"))
+
+        model.select("beta")
+        model.apply(HUDSnapshot(primary: session("alpha", state: .thinking), others: []))
+        checks.append(
+            Check(
+                name: "a selection whose session ended is dropped",
+                passed: model.selectedSessionID == nil,
+                detail: "selected=\(model.selectedSessionID ?? "nil")"))
+    }
+
+    private static func session(_ id: String, state: SessionState) -> Session {
+        var s = Session(id: id, startedAt: Date())
+        s.cwd = "/tmp/\(id)"
+        s.state = state
+        return s
+    }
+
+    private static func twoSessionSnapshot(alerting: Bool) -> HUDSnapshot {
+        let alpha = session(
+            "alpha",
+            state: alerting
+                ? .awaitingPermission(
+                    PermissionAsk(toolName: "Write", kind: .write, target: "/tmp/x", since: Date()))
+                : .thinking)
+        return HUDSnapshot(primary: alpha, others: [session("beta", state: .thinking)])
     }
 
     private static func activeSnapshot() -> HUDSnapshot {

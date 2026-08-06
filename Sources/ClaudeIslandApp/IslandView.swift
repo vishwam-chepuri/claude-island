@@ -69,6 +69,7 @@ struct IslandView: View {
         switch model.mode {
         case .dormant: 0
         case .compact, .alert: 14
+        case .peek: 15
         case .expanded: 16
         }
     }
@@ -83,17 +84,22 @@ struct IslandView: View {
         case .dormant:
             Color.clear
         case .compact:
-            if let session = model.primary {
+            if let session = model.displaySession {
                 CompactContent(session: session, model: model)
                     .transition(.opacity)
             }
         case .alert:
-            if let session = model.primary {
+            if let session = model.displaySession {
                 AlertContent(session: session, model: model)
                     .transition(.opacity)
             }
+        case .peek:
+            if let session = model.displaySession {
+                PeekContent(session: session, model: model)
+                    .transition(.opacity)
+            }
         case .expanded:
-            if let session = model.primary {
+            if let session = model.displaySession {
                 ExpandedContent(session: session, model: model)
                     .transition(.opacity)
             }
