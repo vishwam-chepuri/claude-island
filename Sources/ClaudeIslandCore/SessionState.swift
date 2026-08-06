@@ -38,6 +38,16 @@ public enum SessionState: Sendable, Equatable {
         return false
     }
 
+    /// The session is blocked on the human, either by a permission prompt or
+    /// by an explicit idle nudge.
+    public var needsUser: Bool {
+        switch self {
+        case .awaitingPermission: true
+        case .idle(let waiting): waiting
+        default: false
+        }
+    }
+
     public var isActive: Bool {
         switch self {
         case .prompting, .thinking, .running, .awaitingPermission, .compacting: true

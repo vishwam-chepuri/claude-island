@@ -122,6 +122,19 @@ string is the only string the UI can ever hold. Truncation to 60 characters
 happens *after* redaction — truncating first could cut a secret in half and
 leave the leading half on screen.
 
+## The notch is a hole, not a region
+
+The single most expensive lesson here. Content drawn inside the notch band is
+not clipped by software — those pixels do not exist. A 44pt pill centred on the
+cutout put its text at y≈22, inside the 38pt hole, and the text vanished at
+exactly `auxiliaryTopLeftArea.maxX` (790 on this display) and reappeared past
+`auxiliaryTopRightArea.minX` (1010). It looked exactly like a truncation bug and
+survived two wrong fixes before the cut was measured and landed on 790.5.
+
+So on a notched display every tier is `notchHeight + content`, with content
+inset below the cutout. The shape still wraps the notch — that is what makes it
+read as the island — but nothing informative is ever placed in the band.
+
 ## Two implementation notes that cost real work
 
 **Click-through cannot use an `NSTrackingArea`.** The obvious design — toggle
@@ -150,16 +163,23 @@ animations moved.
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
 | Tests | 98 passing |
-| Self-test | 35 checks passing |
+| Self-test | 41 checks passing |
 
 ## Interaction
 
 Three levels of detail, each earning its own layout.
 
-**Compact** — glyph, then the session name, with the status word and indicator
-on the right. While a tool is running the name is replaced by that tool's
-target, since in that moment it is the more informative of the two; it returns
-to the name when the tool finishes.
+**Compact** — a single line, always. Glyph, session name, then the status word
+and mark on the right. While a tool runs the name gives way to that tool's
+target and returns when it finishes.
+
+Every tracked session rests as one line, including `Done` and `Your turn`.
+Those two used to collapse to dormant, which hid exactly the states you are most
+likely to be waiting on. Only a HUD with no sessions at all goes dark.
+
+The status vocabulary and mark follow the reference design: `Thinking` with a
+spinning ring, `Your turn` with a completed ring that breathes, `Done` with a
+solid ring and a check.
 
 **Peek** (hover) — adds the identity line (branch, model, effort, elapsed),
 context and output tokens, and plan progress with the task currently in flight.

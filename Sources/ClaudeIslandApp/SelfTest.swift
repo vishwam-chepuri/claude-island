@@ -369,7 +369,56 @@ enum SelfTest {
                 passed: !panel.canBecomeKey && !NSApp.isActive,
                 detail: "canBecomeKey=\(panel.canBecomeKey) active=\(NSApp.isActive)"))
 
+        await restingLineChecks(&checks, model: model)
         await switcherChecks(&checks, model: model)
+    }
+
+    /// Every tracked session rests as one line, including the two states you are
+    /// most likely to be waiting on.
+    private static func restingLineChecks(_ checks: inout [Check], model: IslandViewModel) async {
+        model.isHovered = false
+        let compactHeight = { () -> CGFloat in
+            model.apply(HUDSnapshot(primary: session("s", state: .thinking), others: []))
+            return model.shapeSize.height
+        }()
+
+        for (label, state) in [
+            ("thinking", SessionState.thinking),
+            ("your turn (idle nudge)", SessionState.idle(waitingOnUser: true)),
+            ("done", SessionState.done),
+            ("failed", SessionState.error("Bash failed")),
+        ] {
+            model.apply(HUDSnapshot(primary: session("s", state: state), others: []))
+            checks.append(
+                Check(
+                    name: "\(label) rests as a single line",
+                    passed: model.mode == .compact
+                        && abs(model.shapeSize.height - compactHeight) < 0.5,
+                    detail: "mode=\(model.mode) height=\(model.shapeSize.height)"))
+        }
+
+        // A permission prompt is styled differently but must be the same height.
+        model.apply(
+            HUDSnapshot(
+                primary: session(
+                    "s",
+                    state: .awaitingPermission(
+                        PermissionAsk(
+                            toolName: "Write", kind: .write, target: "/tmp/x", since: Date()))),
+                others: []))
+        checks.append(
+            Check(
+                name: "your turn (permission) rests as a single line",
+                passed: model.mode == .alert
+                    && abs(model.shapeSize.height - compactHeight) < 0.5,
+                detail: "mode=\(model.mode) height=\(model.shapeSize.height) vs \(compactHeight)"
+            ))
+
+        checks.append(
+            Check(
+                name: "only a session-free HUD goes dormant",
+                passed: { model.apply(HUDSnapshot()); return model.mode == .dormant }(),
+                detail: "mode=\(model.mode)"))
     }
 
     /// The session switcher, including the rule that a permission prompt takes

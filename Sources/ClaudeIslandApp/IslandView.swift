@@ -50,9 +50,10 @@ struct IslandView: View {
                 .matchedGeometryEffect(id: "island", in: shapeNamespace, isSource: true)
 
             content
+                .frame(
+                    width: max(0, model.shapeSize.width - contentPadding * 2),
+                    height: model.shapeSize.height)
                 .padding(.horizontal, contentPadding)
-                .frame(width: model.shapeSize.width, height: model.shapeSize.height)
-                .clipped()
         }
         .frame(width: model.shapeSize.width, height: model.shapeSize.height)
         .clipShape(RoundedRectangle(cornerRadius: model.cornerRadius, style: .continuous))

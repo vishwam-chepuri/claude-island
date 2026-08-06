@@ -43,8 +43,9 @@ final class IslandViewModel {
         if isPinnedOpen { return .expanded }
         if isHovered { return .peek }
         if shown.state.isAlert { return .alert }
-        if case .idle = shown.state, snapshot.sessionCount == 1 { return .dormant }
-        if case .done = shown.state { return .dormant }
+        // Every tracked session rests as a single line. `done` and "your turn"
+        // used to collapse to dormant, which hid exactly the two states you are
+        // most likely to be waiting on.
         return .compact
     }
 
@@ -72,6 +73,13 @@ final class IslandViewModel {
         return snapshot.primary
     }
 
+    /// Other sessions waiting on you. A plain session count says nothing about
+    /// whether any of them need attention, which is the only reason to look.
+    var attentionCount: Int {
+        guard let shown = displaySession else { return 0 }
+        return allSessions.filter { $0.id != shown.id && $0.state.needsUser }.count
+    }
+
     func select(_ id: String) {
         selectedSessionID = (selectedSessionID == id) ? nil : id
     }
@@ -79,6 +87,16 @@ final class IslandViewModel {
     var isOverriddenByAlert: Bool {
         guard let id = selectedSessionID, let shown = displaySession else { return false }
         return shown.id != id
+    }
+
+    /// Height of one content row. On a notched display the shape must be at
+    /// least this much TALLER than the cutout, because anything drawn inside the
+    /// notch band simply is not on the screen — it is a hole in the panel.
+    static let lineHeight: CGFloat = 30
+
+    /// Vertical space the content must skip to clear the physical cutout.
+    var contentTopInset: CGFloat {
+        (geometry?.hasNotch == true) ? (geometry?.islandRect.height ?? 38) : 0
     }
 
     /// Size of the drawn shape for the current mode.
@@ -89,12 +107,18 @@ final class IslandViewModel {
         case .dormant:
             return base
         case .compact:
-            return CGSize(width: max(base.width + 170, 300), height: base.height + 6)
+            return CGSize(
+                width: max(base.width + 170, 300),
+                height: contentTopInset + Self.lineHeight)
         case .alert:
-            return CGSize(width: max(base.width + 210, 340), height: base.height + 14)
+            // Same single-line height as compact — the ask itself moves to the
+            // peek. Only the accent and the pulse mark it out at rest.
+            return CGSize(
+                width: max(base.width + 190, 320),
+                height: contentTopInset + Self.lineHeight)
         case .peek:
             let taskRow: CGFloat = (displaySession?.tasks.isEmpty == false) ? 18 : 0
-            return CGSize(width: 360, height: base.height + 74 + taskRow)
+            return CGSize(width: 380, height: contentTopInset + 76 + taskRow)
         case .expanded:
             let rows = CGFloat(min(allSessions.count, 4))
             let tools = CGFloat(min(displaySession?.recentTools.count ?? 0, 3))
@@ -109,7 +133,7 @@ final class IslandViewModel {
         switch mode {
         case .dormant: geometry?.hasNotch == true ? 12 : 16
         case .compact: 18
-        case .alert: 20
+        case .alert: 18
         case .peek: 22
         case .expanded: 26
         }
@@ -197,21 +221,21 @@ extension SessionState {
     /// The single word shown on the compact pill's right side.
     var statusWord: String {
         switch self {
-        case .running: "working"
-        case .thinking: "thinking"
-        case .prompting: "sent"
-        case .awaitingPermission: "waiting"
-        case .compacting: "compacting"
-        case .done: "done"
-        case .error: "failed"
-        case .idle(let waiting): waiting ? "waiting" : "idle"
+        case .running: "Working"
+        case .thinking: "Thinking"
+        case .prompting: "Sent"
+        case .awaitingPermission: "Your turn"
+        case .compacting: "Compacting"
+        case .done: "Done"
+        case .error: "Failed"
+        case .idle(let waiting): waiting ? "Your turn" : "Idle"
         }
     }
 }
 
 enum Format {
     /// Session names are user-chosen and can be long; the pill has a fixed slot.
-    static func name(_ raw: String, limit: Int = 24) -> String {
+    static func name(_ raw: String, limit: Int = 14) -> String {
         raw.count <= limit ? raw : String(raw.prefix(limit - 1)) + "\u{2026}"
     }
 

@@ -9,14 +9,21 @@ struct CompactContent: View {
     @Bindable var model: IslandViewModel
 
     var body: some View {
+        // Below the cutout: on a notched display the top band of this shape is
+        // the physical hole, and anything drawn there is invisible.
         HStack(spacing: 8) {
             ToolGlyph(session: session)
 
             Text(leadingText)
-                .font(.system(size: 11, weight: .medium, design: isShowingTarget ? .monospaced : .rounded))
+                .font(
+                    .system(
+                        size: 11, weight: .medium,
+                        design: isShowingTarget ? .monospaced : .rounded)
+                )
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .layoutPriority(1)
 
             Spacer(minLength: 6)
 
@@ -33,12 +40,14 @@ struct CompactContent: View {
                 .lineLimit(1)
                 .fixedSize()
 
-            if model.snapshot.sessionCount > 1 {
-                CountBadge(count: model.snapshot.sessionCount)
+            if model.attentionCount > 0 {
+                CountBadge(count: model.attentionCount, tint: IslandPalette.alert)
             }
 
-            ActivityIndicator(state: session.state)
+            StatusMark(state: session.state)
         }
+        .frame(height: IslandViewModel.lineHeight)
+        .padding(.top, model.contentTopInset)
     }
 
     /// The name normally; the live tool target while a tool is running, since
@@ -70,50 +79,46 @@ struct AlertContent: View {
     @Bindable var model: IslandViewModel
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             PulsingGlyph(
                 symbolName: "hand.raised.fill",
                 color: NSColor(IslandPalette.alert),
-                pointSize: 13,
+                pointSize: 12,
                 animating: true)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(headline)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                if let target = ask?.target {
-                    Text(target)
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
-                        .foregroundStyle(IslandPalette.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
+            Text(Format.name(session.displayName))
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .layoutPriority(1)
 
-            Spacer(minLength: 4)
+            Spacer(minLength: 6)
 
             if let since = ask?.since {
                 Text(Format.compactDuration(model.tick.timeIntervalSince(since)))
                     .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(IslandPalette.alert.opacity(0.8))
+                    .foregroundStyle(IslandPalette.tertiary)
                     .monospacedDigit()
             }
 
-            if model.snapshot.sessionCount > 1 {
-                CountBadge(count: model.snapshot.sessionCount, tint: IslandPalette.alert)
+            Text(session.state.statusWord)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(IslandPalette.alert)
+                .fixedSize()
+
+            if model.attentionCount > 0 {
+                CountBadge(count: model.attentionCount, tint: IslandPalette.alert)
             }
+
+            StatusMark(state: session.state)
         }
+        .frame(height: IslandViewModel.lineHeight)
+        .padding(.top, model.contentTopInset)
     }
 
     private var ask: PermissionAsk? {
         if case .awaitingPermission(let a) = session.state { return a }
         return nil
-    }
-
-    private var headline: String {
-        guard let ask else { return "Permission needed" }
-        return "Allow \(ask.toolName)?  ·  \(session.displayName)"
     }
 }
 
@@ -125,9 +130,32 @@ struct PeekContent: View {
     let session: Session
     @Bindable var model: IslandViewModel
 
+    /// The one line of detail the resting pill had no room for: the pending
+    /// question, the running command, or what the finished turn produced.
+    private var subline: String? {
+        switch session.state {
+        case .awaitingPermission(let ask):
+            return "Allow \(ask.toolName)?" + (ask.target.map { "  \($0)" } ?? "")
+        case .running(let tool):
+            return tool.target ?? tool.toolName
+        case .error(let message):
+            return message
+        case .done:
+            let tools = session.recentTools.count
+            return tools > 0 ? "\(tools) recent tool call\(tools == 1 ? "" : "s")" : nil
+        default:
+            return session.recentTools.first?.target
+        }
+    }
+
+    private var subIsMonospaced: Bool {
+        if case .running = session.state { return true }
+        return false
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: notchClearance(model))
+            Spacer(minLength: model.contentTopInset)
 
             HStack(spacing: 8) {
                 ToolGlyph(session: session)
@@ -139,7 +167,18 @@ struct PeekContent: View {
                 Text(session.state.statusWord)
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(IslandPalette.accent(for: session.state))
-                ActivityIndicator(state: session.state)
+                StatusMark(state: session.state)
+            }
+
+            if let sub = subline {
+                Text(sub)
+                    .font(.system(size: 10, design: subIsMonospaced ? .monospaced : .default))
+                    .foregroundStyle(
+                        session.state.isAlert ? IslandPalette.alert : IslandPalette.secondary
+                    )
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.top, 3)
             }
 
             MetaLine(session: session, tick: model.tick)
@@ -178,7 +217,7 @@ struct ExpandedContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: notchClearance(model))
+            Spacer(minLength: model.contentTopInset)
 
             HStack(spacing: 6) {
                 Text("SESSIONS")
@@ -448,26 +487,3 @@ struct CountBadge: View {
     }
 }
 
-/// Three dots that stop entirely when nothing is running.
-///
-/// A state with `wantsAnimation == false` renders a single static dot with no
-/// animation attached, so a finished session leaves no repeating work.
-struct ActivityIndicator: View {
-    let state: SessionState
-
-    var body: some View {
-        Group {
-            if state.wantsAnimation {
-                BouncingDots(color: NSColor(IslandPalette.accent(for: state)), animating: true)
-                    .frame(
-                        width: BouncingDots.intrinsicSize.width,
-                        height: BouncingDots.intrinsicSize.height)
-            } else {
-                Circle()
-                    .fill(IslandPalette.accent(for: state))
-                    .frame(width: 5, height: 5)
-            }
-        }
-        .frame(width: 20, alignment: .trailing)
-    }
-}
