@@ -29,6 +29,11 @@ public final class SocketServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "island.socket", qos: .userInitiated)
     private let connectionQueue = DispatchQueue(
         label: "island.socket.conn", qos: .userInitiated, attributes: .concurrent)
+    /// Caps connections handled at once. Each handler does a blocking read with
+    /// a timeout, so an unbounded burst — several worktrees firing hooks in the
+    /// same instant — would spawn a thread per connection and starve the pool.
+    /// Payloads are tiny and short-lived; a small window is ample.
+    private let connectionSlots = DispatchSemaphore(value: 8)
 
     private var listenFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
@@ -74,6 +79,13 @@ public final class SocketServer: @unchecked Sendable {
         // Owner-only. The payloads carry prompts and file paths.
         chmod(path, 0o600)
 
+        // The accept handler drains in a loop until EAGAIN, which only
+        // terminates on a non-blocking socket. Left blocking, the loop would
+        // park inside accept() and hold the socket queue until the next
+        // connection happened to arrive.
+        let flags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+
         guard listen(fd, 64) == 0 else {
             let e = errno
             close(fd)
@@ -114,7 +126,11 @@ public final class SocketServer: @unchecked Sendable {
                 if errno == EINTR { continue }
                 return  // EAGAIN/EWOULDBLOCK: drained.
             }
-            connectionQueue.async { [weak self] in self?.handle(client) }
+            connectionSlots.wait()
+            connectionQueue.async { [weak self] in
+                defer { self?.connectionSlots.signal() }
+                self?.handle(client)
+            }
         }
     }
 

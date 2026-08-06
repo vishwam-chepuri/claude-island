@@ -1,0 +1,313 @@
+import AppKit
+import ClaudeIslandCore
+import SwiftUI
+
+/// Exercises the two behavioural requirements that cannot be unit-tested: the
+/// panel must never steal focus, and clicks outside the drawn shape must pass
+/// through to whatever is underneath.
+///
+/// Click-through is checked against the window server itself via
+/// `NSWindow.windowNumber(at:)`, which reports where a click would actually be
+/// delivered — not merely what our own flags claim.
+@MainActor
+enum SelfTest {
+    private enum Outcome {
+        case pass
+        case fail
+        /// The check could not be evaluated in this environment. Reported as
+        /// such rather than counted either way — a check that cannot run must
+        /// never masquerade as one that passed.
+        case skipped(String)
+    }
+
+    private struct Check {
+        let name: String
+        let outcome: Outcome
+        let detail: String
+
+        init(name: String, passed: Bool, detail: String) {
+            self.name = name
+            self.outcome = passed ? .pass : .fail
+            self.detail = detail
+        }
+
+        init(name: String, skipped reason: String, detail: String = "") {
+            self.name = name
+            self.outcome = .skipped(reason)
+            self.detail = detail
+        }
+    }
+
+    /// True when something is covering the whole screen — a lock screen, a
+    /// screen saver, or a full-screen capture overlay. While one is up the
+    /// window server reports it as the hit for every point, so click-through
+    /// cannot be measured.
+    private static func screenObstruction() -> String? {
+        guard let screen = NSScreen.screens.first else { return nil }
+        // A point in the far corner, where nothing of ours is drawn.
+        let empty = CGPoint(x: screen.frame.maxX - 4, y: screen.frame.minY + 4)
+        let hit = NSWindow.windowNumber(at: empty, belowWindowWithWindowNumber: 0)
+        guard hit != 0,
+            let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]
+        else { return nil }
+        for window in list where (window[kCGWindowNumber as String] as? Int) == hit {
+            let owner = (window[kCGWindowOwnerName as String] as? String) ?? "unknown"
+            let layer = (window[kCGWindowLayer as String] as? Int) ?? 0
+            // Our own panel sits at layer 26; anything far above is an overlay.
+            if layer > 100 {
+                return "\(owner) is covering the screen (layer \(layer)) — is it locked?"
+            }
+        }
+        return nil
+    }
+
+    static func run() async -> Int32 {
+        var checks: [Check] = []
+
+        let frontmostBefore = NSWorkspace.shared.frontmostApplication
+
+        NSApp.setActivationPolicy(.accessory)
+
+        guard let geometry = NotchGeometryResolver.current() else {
+            print("no screens available")
+            return 1
+        }
+
+        let panel = IslandPanel(contentRect: geometry.panelRect)
+        let model = IslandViewModel()
+        model.setGeometry(geometry)
+        let host = NSHostingViewShim(model: model, size: geometry.panelRect.size)
+        panel.contentView = host
+        panel.orderFrontRegardless()
+
+        // Give AppKit a runloop turn to actually put the window on screen.
+        await tick(0.3)
+
+        // --- Focus ---
+
+        checks.append(
+            Check(
+                name: "panel refuses key",
+                passed: !panel.canBecomeKey,
+                detail: "canBecomeKey=\(panel.canBecomeKey)"))
+        checks.append(
+            Check(
+                name: "panel refuses main",
+                passed: !panel.canBecomeMain,
+                detail: "canBecomeMain=\(panel.canBecomeMain)"))
+        checks.append(
+            Check(
+                name: "panel is non-activating",
+                passed: panel.styleMask.contains(.nonactivatingPanel),
+                detail: "styleMask=\(panel.styleMask.rawValue)"))
+        checks.append(
+            Check(
+                name: "panel is above the menu bar",
+                passed: panel.level.rawValue > NSWindow.Level.statusBar.rawValue,
+                detail:
+                    "level=\(panel.level.rawValue) statusBar=\(NSWindow.Level.statusBar.rawValue)"))
+        checks.append(
+            Check(
+                name: "collection behavior spans spaces and full screen",
+                passed: panel.collectionBehavior.contains(.canJoinAllSpaces)
+                    && panel.collectionBehavior.contains(.fullScreenAuxiliary)
+                    && panel.collectionBehavior.contains(.stationary)
+                    && panel.collectionBehavior.contains(.ignoresCycle),
+                detail: "\(panel.collectionBehavior.rawValue)"))
+        checks.append(
+            Check(
+                name: "ordering the panel front did not activate the app",
+                passed: !NSApp.isActive,
+                detail: "NSApp.isActive=\(NSApp.isActive)"))
+
+        let frontmostAfter = NSWorkspace.shared.frontmostApplication
+        checks.append(
+            Check(
+                name: "frontmost app unchanged",
+                passed: frontmostBefore?.bundleIdentifier == frontmostAfter?.bundleIdentifier,
+                detail:
+                    "\(frontmostBefore?.localizedName ?? "none") -> \(frontmostAfter?.localizedName ?? "none")"
+            ))
+        checks.append(
+            Check(
+                name: "panel is not the key window",
+                passed: NSApp.keyWindow == nil,
+                detail: "keyWindow=\(NSApp.keyWindow?.description ?? "nil")"))
+
+        // --- Click-through ---
+        //
+        // Asks the window server where a click would actually land, rather than
+        // inferring it from our own flags. This is the authoritative test and
+        // needs no Accessibility permission.
+
+        model.apply(activeSnapshot())
+        await tick(0.35)
+        let shape = model.interactiveScreenRect
+        let overShape = CGPoint(x: shape.midX, y: shape.midY)
+        let overTransparent = CGPoint(
+            x: geometry.panelRect.minX + 8, y: geometry.panelRect.minY + 8)
+
+        checks.append(
+            Check(
+                name: "probe point is inside the panel but outside the shape",
+                passed: geometry.panelRect.contains(overTransparent)
+                    && !shape.contains(overTransparent),
+                detail: "\(overTransparent) panel=\(geometry.panelRect) shape=\(shape)"))
+
+        checks.append(
+            Check(
+                name: "panel starts fully click-through",
+                passed: panel.ignoresMouseEvents,
+                detail: "ignoresMouseEvents=\(panel.ignoresMouseEvents)"))
+        if let obstruction = screenObstruction() {
+            for name in [
+                "while ignoring events, clicks over the shape pass through",
+                "with events enabled, the shape receives clicks",
+                "transparent panel area passes clicks through per-pixel",
+            ] {
+                checks.append(Check(name: name, skipped: obstruction))
+            }
+        } else {
+            checks.append(
+                Check(
+                    name: "while ignoring events, clicks over the shape pass through",
+                    passed: windowNumber(at: overShape) != panel.windowNumber,
+                    detail: "hit=\(windowNumber(at: overShape)) ours=\(panel.windowNumber)"))
+
+            // Now accept events and re-ask the window server.
+            panel.ignoresMouseEvents = false
+            await tick(0.35)
+
+            let hitOverShape = windowNumber(at: overShape)
+            let hitOverTransparent = windowNumber(at: overTransparent)
+            checks.append(
+                Check(
+                    name: "with events enabled, the shape receives clicks",
+                    passed: hitOverShape == panel.windowNumber,
+                    detail: "hit=\(hitOverShape) ours=\(panel.windowNumber)"))
+            checks.append(
+                Check(
+                    name: "transparent panel area passes clicks through per-pixel",
+                    passed: hitOverTransparent != panel.windowNumber,
+                    detail: "hit=\(hitOverTransparent) ours=\(panel.windowNumber)"))
+        }
+
+        panel.ignoresMouseEvents = true
+
+        // --- Hover monitor ---
+
+        let monitor = HoverMonitor(panel: panel)
+        monitor.start()
+        checks.append(
+            Check(
+                name: "hover monitor installs",
+                passed: monitor.isRunning,
+                detail: "running=\(monitor.isRunning)"))
+
+        // Drive containment directly. A synthetic cursor warp does not generate
+        // the mouseMoved event a global monitor observes, so probing the real
+        // event path from a headless run is not possible; this exercises the
+        // same evaluation the monitor performs on each move.
+        monitor.setInteractiveRectForTesting(shape, cursorAt: overShape)
+        checks.append(
+            Check(
+                name: "cursor inside the shape enables mouse events",
+                passed: !panel.ignoresMouseEvents,
+                detail: "ignoresMouseEvents=\(panel.ignoresMouseEvents) shape=\(shape)"))
+
+        monitor.setInteractiveRectForTesting(shape, cursorAt: overTransparent)
+        checks.append(
+            Check(
+                name: "cursor outside the shape restores click-through",
+                passed: panel.ignoresMouseEvents,
+                detail: "ignoresMouseEvents=\(panel.ignoresMouseEvents)"))
+
+        monitor.stop()
+        checks.append(
+            Check(
+                name: "stopping the monitor restores full click-through",
+                passed: panel.ignoresMouseEvents && !monitor.isRunning,
+                detail: "running=\(monitor.isRunning)"))
+
+        // --- Idle ---
+
+        model.apply(HUDSnapshot())
+        checks.append(
+            Check(
+                name: "no active session means no animation is requested",
+                passed: !HUDSnapshot().wantsAnimation && model.mode == .dormant,
+                detail: "mode=\(model.mode)"))
+
+        panel.orderOut(nil)
+
+        // --- Report ---
+
+        print("ClaudeIsland self-test\n")
+        var failures = 0
+        var skipped = 0
+        for check in checks {
+            switch check.outcome {
+            case .pass:
+                print("  ✓ \(check.name)")
+            case .fail:
+                failures += 1
+                print("  ✗ \(check.name)")
+                print("      \(check.detail)")
+            case .skipped(let reason):
+                skipped += 1
+                print("  — \(check.name)")
+                print("      SKIPPED: \(reason)")
+            }
+        }
+        print("")
+        let passed = checks.count - failures - skipped
+        if failures == 0 {
+            print("\(passed) checks passed\(skipped > 0 ? ", \(skipped) skipped" : "")")
+            if skipped > 0 {
+                print("Re-run with the screen unlocked to evaluate the skipped checks.")
+            }
+            return skipped > 0 ? 2 : 0
+        }
+        print("\(failures) of \(checks.count) checks FAILED (\(passed) passed, \(skipped) skipped)")
+        return 1
+    }
+
+    private static func activeSnapshot() -> HUDSnapshot {
+        var session = Session(id: "selftest", startedAt: Date())
+        session.cwd = "/tmp/selftest"
+        session.state = .running(
+            ToolActivity(kind: .bash, toolName: "Bash", target: "swift build", startedAt: Date()))
+        return HUDSnapshot(primary: session, others: [])
+    }
+
+    /// Which window the server would deliver a click at `point` to. This is the
+    /// ground truth for click-through, and needs no special permission.
+    private static func windowNumber(at point: CGPoint) -> Int {
+        NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+    }
+
+    private static func tick(_ seconds: TimeInterval) async {
+        // Pump the runloop rather than just sleeping: the event monitors and
+        // the window server both need turns for any of this to be real.
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            pumpRunLoop()
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    /// Non-async so `RunLoop.run` stays legal; the async caller only awaits
+    /// around it.
+    private static func pumpRunLoop() {
+        _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+    }
+}
+
+/// Minimal host so the self-test does not depend on the full view tree.
+@MainActor
+private func NSHostingViewShim(model: IslandViewModel, size: CGSize) -> NSView {
+    let view = NSHostingView(rootView: IslandView(model: model))
+    view.frame = CGRect(origin: .zero, size: size)
+    return view
+}

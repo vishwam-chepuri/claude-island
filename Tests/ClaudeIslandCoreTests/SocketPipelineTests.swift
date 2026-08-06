@@ -232,7 +232,9 @@ func registerSocketPipelineTests() {
             await expectEqual(process.terminationStatus, 0)
 
             let collector = StreamCollector(stream)
-            let envelope = try await require(await collector.next())
+            // Spawning a process costs more than an in-process send, and this
+            // runs after a 25-connection burst; allow for the tail.
+            let envelope = try await require(await collector.next(timeout: 8))
             await expectEqual(envelope.sessionID, "real-client")
             await expectEqual(envelope.event, .permissionRequest)
             await expectEqual(envelope.toolInput?["command"]?.stringValue, "rm -rf /tmp/x")
