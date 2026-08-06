@@ -139,6 +139,7 @@ animations moved.
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
 | Tests | 90 passing |
+| Self-test | 18 checks passing |
 
 ## Verification
 
@@ -161,6 +162,18 @@ verified against the window server itself via `NSWindow.windowNumber(at:)`
 rather than trusting our own flags. **Run it with the screen unlocked** — a lock
 screen puts a full-screen `loginwindow` layer above everything and those three
 checks are reported as skipped rather than silently passing.
+
+### Known conflict: other notch HUDs
+
+The panel sits at `.statusBar + 1` (level 26). Some notch apps use far higher
+levels — "Claude Usage" on this machine holds the notch at level **1000** — and
+will render above ClaudeIsland and win the hit test over the island shape. This
+is by design rather than a defect: the level is deliberately conservative so the
+HUD never floats above things it shouldn't.
+
+`--selftest` detects this and names the offending app instead of reporting a
+failure. Quit the other app to evaluate that check, or raise the level in
+`IslandPanel.init` if you would rather ClaudeIsland win.
 
 ### Note on the test harness
 
