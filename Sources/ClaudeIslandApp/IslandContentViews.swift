@@ -9,66 +9,40 @@ struct CompactContent: View {
     @Bindable var model: IslandViewModel
 
     var body: some View {
-        // Below the cutout: on a notched display the top band of this shape is
-        // the physical hole, and anything drawn there is invisible.
-        HStack(spacing: 8) {
-            ToolGlyph(session: session)
-
-            Text(leadingText)
-                .font(
-                    .system(
-                        size: 11, weight: .medium,
-                        design: isShowingTarget ? .monospaced : .rounded)
-                )
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .layoutPriority(1)
-
-            Spacer(minLength: 6)
-
-            if let elapsed = operationElapsed {
-                Text(Format.compactDuration(elapsed))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(IslandPalette.tertiary)
-                    .monospacedDigit()
+        FlankingRow(model: model) {
+            HStack(spacing: 8) {
+                ToolGlyph(session: session)
+                Text(model.compactLeadingText(session))
+                    .font(
+                        .system(
+                            size: 11, weight: .medium,
+                            design: isShowingTarget ? .monospaced : .rounded)
+                    )
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
             }
-
-            Text(session.state.statusWord)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(IslandPalette.accent(for: session.state))
-                .lineLimit(1)
-                .fixedSize()
-
-            if model.attentionCount > 0 {
-                CountBadge(count: model.attentionCount, tint: IslandPalette.alert)
+        } trailing: {
+            HStack(spacing: 8) {
+                if let elapsed = model.compactElapsedText(session) {
+                    Text(elapsed)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(IslandPalette.tertiary)
+                        .monospacedDigit()
+                }
+                Text(session.state.statusWord)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(IslandPalette.accent(for: session.state))
+                if model.attentionCount > 0 {
+                    CountBadge(count: model.attentionCount, tint: IslandPalette.alert)
+                }
+                StatusMark(state: session.state)
             }
-
-            StatusMark(state: session.state)
         }
-        .frame(height: IslandViewModel.lineHeight)
-        .padding(.top, model.contentTopInset)
     }
 
-    /// The name normally; the live tool target while a tool is running, since
-    /// that is the more informative of the two in that moment.
     private var isShowingTarget: Bool {
         if case .running(let tool) = session.state { return tool.target != nil }
         return false
-    }
-
-    private var leadingText: String {
-        if case .running(let tool) = session.state {
-            return tool.target ?? tool.toolName
-        }
-        return Format.name(session.displayName)
-    }
-
-    /// Elapsed time for the *current operation*, not the session.
-    private var operationElapsed: TimeInterval? {
-        guard case .running(let tool) = session.state else { return nil }
-        // Reading model.tick makes this recompute on the shared 1 Hz timer.
-        return tool.elapsed(now: model.tick)
     }
 }
 
@@ -79,46 +53,74 @@ struct AlertContent: View {
     @Bindable var model: IslandViewModel
 
     var body: some View {
-        HStack(spacing: 8) {
-            PulsingGlyph(
-                symbolName: "hand.raised.fill",
-                color: NSColor(IslandPalette.alert),
-                pointSize: 12,
-                animating: true)
-
-            Text(Format.name(session.displayName))
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .layoutPriority(1)
-
-            Spacer(minLength: 6)
-
-            if let since = ask?.since {
-                Text(Format.compactDuration(model.tick.timeIntervalSince(since)))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(IslandPalette.tertiary)
-                    .monospacedDigit()
+        FlankingRow(model: model) {
+            HStack(spacing: 8) {
+                PulsingGlyph(
+                    symbolName: "hand.raised.fill",
+                    color: NSColor(IslandPalette.alert),
+                    pointSize: 12,
+                    animating: true)
+                Text(Format.name(session.displayName))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
             }
-
-            Text(session.state.statusWord)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(IslandPalette.alert)
-                .fixedSize()
-
-            if model.attentionCount > 0 {
-                CountBadge(count: model.attentionCount, tint: IslandPalette.alert)
+        } trailing: {
+            HStack(spacing: 8) {
+                if let elapsed = model.compactElapsedText(session) {
+                    Text(elapsed)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(IslandPalette.tertiary)
+                        .monospacedDigit()
+                }
+                Text(session.state.statusWord)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(IslandPalette.alert)
+                if model.attentionCount > 0 {
+                    CountBadge(count: model.attentionCount, tint: IslandPalette.alert)
+                }
+                StatusMark(state: session.state)
             }
-
-            StatusMark(state: session.state)
         }
-        .frame(height: IslandViewModel.lineHeight)
-        .padding(.top, model.contentTopInset)
+    }
+}
+
+/// Lays a row out either side of the camera cutout.
+///
+/// The middle segment is empty on purpose: those pixels are a hole in the
+/// display, so anything placed there is not drawn at all. On a notchless
+/// display the gap collapses to zero and this is an ordinary row.
+struct FlankingRow<Leading: View, Trailing: View>: View {
+    @Bindable var model: IslandViewModel
+    @ViewBuilder var leading: Leading
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 0) {
+            flank(leading, width: model.flankLeftWidth, alignment: .leading)
+                .padding(.leading, IslandViewModel.sidePadding)
+
+            // The camera. Nothing may be drawn here — these pixels are a hole
+            // in the display, not a region that merely gets clipped.
+            Color.clear
+                .frame(width: model.notchGap)
+
+            flank(trailing, width: model.flankRightWidth, alignment: .trailing)
+                .padding(.trailing, IslandViewModel.sidePadding)
+        }
+        .frame(height: model.rowHeight)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    private var ask: PermissionAsk? {
-        if case .awaitingPermission(let a) = session.state { return a }
-        return nil
+    /// A fixed width while resting, so each flank is snug to its own content;
+    /// an even share once the card is open and the shape is wider than needed.
+    @ViewBuilder
+    private func flank<V: View>(_ view: V, width: CGFloat?, alignment: Alignment) -> some View {
+        if let width {
+            view.frame(width: max(0, width - IslandViewModel.sidePadding), alignment: alignment)
+        } else {
+            view.frame(maxWidth: .infinity, alignment: alignment)
+        }
     }
 }
 
@@ -155,20 +157,24 @@ struct PeekContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: model.contentTopInset)
-
-            HStack(spacing: 8) {
-                ToolGlyph(session: session)
-                Text(Format.name(session.displayName, limit: 28))
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                Text(session.state.statusWord)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(IslandPalette.accent(for: session.state))
-                StatusMark(state: session.state)
+            // Header flanks the camera, exactly like the resting row.
+            FlankingRow(model: model) {
+                HStack(spacing: 8) {
+                    ToolGlyph(session: session)
+                    Text(Format.name(session.displayName))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+            } trailing: {
+                HStack(spacing: 8) {
+                    Text(session.state.statusWord)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(IslandPalette.accent(for: session.state))
+                    StatusMark(state: session.state)
+                }
             }
+            .frame(height: model.bodyTopInset)
 
             if let sub = subline {
                 Text(sub)
@@ -206,6 +212,7 @@ struct PeekContent: View {
 
             Spacer(minLength: 0)
         }
+        .padding(.horizontal, IslandViewModel.sidePadding)
     }
 }
 
@@ -217,7 +224,23 @@ struct ExpandedContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: model.contentTopInset)
+            FlankingRow(model: model) {
+                HStack(spacing: 8) {
+                    ToolGlyph(session: session)
+                    Text(Format.name(session.displayName))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+            } trailing: {
+                HStack(spacing: 8) {
+                    Text(session.state.statusWord)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(IslandPalette.accent(for: session.state))
+                    StatusMark(state: session.state)
+                }
+            }
+            .frame(height: model.bodyTopInset)
 
             HStack(spacing: 6) {
                 Text("SESSIONS")
@@ -317,6 +340,7 @@ struct ExpandedContent: View {
 
             Spacer(minLength: 0)
         }
+        .padding(.horizontal, IslandViewModel.sidePadding)
     }
 }
 
@@ -406,12 +430,6 @@ struct CurrentTaskLine: View {
             Spacer(minLength: 0)
         }
     }
-}
-
-/// On a notched display the top of the card must clear the physical cutout.
-@MainActor
-func notchClearance(_ model: IslandViewModel) -> CGFloat {
-    (model.geometry?.hasNotch == true) ? (model.geometry?.islandRect.height ?? 38) : 6
 }
 
 // MARK: - Pieces

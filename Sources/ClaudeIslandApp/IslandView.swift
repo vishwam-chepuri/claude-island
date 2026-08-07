@@ -25,6 +25,7 @@ struct IslandView: View {
             height: NotchGeometryResolver.panelHeight,
             alignment: .top
         )
+        .offset(x: model.shapeOffsetX)
         .animation(spring, value: model.mode)
         .animation(spring, value: model.snapshot.primary?.state)
     }
@@ -33,7 +34,7 @@ struct IslandView: View {
         ZStack(alignment: .top) {
             // .continuous so the corner curvature interpolates rather than
             // snapping between radii mid-morph.
-            RoundedRectangle(cornerRadius: model.cornerRadius, style: .continuous)
+            IslandShape(cornerRadius: model.cornerRadius)
                 // Pure black, no material: it has to read as the physical
                 // cutout. The debug tint replaces it with something visible so
                 // the shape's edges can actually be seen while iterating.
@@ -45,9 +46,10 @@ struct IslandView: View {
                 .shadow(
                     color: .black.opacity(model.mode == .dormant ? 0 : 0.35), radius: 12, y: 4
                 )
+                // An open path, so no line is ever drawn along the top edge.
                 .overlay(
-                    RoundedRectangle(cornerRadius: model.cornerRadius, style: .continuous)
-                        .strokeBorder(strokeColor, lineWidth: strokeWidth)
+                    IslandOutline(cornerRadius: model.cornerRadius)
+                        .stroke(strokeColor, lineWidth: strokeWidth)
                 )
                 .matchedGeometryEffect(id: "island", in: shapeNamespace, isSource: true)
 
@@ -58,10 +60,10 @@ struct IslandView: View {
                 .padding(.horizontal, contentPadding)
         }
         .frame(width: model.shapeSize.width, height: model.shapeSize.height)
-        .clipShape(RoundedRectangle(cornerRadius: model.cornerRadius, style: .continuous))
+        .clipShape(IslandShape(cornerRadius: model.cornerRadius))
         // contentShape limits the tap target to the drawn shape; without it the
         // gesture would claim the surrounding transparent frame too.
-        .contentShape(RoundedRectangle(cornerRadius: model.cornerRadius, style: .continuous))
+        .contentShape(IslandShape(cornerRadius: model.cornerRadius))
         .onTapGesture {
             guard model.mode != .dormant else { return }
             model.togglePinned()

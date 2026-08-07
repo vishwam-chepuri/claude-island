@@ -91,53 +91,147 @@ final class IslandViewModel {
         return shown.id != id
     }
 
-    /// Height of one content row. On a notched display the shape must be at
-    /// least this much TALLER than the cutout, because anything drawn inside the
-    /// notch band simply is not on the screen — it is a hole in the panel.
+    /// Height of the content row that flanks the camera. Sized to sit inside
+    /// the menu bar band rather than below it.
     static let lineHeight: CGFloat = 30
 
-    /// Vertical space the content must skip to clear the physical cutout.
-    var contentTopInset: CGFloat {
-        (geometry?.hasNotch == true) ? (geometry?.islandRect.height ?? 38) : 0
+    /// Padding between the shape's outer edge and its content.
+    static let sidePadding: CGFloat = 12
+    /// Breathing room between content and the camera cutout.
+    static let notchPadding: CGFloat = 12
+
+    var hasNotch: Bool { geometry?.hasNotch == true }
+
+    /// The camera's width, which content must route around. Zero on a display
+    /// without one, where the row is simply continuous.
+    var notchGap: CGFloat { hasNotch ? (geometry?.islandRect.width ?? 0) : 0 }
+
+    /// The band the camera occupies. Anything drawn here is not on the screen.
+    var notchBandHeight: CGFloat { hasNotch ? (geometry?.islandRect.height ?? 38) : 0 }
+
+    /// The flanking row is as tall as the camera band so it sits beside it; on a
+    /// notchless display it is a plain row.
+    var rowHeight: CGFloat { max(notchBandHeight, Self.lineHeight) }
+
+    /// Extra rows in peek and expanded start below the camera.
+    var bodyTopInset: CGFloat { notchBandHeight }
+
+    // MARK: - Flanking widths
+    //
+    // Content sits to the LEFT and RIGHT of the camera, so each side is sized to
+    // its own text. Measured with the real font rather than estimated: an
+    // under-measured side pushes content into the cutout, where it vanishes.
+
+    private var shownSession: Session? { displaySession }
+
+    var leftClusterWidth: CGFloat {
+        guard let session = shownSession else { return 0 }
+        // Must match the font the row actually renders in. Measuring a
+        // monospaced target with the rounded font under-measures it, and the
+        // text then truncates inside a frame that looked wide enough.
+        let isTarget: Bool = {
+            if case .running(let tool) = session.state { return tool.target != nil }
+            return false
+        }()
+        let font: NSFont = isTarget ? .monospaced(11) : .roundedMedium(11)
+        let text = TextMetrics.width(compactLeadingText(session), font: font)
+        return Self.sidePadding + 20 + 8 + text + Self.notchPadding
+    }
+
+    var rightClusterWidth: CGFloat {
+        guard let session = shownSession else { return 0 }
+        var width = Self.notchPadding
+        if let elapsed = compactElapsedText(session) {
+            width += TextMetrics.width(elapsed, font: .monospaced(10)) + 8
+        }
+        width += TextMetrics.width(session.state.statusWord, font: .roundedMedium(10)) + 8
+        if attentionCount > 0 { width += 20 }
+        width += StatusMark.size + Self.sidePadding
+        return width
+    }
+
+    /// How far the drawn shape sits from the panel's centre.
+    ///
+    /// The panel is centred on the camera, but the island is not: it extends
+    /// exactly as far as each side's content needs, so a long label on the left
+    /// grows the shape leftward rather than padding the right.
+    var shapeOffsetX: CGFloat {
+        switch mode {
+        case .compact, .alert: (rightClusterWidth - leftClusterWidth) / 2
+        case .dormant, .peek, .expanded: 0
+        }
+    }
+
+    /// Width of each flank for the row layout. Snug to content while resting;
+    /// an even split once the card is open and the shape is wider than needed.
+    var flankLeftWidth: CGFloat? {
+        switch mode {
+        case .compact, .alert: leftClusterWidth
+        case .dormant, .peek, .expanded: nil
+        }
+    }
+
+    var flankRightWidth: CGFloat? {
+        switch mode {
+        case .compact, .alert: rightClusterWidth
+        case .dormant, .peek, .expanded: nil
+        }
+    }
+
+    /// The text the compact row leads with: the running tool's target when one
+    /// is in flight, otherwise the session name.
+    func compactLeadingText(_ session: Session) -> String {
+        if case .running(let tool) = session.state {
+            return Redactor.truncate(tool.target ?? tool.toolName, limit: 34)
+        }
+        return Format.name(session.displayName)
+    }
+
+    func compactElapsedText(_ session: Session) -> String? {
+        switch session.state {
+        case .running(let tool): Format.compactDuration(tool.elapsed(now: tick))
+        case .awaitingPermission(let ask): Format.compactDuration(tick.timeIntervalSince(ask.since))
+        default: nil
+        }
     }
 
     /// Size of the drawn shape for the current mode.
     var shapeSize: CGSize {
         guard let g = geometry else { return .zero }
         let base = g.dormantSize
+        // Sized to its content, not centred on the camera. Forcing symmetry
+        // would make the shorter side carry dead space equal to the difference.
+        let flanking = leftClusterWidth + notchGap + rightClusterWidth
+
         switch mode {
         case .dormant:
             return base
-        case .compact:
-            return CGSize(
-                width: max(base.width + 170, 300),
-                height: contentTopInset + Self.lineHeight)
-        case .alert:
-            // Same single-line height as compact — the ask itself moves to the
-            // peek. Only the accent and the pulse mark it out at rest.
-            return CGSize(
-                width: max(base.width + 190, 320),
-                height: contentTopInset + Self.lineHeight)
+        case .compact, .alert:
+            // Exactly the camera band tall, so the island reads as the cutout
+            // having grown sideways rather than as a panel hanging below it.
+            return CGSize(width: max(flanking, base.width + 80), height: rowHeight)
         case .peek:
             let taskRow: CGFloat = (displaySession?.tasks.isEmpty == false) ? 18 : 0
-            return CGSize(width: 380, height: contentTopInset + 76 + taskRow)
+            return CGSize(
+                width: max(flanking, 420),
+                height: bodyTopInset + 62 + taskRow)
         case .expanded:
             let rows = CGFloat(min(allSessions.count, 4))
             let tools = CGFloat(min(displaySession?.recentTools.count ?? 0, 3))
             let taskBlock: CGFloat = (displaySession?.tasks.isEmpty == false) ? 34 : 0
             return CGSize(
-                width: NotchGeometryResolver.panelWidth - 24,
-                height: base.height + 118 + rows * 22 + tools * 15 + taskBlock)
+                width: max(flanking, NotchGeometryResolver.cardWidth),
+                height: bodyTopInset + 108 + rows * 22 + tools * 15 + taskBlock)
         }
     }
 
+    /// Only the bottom corners are drawn; the top edge is flush with the screen.
     var cornerRadius: CGFloat {
         switch mode {
-        case .dormant: geometry?.hasNotch == true ? 12 : 16
-        case .compact: 18
-        case .alert: 18
-        case .peek: 22
-        case .expanded: 26
+        case .dormant: hasNotch ? 12 : 16
+        case .compact, .alert: 14
+        case .peek: 20
+        case .expanded: 24
         }
     }
 
@@ -149,7 +243,7 @@ final class IslandViewModel {
         guard let g = geometry else { return .zero }
         let size = shapeSize
         return CGRect(
-            x: g.islandRect.midX - size.width / 2,
+            x: g.islandRect.midX + shapeOffsetX - size.width / 2,
             y: g.islandRect.maxY - size.height,
             width: size.width,
             height: size.height)

@@ -73,6 +73,11 @@ all. That is what lets the whole pipeline run headlessly.
 expanded size permanently with a transparent background; the island shape is
 drawn inside it, so the morph never resizes a window.
 
+The silhouette is `IslandShape`: flush with the top of the screen, rounded only
+along the bottom, so it reads as the camera housing having grown sideways rather
+than as a panel floating below the menu bar. `IslandOutline` is the same path
+left open at the top, so stroking it never draws a line across the screen edge.
+
 ## Things worth knowing
 
 **Two hook events beyond the obvious nine.** `PermissionRequest` gives the
@@ -125,15 +130,29 @@ leave the leading half on screen.
 ## The notch is a hole, not a region
 
 The single most expensive lesson here. Content drawn inside the notch band is
-not clipped by software — those pixels do not exist. A 44pt pill centred on the
-cutout put its text at y≈22, inside the 38pt hole, and the text vanished at
-exactly `auxiliaryTopLeftArea.maxX` (790 on this display) and reappeared past
+not clipped by software — those pixels do not exist. A pill centred on the
+cutout put its text inside the hole, and it vanished at exactly
+`auxiliaryTopLeftArea.maxX` (790 on this display), reappearing past
 `auxiliaryTopRightArea.minX` (1010). It looked exactly like a truncation bug and
 survived two wrong fixes before the cut was measured and landed on 790.5.
 
-So on a notched display every tier is `notchHeight + content`, with content
-inset below the cutout. The shape still wraps the notch — that is what makes it
-read as the island — but nothing informative is ever placed in the band.
+The resting island therefore **flanks the camera**: a row that sits inside the
+menu bar band with its content either side of the cutout and nothing in it. Peek
+and expanded keep that same row as their header and put additional rows below
+the band, where the full width is available.
+
+Three consequences worth knowing, each of which produced a bug first:
+
+- **The flanks are sized independently and the shape is not centred on the
+  camera.** It extends exactly as far as each side's content needs. Forcing
+  symmetry makes the shorter side carry dead space equal to the difference.
+- **Widths are measured with the font the row actually renders in**
+  (`TextMetrics`). Measuring a monospaced target with the rounded font, or at
+  `.regular` when it renders at `.medium`, under-measures by about a character
+  and the label truncates inside a frame that looked wide enough.
+- **The panel has to be wider than the widest island.** The shape is clipped to
+  its window, so an undersized panel silently caps the island and reads as yet
+  another truncation bug.
 
 ## Two implementation notes that cost real work
 

@@ -25,10 +25,18 @@ struct NotchGeometry: Equatable {
 }
 
 enum NotchGeometryResolver {
-    /// Room for the expanded card. The panel never resizes; only the drawn
-    /// shape inside it does, which is what keeps the morph continuous.
-    static let panelWidth: CGFloat = 420
-    static let panelHeight: CGFloat = 260
+    /// The panel is the container, not the island. It never resizes; only the
+    /// drawn shape inside it does, which is what keeps the morph continuous.
+    ///
+    /// It has to be wide enough for the widest island the flanking layout can
+    /// produce — the shape is centred on the camera, so a long label on one side
+    /// widens BOTH flanks. Sized too small, the island is silently clipped to
+    /// the window and the layout looks like a truncation bug.
+    static let panelWidth: CGFloat = 980
+    static let panelHeight: CGFloat = 320
+
+    /// The expanded card's own width, independent of the container.
+    static let cardWidth: CGFloat = 460
 
     /// Fallback pill dimensions on a notchless display. Sized to read like a
     /// notch rather than a floating widget.
