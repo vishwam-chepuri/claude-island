@@ -141,6 +141,40 @@ func registerStateMachineTests() {
             await expectEqual(s.subagentDepth, 0)
         }
 
+        // A background subagent can outlive the parent's turn by minutes. The
+        // SubagentStop that lands afterwards must not resurrect the session:
+        // nothing further arrives to clear it, so the HUD would read "thinking"
+        // until the 30-minute expiry. Observed in the wild — Stop at 21:58:52,
+        // SubagentStop at 22:02:15, still "thinking" when the log ended.
+        test("A SubagentStop after Stop does not resurrect a finished session") {
+            var s = SessionReducer.apply(env(.preToolUse, tool: "Task"), to: nil).session
+            s = SessionReducer.apply(env(.stop, at: 1), to: s).session
+            await expectEqual(s.state, .done)
+
+            s = SessionReducer.apply(env(.subagentStop, at: 200), to: s).session
+            await expectEqual(s.state, .done, "a late subagent flipped a done session to thinking")
+        }
+
+        test("A SubagentStop does not clear an idle nudge") {
+            var s = SessionReducer.apply(env(.preToolUse, tool: "Task"), to: nil).session
+            s = SessionReducer.apply(
+                env(.notification, message: "Claude is waiting for your input", at: 1), to: s
+            ).session
+            await expectEqual(s.state, .idle(waitingOnUser: true))
+
+            s = SessionReducer.apply(env(.subagentStop, at: 200), to: s).session
+            await expectEqual(s.state, .idle(waitingOnUser: true))
+        }
+
+        test("A SubagentStop does not clear a live permission prompt") {
+            var s = SessionReducer.apply(env(.preToolUse, tool: "Task"), to: nil).session
+            s = SessionReducer.apply(env(.permissionRequest, tool: "Bash", at: 1), to: s).session
+            await expect(s.state.isAlert)
+
+            s = SessionReducer.apply(env(.subagentStop, at: 2), to: s).session
+            await expect(s.state.isAlert, "a late subagent dismissed a pending permission")
+        }
+
         test("SessionEnd schedules removal after the fade") {
             let out = SessionReducer.apply(env(.sessionEnd), to: nil)
             await expectEqual(out.session.state, .done)

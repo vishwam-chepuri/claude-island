@@ -172,9 +172,22 @@ public enum SessionReducer {
 
         case .subagentStop:
             s.subagentDepth = max(0, s.subagentDepth - 1)
-            // A subagent finishing does not mean the parent stopped working, and
-            // its own tool events already moved us out of `running`.
-            if case .running = s.state {} else { s.state = .thinking }
+            // A subagent finishing does not mean the parent stopped working, so
+            // this only ever settles the display back to `thinking` — and only
+            // from states that are still mid-turn.
+            //
+            // Everything else is owned by an event that already arrived and
+            // outranks this one: `running` by the parent's own PreToolUse,
+            // `done` by Stop, `idle` by a nudge, `awaitingPermission` by a
+            // prompt the user can still answer. Background subagents outlive
+            // the turn that spawned them — one observed here finished 3m23s
+            // after its parent's Stop — and resurrecting a settled session
+            // pins the HUD at "thinking" until the 30-minute expiry, because
+            // no further event is coming to clear it.
+            switch s.state {
+            case .thinking, .prompting: s.state = .thinking
+            case .running, .done, .idle, .error, .awaitingPermission, .compacting: break
+            }
 
         case .sessionEnd:
             closeCurrentTool(&s, at: now, failed: false, toolName: nil)
