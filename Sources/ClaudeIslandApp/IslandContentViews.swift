@@ -11,13 +11,9 @@ struct CompactContent: View {
     var body: some View {
         FlankingRow(model: model) {
             HStack(spacing: 8) {
-                ToolGlyph(session: session)
+                SessionGlyph(state: session.state)
                 Text(model.compactLeadingText(session))
-                    .font(
-                        .system(
-                            size: 11, weight: .medium,
-                            design: isShowingTarget ? .monospaced : .rounded)
-                    )
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(.white)
                     .lineLimit(1)
             }
@@ -40,10 +36,6 @@ struct CompactContent: View {
         }
     }
 
-    private var isShowingTarget: Bool {
-        if case .running(let tool) = session.state { return tool.target != nil }
-        return false
-    }
 }
 
 // MARK: - Alert
@@ -448,6 +440,26 @@ struct TokenStat: View {
             Text(label)
                 .font(.system(size: 8))
                 .foregroundStyle(IslandPalette.tertiary)
+        }
+    }
+}
+
+/// The resting pill's leading mark: session identity, tinted by state.
+///
+/// Deliberately not the tool's icon — the pill names the session, and a glyph
+/// that changed on every tool call would be noise beside a status word that
+/// already says what is happening.
+struct SessionGlyph: View {
+    let state: SessionState
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(IslandPalette.accent(for: state).opacity(0.18))
+                .frame(width: 20, height: 20)
+            Image(systemName: "sparkle")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(IslandPalette.accent(for: state))
         }
     }
 }

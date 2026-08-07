@@ -126,15 +126,9 @@ final class IslandViewModel {
 
     var leftClusterWidth: CGFloat {
         guard let session = shownSession else { return 0 }
-        // Must match the font the row actually renders in. Measuring a
-        // monospaced target with the rounded font under-measures it, and the
-        // text then truncates inside a frame that looked wide enough.
-        let isTarget: Bool = {
-            if case .running(let tool) = session.state { return tool.target != nil }
-            return false
-        }()
-        let font: NSFont = isTarget ? .monospaced(11) : .roundedMedium(11)
-        let text = TextMetrics.width(compactLeadingText(session), font: font)
+        // Must match the font the row actually renders in, or the label
+        // truncates inside a frame that looked wide enough.
+        let text = TextMetrics.width(compactLeadingText(session), font: .roundedMedium(11))
         return Self.sidePadding + 20 + 8 + text + Self.notchPadding
     }
 
@@ -178,13 +172,11 @@ final class IslandViewModel {
         }
     }
 
-    /// The text the compact row leads with: the running tool's target when one
-    /// is in flight, otherwise the session name.
+    /// The resting pill names the session and nothing else. Which tool is
+    /// running is detail for the peek; on the pill it churns with every call and
+    /// says less than the status word already does.
     func compactLeadingText(_ session: Session) -> String {
-        if case .running(let tool) = session.state {
-            return Redactor.truncate(tool.target ?? tool.toolName, limit: 34)
-        }
-        return Format.name(session.displayName)
+        Format.name(session.displayName)
     }
 
     func compactElapsedText(_ session: Session) -> String? {

@@ -191,9 +191,10 @@ animations moved.
 
 Three levels of detail, each earning its own layout.
 
-**Compact** — a single line, always. Glyph, session name, then the status word
-and mark on the right. While a tool runs the name gives way to that tool's
-target and returns when it finishes.
+**Compact** — a single line, always. Session glyph, session name, then the
+status word and mark on the right. It names the session and nothing else: which
+tool is running churns with every call and says less than the status word
+already does, so that detail lives in the peek.
 
 Every tracked session rests as one line, including `Done` and `Your turn`.
 Those two used to collapse to dormant, which hid exactly the states you are most
