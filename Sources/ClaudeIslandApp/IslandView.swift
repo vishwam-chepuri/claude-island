@@ -28,6 +28,9 @@ struct IslandView: View {
         .offset(x: model.shapeOffsetX)
         .animation(spring, value: model.mode)
         .animation(spring, value: model.snapshot.primary?.state)
+        // The card's size does not change when the selection does, but the
+        // content does; animating on it keeps the swap from snapping.
+        .animation(spring, value: model.displaySession?.id)
     }
 
     private var islandShape: some View {

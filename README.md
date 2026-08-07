@@ -190,7 +190,7 @@ animations moved.
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
 | Tests | 98 passing |
-| Self-test | 41 checks passing |
+| Self-test | 44 checks passing |
 
 ## Visual language
 
@@ -241,6 +241,11 @@ context and output tokens, and plan progress with the task currently in flight.
 **Expanded** (click) — a switcher. Every active session is listed and
 clickable; selecting one shows its detail below. Click the island again, or
 anywhere outside, to dismiss.
+
+The card is sized across **all** sessions, not the selected one, so browsing
+never resizes it. Sized from the selection, its width followed that session's
+name length and its height followed that session's tool count and task block, so
+every click reflowed the whole HUD. Two self-test checks guard it.
 
 A permission request always takes over the view, even from an explicit
 selection — missing a prompt is worse than losing your place. The selection is

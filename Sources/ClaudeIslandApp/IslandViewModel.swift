@@ -153,16 +153,14 @@ final class IslandViewModel {
 
     private var shownSession: Session? { displaySession }
 
-    var leftClusterWidth: CGFloat {
-        guard let session = shownSession else { return 0 }
+    func leftClusterWidth(for session: Session) -> CGFloat {
         // Must match the font the row actually renders in, or the label
         // truncates inside a frame that looked wide enough.
         let text = TextMetrics.width(compactLeadingText(session), font: .roundedMedium(11))
         return Self.sidePadding + 20 + 8 + text + Self.notchPadding
     }
 
-    var rightClusterWidth: CGFloat {
-        guard let session = shownSession else { return 0 }
+    func rightClusterWidth(for session: Session) -> CGFloat {
         var width = Self.notchPadding
         if let elapsed = compactElapsedText(session) {
             width += TextMetrics.width(elapsed, font: .monospaced(10)) + 8
@@ -172,6 +170,35 @@ final class IslandViewModel {
         width += StatusMark.size + Self.sidePadding
         return width
     }
+
+    var leftClusterWidth: CGFloat { shownSession.map(leftClusterWidth(for:)) ?? 0 }
+    var rightClusterWidth: CGFloat { shownSession.map(rightClusterWidth(for:)) ?? 0 }
+
+    // MARK: - Stable sizing for the open card
+    //
+    // The expanded card must not resize as you browse. Sizing it from the
+    // *selected* session made its width follow that session's name length and
+    // its height follow that session's tool count, so every click reflowed the
+    // whole HUD. Everything below is measured across ALL sessions, so the card
+    // is big enough for any of them and only changes when the session set does.
+
+    /// Widest flank any session would need, so the header never reflows.
+    private var widestFlank: CGFloat {
+        allSessions.reduce(0) { widest, session in
+            max(widest, max(leftClusterWidth(for: session), rightClusterWidth(for: session)))
+        }
+    }
+
+    /// Most recent-tool rows any session would draw.
+    private var maxToolRows: Int {
+        allSessions.reduce(0) { most, session in
+            max(most, min(session.recentTools.count, Session.recentToolLimit))
+        }
+    }
+
+    /// Whether any session has a plan, and whether any has one still in flight.
+    private var anyTasks: Bool { allSessions.contains { !$0.tasks.isEmpty } }
+    private var anyCurrentTask: Bool { allSessions.contains { $0.tasks.current != nil } }
 
     /// How far the drawn shape sits from the panel's centre.
     ///
@@ -232,8 +259,8 @@ final class IslandViewModel {
             // having grown sideways rather than as a panel hanging below it.
             return CGSize(width: max(flanking, base.width + 80), height: rowHeight)
         case .peek:
-            // Reserved only when a task will actually be drawn. A finished plan
-            // has no current task, and reserving for it left dead space.
+            // Peek shows one session and cannot be browsed, so sizing it to that
+            // session is fine.
             let taskRow: CGFloat = (displaySession?.tasks.current != nil) ? 28 : 0
             // The open tiers split their flanks evenly, so the width has to fit
             // TWICE the wider side — sizing to the sum truncates the header.
@@ -242,12 +269,12 @@ final class IslandViewModel {
                 width: max(even, 460),
                 height: bodyTopInset + Self.peekBodyHeight + taskRow)
         case .expanded:
+            // Every term here is measured across all sessions, so switching
+            // between them never changes the card's size.
             let rows = CGFloat(min(allSessions.count, 4))
-            let tools = CGFloat(min(displaySession?.recentTools.count ?? 0, 3))
-            let taskBlock: CGFloat =
-                (displaySession?.tasks.isEmpty == false)
-                ? (34 + ((displaySession?.tasks.current != nil) ? 18 : 0)) : 0
-            let evenWidth = notchGap + 2 * max(leftClusterWidth, rightClusterWidth)
+            let tools = CGFloat(maxToolRows)
+            let taskBlock: CGFloat = anyTasks ? (34 + (anyCurrentTask ? 18 : 0)) : 0
+            let evenWidth = notchGap + 2 * widestFlank
             return CGSize(
                 width: max(evenWidth, NotchGeometryResolver.cardWidth),
                 height: bodyTopInset + Self.expandedChromeHeight

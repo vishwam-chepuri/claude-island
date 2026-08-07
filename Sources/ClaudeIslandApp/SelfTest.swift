@@ -478,6 +478,58 @@ enum SelfTest {
                 name: "a selection whose session ended is dropped",
                 passed: model.selectedSessionID == nil,
                 detail: "selected=\(model.selectedSessionID ?? "nil")"))
+
+        await stableSizeChecks(&checks, model: model)
+    }
+
+    /// Browsing the switcher must not resize the card.
+    ///
+    /// It used to: the card was measured from the *selected* session, so its
+    /// width followed that session's name length and its height followed that
+    /// session's tool count. Every click reflowed the whole HUD.
+    private static func stableSizeChecks(_ checks: inout [Check], model: IslandViewModel) async {
+        var short = session("s", state: .thinking)
+        short.cwd = "/tmp/ui"
+
+        var long = session("l", state: .done)
+        long.cwd = "/tmp/a-considerably-longer-worktree-name"
+        long.recentTools = (0..<3).map {
+            ToolActivity(
+                kind: .bash, toolName: "Bash", target: "step \($0)", startedAt: Date(),
+                endedAt: Date())
+        }
+        long.tasks = TaskProgress(items: [
+            TaskItem(id: "1", subject: "first", status: .completed),
+            TaskItem(id: "2", subject: "second", status: .inProgress),
+        ])
+
+        model.apply(HUDSnapshot(primary: short, others: [long]))
+        model.forcedMode = .expanded
+
+        model.select("s")
+        let sizeWithShort = model.shapeSize
+        model.select("l")
+        let sizeWithLong = model.shapeSize
+
+        checks.append(
+            Check(
+                name: "switcher width does not change when browsing sessions",
+                passed: abs(sizeWithShort.width - sizeWithLong.width) < 0.5,
+                detail: "\(sizeWithShort.width) vs \(sizeWithLong.width)"))
+        checks.append(
+            Check(
+                name: "switcher height does not change when browsing sessions",
+                passed: abs(sizeWithShort.height - sizeWithLong.height) < 0.5,
+                detail: "\(sizeWithShort.height) vs \(sizeWithLong.height)"))
+        checks.append(
+            Check(
+                name: "the card is sized for the widest session, not the shown one",
+                passed: sizeWithShort.width
+                    >= model.notchGap + 2 * model.leftClusterWidth(for: long),
+                detail: "width=\(sizeWithShort.width)"))
+
+        model.forcedMode = nil
+        model.apply(HUDSnapshot())
     }
 
     private static func session(_ id: String, state: SessionState) -> Session {

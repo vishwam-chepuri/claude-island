@@ -465,9 +465,11 @@ struct SessionRow: View {
                 .frame(width: 2.5, height: 15)
                 .shadow(color: accent.glow, radius: isShown ? 3 : 0)
 
+            // Constant weight: switching it on selection changed the label's
+            // intrinsic width and reflowed the row under the cursor.
             Text(Format.name(candidate.displayName, limit: 22))
-                .font(.system(size: 10.5, weight: isShown ? .semibold : .regular, design: .rounded))
-                .foregroundStyle(isShown ? .white : .white.opacity(0.66))
+                .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                .foregroundStyle(isShown ? .white : .white.opacity(0.62))
                 .lineLimit(1)
 
             Spacer(minLength: 6)
