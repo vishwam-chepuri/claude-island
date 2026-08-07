@@ -250,6 +250,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         logging.target = self
         menu.addItem(logging)
 
+        let tint = NSMenuItem(
+            title: model.debugTint ? "Hide Debug Tint" : "Show Debug Tint",
+            action: #selector(toggleDebugTint), keyEquivalent: "")
+        tint.target = self
+        menu.addItem(tint)
+
         let reveal = NSMenuItem(
             title: "Reveal Support Folder", action: #selector(revealSupportFolder),
             keyEquivalent: "")
@@ -336,6 +342,17 @@ final class AppController: NSObject, NSApplicationDelegate {
             FileManager.default.createFile(atPath: IslandPaths.debugFlag.path, contents: nil)
         } else {
             try? FileManager.default.removeItem(at: IslandPaths.debugFlag)
+        }
+        rebuildMenu()
+    }
+
+    @objc private func toggleDebugTint() {
+        model.debugTint.toggle()
+        if model.debugTint {
+            IslandPaths.ensureRoot()
+            FileManager.default.createFile(atPath: IslandPaths.tintFlag.path, contents: nil)
+        } else {
+            try? FileManager.default.removeItem(at: IslandPaths.tintFlag)
         }
         rebuildMenu()
     }

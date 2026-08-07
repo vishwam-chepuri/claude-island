@@ -11,6 +11,10 @@ public enum IslandPaths {
     /// Presence of this file turns logging on without a rebuild or a relaunch
     /// into the menu.
     public static var debugFlag: URL { root.appendingPathComponent("debug") }
+    /// Temporary development aid: fills the island with a visible colour so its
+    /// edges can be seen against the notch and the menu bar, which pure #000
+    /// deliberately blends into.
+    public static var tintFlag: URL { root.appendingPathComponent("tint") }
 
     public static var claudeHome: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(

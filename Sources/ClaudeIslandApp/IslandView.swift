@@ -34,8 +34,10 @@ struct IslandView: View {
             // .continuous so the corner curvature interpolates rather than
             // snapping between radii mid-morph.
             RoundedRectangle(cornerRadius: model.cornerRadius, style: .continuous)
-                // Pure black, no material: it has to read as the physical cutout.
-                .fill(Color.black)
+                // Pure black, no material: it has to read as the physical
+                // cutout. The debug tint replaces it with something visible so
+                // the shape's edges can actually be seen while iterating.
+                .fill(model.debugTint ? IslandPalette.debugFill : Color.black)
                 // The shadow lives on the shape leaf, not on the container.
                 // Attached to the container, every animating child invalidated
                 // it and the recomposite cost measured 4.6% CPU during the
@@ -45,7 +47,7 @@ struct IslandView: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: model.cornerRadius, style: .continuous)
-                        .strokeBorder(alertStroke, lineWidth: model.mode == .alert ? 1.5 : 0)
+                        .strokeBorder(strokeColor, lineWidth: strokeWidth)
                 )
                 .matchedGeometryEffect(id: "island", in: shapeNamespace, isSource: true)
 
@@ -75,8 +77,14 @@ struct IslandView: View {
         }
     }
 
-    private var alertStroke: Color {
-        model.mode == .alert ? IslandPalette.alert.opacity(0.9) : .clear
+    private var strokeColor: Color {
+        if model.mode == .alert { return IslandPalette.alert.opacity(0.9) }
+        return model.debugTint ? IslandPalette.debugStroke : .clear
+    }
+
+    private var strokeWidth: CGFloat {
+        if model.mode == .alert { return 1.5 }
+        return model.debugTint ? 1 : 0
     }
 
     @ViewBuilder
@@ -109,6 +117,11 @@ struct IslandView: View {
 }
 
 enum IslandPalette {
+    /// Development only. Deep indigo against a cyan edge reads clearly over the
+    /// notch, the menu bar and any wallpaper.
+    static let debugFill = Color(red: 0.16, green: 0.11, blue: 0.38)
+    static let debugStroke = Color(red: 0.45, green: 0.92, blue: 1.0)
+
     /// Permission requests. Warm enough to read as "you specifically".
     static let alert = Color(red: 1.0, green: 0.58, blue: 0.16)
     static let running = Color(red: 0.42, green: 0.78, blue: 1.0)

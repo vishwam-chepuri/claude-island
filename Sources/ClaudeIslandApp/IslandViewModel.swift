@@ -28,6 +28,8 @@ final class IslandViewModel {
     private(set) var isPinnedOpen = false
     /// Set false by the menu bar extra; the HUD hides and all timers stop.
     var isEnabled = true
+    /// Development aid, off by default. See IslandPaths.tintFlag.
+    var debugTint = FileManager.default.fileExists(atPath: IslandPaths.tintFlag.path)
 
     /// Drives elapsed-time labels. Nil — and therefore not scheduled at all —
     /// whenever nothing is running. This is the idle-CPU contract: no session,

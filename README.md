@@ -241,6 +241,19 @@ dependencies, `Tests/ClaudeIslandCoreTests/TinyTest.swift` is a ~120-line
 harness whose call shapes (`expect`, `require`, `fail`) mirror swift-testing, so
 the suites port back with a mechanical find-and-replace if Xcode is installed.
 
+## Debug tint
+
+Pure `#000` is deliberate — it makes the island read as the physical cutout —
+but it also makes the shape's edges invisible while iterating on layout. The
+menu bar extra has **Show Debug Tint**, which fills it indigo with a cyan edge
+so the outline, the corner radii and the notch punch-out are all visible.
+
+```bash
+touch ~/.claude-island/tint     # or toggle it from the menu bar
+```
+
+Off by default, persisted by the sentinel file, and independent of logging.
+
 ## Configuration
 
 Logging is **off by default**. Enable it from the menu bar, or:
