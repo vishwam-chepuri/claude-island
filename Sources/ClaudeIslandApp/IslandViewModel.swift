@@ -431,6 +431,13 @@ final class IslandViewModel {
 
 extension SessionState {
     /// The single word shown on the compact pill's right side.
+    ///
+    /// "Your turn" belongs to a permission prompt alone, because it is the only
+    /// state with an answer that unblocks work. An idle nudge says "Waiting",
+    /// which is what `SessionState.label` and the card's NOW row have always
+    /// called it — the pill was the one surface claiming a session was owed
+    /// something when it was merely unattended. Read down the column the three
+    /// settle into an escalation: Idle, Waiting, Your turn.
     var statusWord: String {
         switch self {
         case .running: "Working"
@@ -440,7 +447,7 @@ extension SessionState {
         case .compacting: "Compacting"
         case .done: "Done"
         case .error: "Failed"
-        case .idle(let waiting): waiting ? "Your turn" : "Idle"
+        case .idle(let waiting): waiting ? "Waiting" : "Idle"
         }
     }
 }

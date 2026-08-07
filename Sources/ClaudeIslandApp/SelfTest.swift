@@ -384,7 +384,7 @@ enum SelfTest {
 
         for (label, state) in [
             ("thinking", SessionState.thinking),
-            ("your turn (idle nudge)", SessionState.idle(waitingOnUser: true)),
+            ("waiting (idle nudge)", SessionState.idle(waitingOnUser: true)),
             ("done", SessionState.done),
             ("failed", SessionState.error("Bash failed")),
         ] {

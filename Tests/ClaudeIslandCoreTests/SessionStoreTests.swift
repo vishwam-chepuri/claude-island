@@ -62,6 +62,30 @@ func registerSessionStoreTests() {
             await expectEqual(snap.primary?.state.isAlert, true)
         }
 
+        // The mirror of the check above. A permission prompt is the one thing
+        // allowed to jump the queue; an idle nudge must not, because it fires
+        // after a session has simply sat unattended and then stays set until you
+        // come back. Ranking it up would pin the HUD to a session doing nothing
+        // while another was still working.
+        test("An idle nudge never outranks a working session") {
+            let clock = ClockBox(now: base)
+            let (store, _) = makeStore(clock)
+
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .preToolUse, toolName: "Read", receivedAt: base))
+            // The nudge is newer, and still must not take the slot.
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "b", event: .notification,
+                    message: "Claude is waiting for your input",
+                    receivedAt: base.addingTimeInterval(30)))
+
+            let snap = await store.currentSnapshot()
+            await expectEqual(snap.primary?.id, "a")
+            await expectEqual(snap.others.first?.state, .idle(waitingOnUser: true))
+        }
+
         test("prompting advances to thinking only when nothing superseded it") {
             let clock = ClockBox(now: base)
             let (store, scheduler) = makeStore(clock)

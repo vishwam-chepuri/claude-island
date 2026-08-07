@@ -206,6 +206,23 @@ func registerStateMachineTests() {
             await expect(SessionState.compacting.wantsAnimation)
         }
 
+        // An idle nudge is not an interruption. It fires once a session has sat
+        // without input for a while and then stays set until you come back, so
+        // treating it as "needs you" made the attention badge a tally of
+        // sessions you had walked away from — drowning out the one state that
+        // has an answer which unblocks work.
+        test("Only a permission prompt counts as needing the user") {
+            var s = SessionReducer.apply(
+                env(.notification, message: "Claude is waiting for your input"), to: nil
+            ).session
+            await expectEqual(s.state, .idle(waitingOnUser: true))
+            await expect(!s.state.needsUser, "an idle nudge was counted as needing the user")
+
+            s = SessionReducer.apply(env(.permissionRequest, tool: "Bash", at: 1), to: s).session
+            await expect(
+                s.state.needsUser, "a permission prompt was not counted as needing the user")
+        }
+
         test("displayName prefers session name, then cwd basename, then id") {
             var s = Session(id: "abcdef123456", startedAt: base)
             await expectEqual(s.displayName, "abcdef12")

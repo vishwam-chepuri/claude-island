@@ -38,15 +38,21 @@ public enum SessionState: Sendable, Equatable {
         return false
     }
 
-    /// The session is blocked on the human, either by a permission prompt or
-    /// by an explicit idle nudge.
-    public var needsUser: Bool {
-        switch self {
-        case .awaitingPermission: true
-        case .idle(let waiting): waiting
-        default: false
-        }
-    }
+    /// The session is blocked on the human: work has stopped and cannot resume
+    /// until the prompt is answered.
+    ///
+    /// The idle nudge, `idle(waitingOnUser: true)`, is deliberately excluded.
+    /// It only means no prompt has arrived in a while, which is true of every
+    /// session you are not currently typing into and stays true until you come
+    /// back — so counting it here turned the attention badge into a tally of
+    /// sessions you had walked away from rather than of things blocking work,
+    /// and the two were indistinguishable at a glance.
+    ///
+    /// Identical to `isAlert` today, and defined in terms of it so the two
+    /// cannot drift. The names are kept apart because they answer different
+    /// questions — what the HUD escalates, versus what the human owes — and any
+    /// future blocking state has to satisfy both.
+    public var needsUser: Bool { isAlert }
 
     public var isActive: Bool {
         switch self {
