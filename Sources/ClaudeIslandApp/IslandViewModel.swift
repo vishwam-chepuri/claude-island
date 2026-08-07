@@ -123,9 +123,39 @@ final class IslandViewModel {
     ///   subline 13 + meta 13 + context block 22 + chip row 34, four gaps of 7.
     static let peekBodyHeight: CGFloat =
         bodyTopPadding + 13 + 7 + 13 + 7 + 22 + 7 + 34 + bodyBottomPadding
-    /// header chrome + meta + tokens + section labels, excluding the variable
-    /// session rows, tool rows and task block the caller adds.
-    static let expandedChromeHeight: CGFloat = 132
+    // MARK: Expanded card metrics
+    //
+    // A budget, not a contract. The trail at the foot of the card is the one
+    // flexible region — it absorbs whatever height is left over and scrolls
+    // within it — so an error here changes how many rows are visible at rest
+    // and can no longer slice a row against the card's clip shape.
+    //
+    // What these replace was a single opaque `132` covering all of the chrome
+    // at once. It undercounted (a tool row is ~18pt, not the 15 it assumed, and
+    // it omitted the "recent" label entirely), so the card drew shorter than its
+    // own contents and the last row was cut in half.
+    static let maxSessionRows = 4
+    static let sessionRowHeight: CGFloat = 22
+    static let sessionOverflowRowHeight: CGFloat = 14
+    static let nowRowTopPadding: CGFloat = 9
+    static let nowRowHeight: CGFloat = 28
+    static let trailTopPadding: CGFloat = 7
+    static let trailLabelHeight: CGFloat = 13
+    static let trailRowHeight: CGFloat = 17
+    /// How many trail rows the card budgets for. More than this still render —
+    /// the trail scrolls — this only sets how many are visible at rest.
+    static let visibleTrailRows = 5
+
+    /// Fixed chrome between the header and the NOW row, tallied per block so a
+    /// change to any one of them has an obvious place to land.
+    static let expandedChromeHeight: CGFloat =
+        bodyTopPadding  // 7
+        + 12  // "sessions" label row plus its 3pt bottom padding
+        + 15  // divider with 7pt above and below
+        + 12  // meta line
+        + 27  // context label, its 7pt top padding, and the meter
+        + 45  // stat chips with 7pt above
+        + bodyBottomPadding  // 13
     /// Breathing room between content and the camera cutout.
     static let notchPadding: CGFloat = 12
 
@@ -189,10 +219,23 @@ final class IslandViewModel {
         }
     }
 
-    /// Most recent-tool rows any session would draw.
-    private var maxToolRows: Int {
+    /// Sessions the switcher has no room to list.
+    var sessionOverflowCount: Int { max(0, allSessions.count - Self.maxSessionRows) }
+
+    /// Height reserved for the trail, measured across all sessions so browsing
+    /// between them cannot resize the card. Zero until some session has
+    /// actually finished a call.
+    private var trailBudget: CGFloat {
+        let rows = min(maxTrailRows, Self.visibleTrailRows)
+        guard rows > 0 else { return 0 }
+        return Self.trailLabelHeight + CGFloat(rows) * Self.trailRowHeight
+    }
+
+    /// Most finished calls any session would draw. The in-flight call is
+    /// excluded — it belongs to the NOW row, not the trail.
+    private var maxTrailRows: Int {
         allSessions.reduce(0) { most, session in
-            max(most, min(session.recentTools.count, Session.recentToolLimit))
+            max(most, session.recentTools.filter { $0.endedAt != nil }.count)
         }
     }
 
@@ -271,14 +314,17 @@ final class IslandViewModel {
         case .expanded:
             // Every term here is measured across all sessions, so switching
             // between them never changes the card's size.
-            let rows = CGFloat(min(allSessions.count, 4))
-            let tools = CGFloat(maxToolRows)
+            let rows = CGFloat(min(allSessions.count, Self.maxSessionRows))
+            let overflow: CGFloat =
+                sessionOverflowCount > 0 ? Self.sessionOverflowRowHeight : 0
             let taskBlock: CGFloat = anyTasks ? (34 + (anyCurrentTask ? 18 : 0)) : 0
             let evenWidth = notchGap + 2 * widestFlank
             return CGSize(
                 width: max(evenWidth, NotchGeometryResolver.cardWidth),
                 height: bodyTopInset + Self.expandedChromeHeight
-                    + rows * 22 + tools * 15 + taskBlock)
+                    + rows * Self.sessionRowHeight + overflow + taskBlock
+                    + Self.nowRowTopPadding + Self.nowRowHeight
+                    + Self.trailTopPadding + trailBudget)
         }
     }
 

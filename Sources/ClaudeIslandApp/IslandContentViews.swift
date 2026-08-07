@@ -317,11 +317,20 @@ struct ExpandedContent: View {
                 }
                 .padding(.bottom, 3)
 
-                ForEach(model.allSessions.prefix(4)) { candidate in
+                ForEach(model.allSessions.prefix(IslandViewModel.maxSessionRows)) { candidate in
                     SessionRow(
                         candidate: candidate,
                         isShown: candidate.id == session.id,
                         onSelect: { model.select(candidate.id) })
+                }
+                // Dropping the fifth session silently put the count in the
+                // header at odds with the list directly beneath it.
+                if model.sessionOverflowCount > 0 {
+                    Text("+\(model.sessionOverflowCount) more")
+                        .font(.system(size: 8.5))
+                        .foregroundStyle(IslandPalette.tertiary)
+                        .padding(.leading, 17)
+                        .padding(.top, 2)
                 }
 
                 Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 7)
@@ -384,17 +393,20 @@ struct ExpandedContent: View {
                     }
                 }
 
-                if !session.recentTools.isEmpty {
-                    SectionLabel("recent").padding(.top, 9)
-                    ForEach(session.recentTools) { tool in
-                        ToolRow(tool: tool, now: model.tick)
-                    }
-                }
+                NowRow(session: session, now: model.tick)
+                    .padding(.top, 9)
+
+                // No trailing Spacer: the trail itself is the flexible region.
+                // A Spacer with minLength 0 collapses to nothing under pressure
+                // and lets everything above it overflow the card, which is how
+                // the last recent row came to be sliced in half.
+                TrailSection(session: session)
+                    .padding(.top, 7)
+                    .frame(maxHeight: .infinity, alignment: .top)
             }
             .padding(.horizontal, IslandViewModel.sidePadding)
             .padding(.top, IslandViewModel.bodyTopPadding)
-
-            Spacer(minLength: 0)
+            .padding(.bottom, IslandViewModel.bodyBottomPadding)
         }
     }
 }
@@ -411,41 +423,184 @@ struct SectionLabel: View {
     }
 }
 
-/// One tool call: a tinted icon plate, the name, its target, and how long it
-/// took. Failures are the only rows that carry colour, so they stand out.
-struct ToolRow: View {
-    let tool: ToolActivity
+/// What the shown session is doing at this instant.
+///
+/// The card used to open onto nothing but finished calls, and a finished call's
+/// duration never changes — so a session working right now and one that stopped
+/// an hour ago rendered identically, and both read as a hung UI. This row is the
+/// only part of the body written in the present tense, and it says so even when
+/// the answer is "nothing", which is what stops the history below it from being
+/// mistaken for a frozen present.
+struct NowRow: View {
+    let session: Session
     let now: Date
 
-    private var accent: Accent {
-        tool.failed ? IslandPalette.errorAccent : IslandPalette.workingAccent
+    private var accent: Accent { IslandPalette.accentPair(for: session.state) }
+    private var isLive: Bool { session.state.wantsAnimation }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(accent.wash)
+                        .frame(width: 19, height: 19)
+                    Image(systemName: symbol)
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(accent.bright)
+                }
+                Text(headline)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundStyle(IslandPalette.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 4)
+                if let elapsed {
+                    Text(elapsed)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(accent.bright)
+                        .monospacedDigit()
+                }
+            }
+            if isLive {
+                LiveRail(base: NSColor(accent.base), bright: NSColor(accent.bright))
+                    .frame(height: LiveRail.height)
+            }
+        }
+    }
+
+    private var symbol: String {
+        switch session.state {
+        case .running(let t): t.kind.symbolName
+        case .thinking: "ellipsis"
+        case .prompting: "paperplane.fill"
+        case .compacting: "arrow.down.right.and.arrow.up.left"
+        case .awaitingPermission: "hand.raised.fill"
+        case .done: "checkmark"
+        case .idle(let waiting): waiting ? "hand.raised.fill" : "moon.zzz.fill"
+        case .error: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var headline: String {
+        switch session.state {
+        case .running(let t): t.toolName
+        case .thinking: "Thinking"
+        case .prompting: "Prompt sent"
+        case .compacting: "Compacting context"
+        case .awaitingPermission(let a): "Allow \(a.toolName)?"
+        case .done: "Finished"
+        case .idle(let waiting): waiting ? "Waiting for you" : "Idle"
+        case .error(let m): m
+        }
+    }
+
+    private var detail: String? {
+        switch session.state {
+        case .running(let t): t.target
+        case .awaitingPermission(let a): a.target
+        default: nil
+        }
+    }
+
+    /// Only live states carry a counter, and the presence of one is therefore a
+    /// promise that it is moving. Settled states deliberately show nothing: the
+    /// ticker stops when no session wants animation, so an "8s ago" on a
+    /// finished session would freeze at 8s and look exactly like the bug this
+    /// row exists to fix.
+    private var elapsed: String? {
+        switch session.state {
+        case .running(let t): Format.compactDuration(t.elapsed(now: now))
+        case .awaitingPermission(let a): Format.compactDuration(now.timeIntervalSince(a.since))
+        case .thinking, .prompting, .compacting:
+            Format.compactDuration(now.timeIntervalSince(session.lastEventAt))
+        case .done, .idle, .error: nil
+        }
+    }
+}
+
+/// Finished calls, newest first, demoted hard against the NOW row above: no
+/// filled plate, dimmer text, tighter leading. The hierarchy is carried by
+/// weight, which leaves colour free to mean "this one failed".
+///
+/// This is the card's one flexible region. It takes whatever height is left
+/// after the fixed chrome and scrolls within it, so an error in the height
+/// budget shrinks the visible list instead of slicing a row in half against the
+/// card's clip shape.
+struct TrailSection: View {
+    let session: Session
+
+    private var finished: [ToolActivity] {
+        // The in-flight call lives in `recentTools` at index 0 as well as in the
+        // NOW row above; without this it would appear twice.
+        session.recentTools.filter { $0.endedAt != nil }
     }
 
     var body: some View {
-        HStack(spacing: 7) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(accent.wash)
-                    .frame(width: 15, height: 15)
-                Image(systemName: tool.failed ? "exclamationmark" : tool.kind.symbolName)
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(accent.bright)
+        VStack(alignment: .leading, spacing: 0) {
+            if !finished.isEmpty {
+                SectionLabel("recent").padding(.bottom, 3)
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(finished) { tool in
+                            TrailRow(tool: tool)
+                        }
+                    }
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                // A row half-cut by the viewport edge is indistinguishable from
+                // a row half-cut by a layout bug — which is the exact complaint
+                // this section exists to answer. Fading the last few points
+                // reads as "there is more below" and cannot be mistaken for
+                // damage. Harmless when everything fits: the fade lands on
+                // empty space.
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black, location: 0),
+                            .init(color: .black, location: 0.82),
+                            .init(color: .black.opacity(0), location: 1),
+                        ],
+                        startPoint: .top, endPoint: .bottom))
             }
+        }
+    }
+}
+
+struct TrailRow: View {
+    let tool: ToolActivity
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: tool.failed ? "exclamationmark" : tool.kind.symbolName)
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(
+                    tool.failed ? IslandPalette.errorAccent.bright : IslandPalette.tertiary
+                )
+                .frame(width: 12)
             Text(tool.toolName)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.88))
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.white.opacity(tool.failed ? 0.82 : 0.55))
             Text(tool.target ?? "")
-                .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(IslandPalette.tertiary)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.3))
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            Text(Format.compactDuration(tool.elapsed(now: now)))
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(IslandPalette.tertiary)
+            // No `now`: these are finished, so their duration is fixed. Passing
+            // a clock in would imply otherwise.
+            Text(Format.compactDuration(tool.elapsed()))
+                .font(.system(size: 8.5, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.3))
                 .monospacedDigit()
         }
-        .padding(.vertical, 1.5)
+        .padding(.vertical, 2)
     }
 }
 

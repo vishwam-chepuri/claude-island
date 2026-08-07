@@ -63,6 +63,95 @@ struct PulsingGlyph: NSViewRepresentable {
     }
 }
 
+/// A slim indeterminate rail: a bright head sweeping across a dim track.
+///
+/// The expanded card's body is otherwise text and finished durations, and a
+/// finished duration is frozen by definition — so a session working right now
+/// and one that stopped an hour ago rendered identically, and both read as a
+/// hung UI. This is the one element in the card body that can only mean "now".
+///
+/// Same construction as its siblings: the sweep is a CAAnimation handed to the
+/// render server, never a SwiftUI `repeatForever`.
+struct LiveRail: NSViewRepresentable {
+    let base: NSColor
+    let bright: NSColor
+
+    static let height: CGFloat = 2.5
+
+    /// Lays its own sublayers out in `layout()`. `updateNSView` cannot do it —
+    /// SwiftUI has not necessarily sized the view by the time it runs, and a
+    /// sweep computed against a zero width never moves.
+    final class RailView: NSView {
+        let track = CALayer()
+        let head = CAGradientLayer()
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            head.startPoint = CGPoint(x: 0, y: 0.5)
+            head.endPoint = CGPoint(x: 1, y: 0.5)
+            layer?.addSublayer(track)
+            layer?.addSublayer(head)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("not used") }
+
+        override func layout() {
+            super.layout()
+            let h = bounds.height
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            track.frame = bounds
+            track.cornerRadius = h / 2
+            head.bounds = CGRect(
+                x: 0, y: 0, width: max(24, bounds.width * 0.32), height: h)
+            head.cornerRadius = h / 2
+            head.position = CGPoint(x: bounds.midX, y: bounds.midY)
+            CATransaction.commit()
+            applySweep()
+        }
+
+        func applySweep() {
+            let key = "island.sweep"
+            head.removeAnimation(forKey: key)
+            guard bounds.width > 0 else { return }
+            guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+
+            let sweep = CABasicAnimation(keyPath: "position.x")
+            sweep.fromValue = -head.bounds.width / 2
+            sweep.toValue = bounds.width + head.bounds.width / 2
+            sweep.duration = 1.5
+            sweep.repeatCount = .infinity
+            sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            head.add(sweep, forKey: key)
+        }
+    }
+
+    func makeNSView(context: NSViewRepresentableContext<Self>) -> RailView {
+        RailView(frame: .zero)
+    }
+
+    func updateNSView(_ view: RailView, context: NSViewRepresentableContext<Self>) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        view.track.backgroundColor = base.withAlphaComponent(0.14).cgColor
+        view.head.colors = [
+            base.withAlphaComponent(0).cgColor, bright.cgColor,
+            base.withAlphaComponent(0).cgColor,
+        ]
+        CATransaction.commit()
+        view.needsLayout = true
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize, nsView: RailView,
+        context: NSViewRepresentableContext<Self>
+    ) -> CGSize? {
+        CGSize(width: proposal.width ?? 120, height: Self.height)
+    }
+}
+
 /// The status mark: a ring that spins while working, completes and takes a
 /// checkmark when the turn lands on you, and rests solid when done.
 ///

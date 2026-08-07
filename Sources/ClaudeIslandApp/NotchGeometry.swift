@@ -33,7 +33,12 @@ enum NotchGeometryResolver {
     /// widens BOTH flanks. Sized too small, the island is silently clipped to
     /// the window and the layout looks like a truncation bug.
     static let panelWidth: CGFloat = 980
-    static let panelHeight: CGFloat = 320
+    /// Tall enough for the largest card the expanded layout can produce: four
+    /// session rows, an overflow line, a task block with a current item, the NOW
+    /// row and a full trail comes to ~465pt. At the previous 320 that card was
+    /// silently clipped by the window itself, on top of the separate clipping
+    /// bug in its own height budget.
+    static let panelHeight: CGFloat = 520
 
     /// The expanded card's own width, independent of the container.
     static let cardWidth: CGFloat = 460

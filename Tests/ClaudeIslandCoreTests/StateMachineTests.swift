@@ -150,12 +150,18 @@ func registerStateMachineTests() {
 
         test("recentTools is capped") {
             var s: Session?
-            for i in 0..<10 {
+            // Comfortably past the cap, so this keeps testing the cap rather
+            // than the loop bound if the limit is ever raised again.
+            for i in 0..<(Session.recentToolLimit + 5) {
                 s = SessionReducer.apply(
                     env(.preToolUse, tool: "Read", at: TimeInterval(i)), to: s
                 ).session
             }
             await expectEqual(s?.recentTools.count, Session.recentToolLimit)
+            await expectEqual(
+                s?.recentTools.first?.startedAt,
+                base.addingTimeInterval(TimeInterval(Session.recentToolLimit + 4)),
+                "the cap dropped the newest call instead of the oldest")
         }
 
         test("Only idle and terminal states stop animating") {

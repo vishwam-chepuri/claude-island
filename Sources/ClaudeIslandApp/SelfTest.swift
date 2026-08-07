@@ -530,6 +530,75 @@ enum SelfTest {
 
         model.forcedMode = nil
         model.apply(HUDSnapshot())
+
+        await cardFitChecks(&checks, model: model)
+    }
+
+    /// The card must never be drawn shorter than its own contents.
+    ///
+    /// It was. `expandedChromeHeight` was a single hand-tallied constant, it
+    /// undercounted the real chrome, and `.clipShape` sliced the bottom of the
+    /// recent list clean through — the card silently ate its own last row.
+    ///
+    /// Measuring the laid-out height is the only check that can catch that.
+    /// Every arithmetic version of this check shares the bug's premise, which is
+    /// precisely that someone tallied the blocks by hand and got it wrong.
+    private static func cardFitChecks(_ checks: inout [Check], model: IslandViewModel) async {
+        var busy = session(
+            "busy",
+            state: .running(
+                ToolActivity(
+                    kind: .bash, toolName: "Bash", target: "swift build", startedAt: Date())))
+        busy.gitBranch = "main"
+        busy.model = "claude-opus-5"
+        busy.effort = "xhigh"
+        busy.tokens.contextTokens = 131_100
+        busy.tokens.cumulativeOutput = 37_900
+        // One in flight plus a full trail, which is the tallest the body gets.
+        busy.recentTools =
+            [
+                ToolActivity(
+                    kind: .bash, toolName: "Bash", target: "swift build", startedAt: Date())
+            ]
+            + (0..<5).map {
+                ToolActivity(
+                    kind: .read, toolName: "Read", target: "Sources/Long/File\($0).swift",
+                    startedAt: Date(), endedAt: Date())
+            }
+        busy.tasks = TaskProgress(items: [
+            TaskItem(id: "1", subject: "first", status: .completed),
+            TaskItem(id: "2", subject: "a reasonably long in-flight task", status: .inProgress),
+        ])
+
+        // Five sessions, so the switcher is full and the overflow line shows.
+        let others = (0..<4).map { session("other\($0)", state: .thinking) }
+        model.apply(HUDSnapshot(primary: busy, others: others))
+        model.forcedMode = .expanded
+
+        let size = model.shapeSize
+        let host = NSHostingView(rootView: ExpandedContent(session: busy, model: model))
+        host.frame = CGRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        let needed = host.fittingSize.height
+
+        checks.append(
+            Check(
+                name: "the expanded card is never shorter than its contents",
+                passed: needed <= size.height + 0.5,
+                detail: "content=\(needed) card=\(size.height)"))
+        checks.append(
+            Check(
+                name: "the expanded card fits inside its panel",
+                passed: size.height <= NotchGeometryResolver.panelHeight,
+                detail: "card=\(size.height) panel=\(NotchGeometryResolver.panelHeight)"))
+        checks.append(
+            Check(
+                name: "sessions beyond the switcher's rows are counted, not dropped",
+                passed: model.sessionOverflowCount == 1,
+                detail: "overflow=\(model.sessionOverflowCount) of \(model.allSessions.count)"))
+
+        model.forcedMode = nil
+        model.apply(HUDSnapshot())
     }
 
     private static func session(_ id: String, state: SessionState) -> Session {

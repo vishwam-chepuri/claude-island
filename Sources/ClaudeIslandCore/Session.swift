@@ -49,7 +49,14 @@ public struct Session: Sendable, Equatable, Identifiable {
     /// Set once SessionEnd arrives; the store drops it after the fade.
     public var endedAt: Date?
 
-    public static let recentToolLimit = 3
+    /// The expanded card scrolls its trail, so this is how much history the
+    /// session keeps, not how much it shows. At the old value of 3 there was
+    /// nothing to scroll and no memory worth opening the card for; the card
+    /// budgets for five rows and scrolls the rest.
+    ///
+    /// Includes the in-flight call, so the trail of *finished* calls is at most
+    /// this minus one.
+    public static let recentToolLimit = 30
 
     public init(id: String, startedAt: Date) {
         self.id = id
