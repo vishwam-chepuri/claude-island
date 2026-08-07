@@ -120,11 +120,12 @@ final class IslandViewModel {
     /// Body heights, kept next to the layouts they describe so the shape and
     /// its contents cannot drift apart and clip.
     ///   subline 13 + meta 13 + tokens 30, three gaps, plus top and bottom.
+    ///   subline 13 + meta 13 + context block 22 + chip row 34, four gaps of 7.
     static let peekBodyHeight: CGFloat =
-        bodyTopPadding + 13 + bodyRowSpacing + 13 + bodyRowSpacing + 30 + bodyBottomPadding
+        bodyTopPadding + 13 + 7 + 13 + 7 + 22 + 7 + 34 + bodyBottomPadding
     /// header chrome + meta + tokens + section labels, excluding the variable
     /// session rows, tool rows and task block the caller adds.
-    static let expandedChromeHeight: CGFloat = 96
+    static let expandedChromeHeight: CGFloat = 132
     /// Breathing room between content and the camera cutout.
     static let notchPadding: CGFloat = 12
 
@@ -231,17 +232,21 @@ final class IslandViewModel {
             // having grown sideways rather than as a panel hanging below it.
             return CGSize(width: max(flanking, base.width + 80), height: rowHeight)
         case .peek:
-            let taskRow: CGFloat = (displaySession?.tasks.isEmpty == false) ? 18 : 0
+            // Reserved only when a task will actually be drawn. A finished plan
+            // has no current task, and reserving for it left dead space.
+            let taskRow: CGFloat = (displaySession?.tasks.current != nil) ? 28 : 0
             // The open tiers split their flanks evenly, so the width has to fit
             // TWICE the wider side — sizing to the sum truncates the header.
             let even = notchGap + 2 * max(leftClusterWidth, rightClusterWidth)
             return CGSize(
-                width: max(even, 440),
+                width: max(even, 460),
                 height: bodyTopInset + Self.peekBodyHeight + taskRow)
         case .expanded:
             let rows = CGFloat(min(allSessions.count, 4))
             let tools = CGFloat(min(displaySession?.recentTools.count ?? 0, 3))
-            let taskBlock: CGFloat = (displaySession?.tasks.isEmpty == false) ? 34 : 0
+            let taskBlock: CGFloat =
+                (displaySession?.tasks.isEmpty == false)
+                ? (34 + ((displaySession?.tasks.current != nil) ? 18 : 0)) : 0
             let evenWidth = notchGap + 2 * max(leftClusterWidth, rightClusterWidth)
             return CGSize(
                 width: max(evenWidth, NotchGeometryResolver.cardWidth),

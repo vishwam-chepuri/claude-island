@@ -11,7 +11,10 @@ struct CompactContent: View {
     var body: some View {
         FlankingRow(model: model) {
             HStack(spacing: 8) {
-                SessionGlyph(state: session.state)
+                SessionGlyph(
+                    state: session.state,
+                    contextFraction: ContextWindow.fraction(
+                        used: session.tokens.contextTokens, model: session.model))
                 Text(model.compactLeadingText(session))
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(.white)
@@ -26,8 +29,8 @@ struct CompactContent: View {
                         .monospacedDigit()
                 }
                 Text(session.state.statusWord)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(IslandPalette.accent(for: session.state))
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(IslandPalette.accentPair(for: session.state).gradient)
                 if model.attentionCount > 0 {
                     CountBadge(count: model.attentionCount, tint: IslandPalette.alert)
                 }
@@ -155,44 +158,92 @@ struct PeekContent: View {
         return false
     }
 
+    private var sublineSymbol: String {
+        switch session.state {
+        case .running(let tool): tool.kind.symbolName
+        case .awaitingPermission: "hand.raised.fill"
+        case .error: "exclamationmark.triangle.fill"
+        case .done: "checkmark.circle.fill"
+        default: "clock"
+        }
+    }
+
+    private var accent: Accent { IslandPalette.accentPair(for: session.state) }
+    private var contextFraction: Double {
+        ContextWindow.fraction(used: session.tokens.contextTokens, model: session.model)
+    }
+    private var contextAccent: Accent { IslandPalette.contextAccent(contextFraction) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Full width: FlankingRow supplies its own edge padding, and the
             // gap it leaves has to line up with the real camera.
             PeekHeader(session: session, model: model)
 
-            VStack(alignment: .leading, spacing: IslandViewModel.bodyRowSpacing) {
+            VStack(alignment: .leading, spacing: 7) {
                 if let sub = subline {
-                    Text(sub)
-                        .font(
-                            .system(size: 10, design: subIsMonospaced ? .monospaced : .default)
-                        )
-                        .foregroundStyle(
-                            session.state.isAlert
-                                ? IslandPalette.alert : IslandPalette.secondary
-                        )
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    HStack(spacing: 6) {
+                        Image(systemName: sublineSymbol)
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(accent.base)
+                        Text(sub)
+                            .font(
+                                .system(
+                                    size: 10,
+                                    design: subIsMonospaced ? .monospaced : .default)
+                            )
+                            .foregroundStyle(.white.opacity(0.78))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
 
                 MetaLine(session: session, tick: model.tick)
 
-                HStack(alignment: .top, spacing: 16) {
-                    TokenStat(
-                        label: "context",
-                        value: Format.tokens(session.tokens.contextTokens), tint: .white)
-                    TokenStat(
-                        label: "output",
-                        value: Format.tokens(session.tokens.cumulativeOutput),
-                        tint: IslandPalette.secondary)
-                    if let tasks = session.tasks.summary {
-                        TokenStat(label: "tasks", value: tasks, tint: IslandPalette.secondary)
+                // Context gets a bar rather than a bare figure: the number only
+                // means something against the window it is filling.
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Text("CONTEXT")
+                            .font(.system(size: 7.5, weight: .semibold))
+                            .tracking(0.5)
+                            .foregroundStyle(IslandPalette.tertiary)
+                        Spacer(minLength: 0)
+                        Text(Format.tokens(session.tokens.contextTokens))
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(contextAccent.bright)
+                            .monospacedDigit()
+                        Text(
+                            "/ \(Format.tokens(ContextWindow.limit(for: session.model, observed: session.tokens.contextTokens)))"
+                        )
+                            .font(.system(size: 9, design: .rounded))
+                            .foregroundStyle(IslandPalette.tertiary)
+                            .monospacedDigit()
+                    }
+                    MeterBar(fraction: contextFraction, accent: contextAccent)
+                }
+
+                HStack(spacing: 7) {
+                    StatChip(
+                        label: "output", value: Format.tokens(session.tokens.cumulativeOutput),
+                        accent: accent)
+                    StatChip(
+                        label: "cache hit",
+                        value: session.tokens.cacheHitRatio.map(Format.percent) ?? "—",
+                        accent: IslandPalette.doneAccent)
+                    if let summary = session.tasks.summary {
+                        StatChip(label: "tasks", value: summary, accent: accent)
                     }
                     Spacer(minLength: 0)
                 }
 
                 if let current = session.tasks.current {
-                    CurrentTaskLine(task: current)
+                    VStack(alignment: .leading, spacing: 4) {
+                        TaskSegments(
+                            completed: session.tasks.completed, total: session.tasks.total,
+                            accent: accent)
+                        CurrentTaskLine(task: current)
+                    }
                 }
             }
             .padding(.horizontal, IslandViewModel.sidePadding)
@@ -212,7 +263,10 @@ struct PeekHeader: View {
     var body: some View {
         FlankingRow(model: model) {
             HStack(spacing: 8) {
-                SessionGlyph(state: session.state)
+                SessionGlyph(
+                    state: session.state,
+                    contextFraction: ContextWindow.fraction(
+                        used: session.tokens.contextTokens, model: session.model))
                 Text(Format.name(session.displayName))
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
@@ -221,8 +275,8 @@ struct PeekHeader: View {
         } trailing: {
             HStack(spacing: 8) {
                 Text(session.state.statusWord)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(IslandPalette.accent(for: session.state))
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(IslandPalette.accentPair(for: session.state).gradient)
                 StatusMark(state: session.state)
             }
         }
@@ -236,19 +290,22 @@ struct ExpandedContent: View {
     let session: Session
     @Bindable var model: IslandViewModel
 
+    private var accent: Accent { IslandPalette.accentPair(for: session.state) }
+    private var contextFraction: Double {
+        ContextWindow.fraction(used: session.tokens.contextTokens, model: session.model)
+    }
+    private var contextAccent: Accent { IslandPalette.contextAccent(contextFraction) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             PeekHeader(session: session, model: model)
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
-                    Text("SESSIONS")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(IslandPalette.tertiary)
-                        .tracking(0.6)
+                    SectionLabel("sessions")
                     Text("\(model.allSessions.count)")
                         .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(IslandPalette.tertiary)
+                        .foregroundStyle(accent.bright)
                     Spacer(minLength: 0)
                     if model.isOverriddenByAlert {
                         // The selection is kept and will resume; say so rather
@@ -271,70 +328,66 @@ struct ExpandedContent: View {
 
                 MetaLine(session: session, tick: model.tick)
 
-                HStack(alignment: .top, spacing: 16) {
-                    TokenStat(
-                        label: "context",
-                        value: Format.tokens(session.tokens.contextTokens), tint: .white)
-                    TokenStat(
-                        label: "output",
-                        value: Format.tokens(session.tokens.cumulativeOutput),
-                        tint: IslandPalette.secondary)
-                    TokenStat(
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Text("CONTEXT")
+                            .font(.system(size: 7.5, weight: .semibold))
+                            .tracking(0.5)
+                            .foregroundStyle(IslandPalette.tertiary)
+                        Spacer(minLength: 0)
+                        Text(Format.tokens(session.tokens.contextTokens))
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(contextAccent.bright)
+                            .monospacedDigit()
+                        Text(
+                            "/ \(Format.tokens(ContextWindow.limit(for: session.model, observed: session.tokens.contextTokens)))"
+                        )
+                            .font(.system(size: 9, design: .rounded))
+                            .foregroundStyle(IslandPalette.tertiary)
+                            .monospacedDigit()
+                    }
+                    MeterBar(fraction: contextFraction, accent: contextAccent)
+                }
+                .padding(.top, 7)
+
+                HStack(spacing: 7) {
+                    StatChip(
+                        label: "output", value: Format.tokens(session.tokens.cumulativeOutput),
+                        accent: accent, emphasised: true)
+                    StatChip(
                         label: "cache hit",
                         value: session.tokens.cacheHitRatio.map(Format.percent) ?? "—",
-                        tint: IslandPalette.secondary)
-                    TokenStat(
+                        accent: IslandPalette.doneAccent)
+                    StatChip(
                         label: "written",
-                        value: Format.tokens(session.tokens.cumulativeCacheCreation),
-                        tint: IslandPalette.tertiary)
+                        value: Format.tokens(session.tokens.cumulativeCacheCreation))
                     Spacer(minLength: 0)
                 }
-                .padding(.top, 6)
+                .padding(.top, 7)
 
                 if !session.tasks.isEmpty {
                     HStack(spacing: 6) {
-                        Text("TASKS")
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(IslandPalette.tertiary)
-                            .tracking(0.6)
+                        SectionLabel("tasks")
                         Text(session.tasks.summary ?? "")
                             .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(IslandPalette.secondary)
+                            .foregroundStyle(accent.bright)
+                        Spacer(minLength: 0)
                     }
-                    .padding(.top, 8)
+                    .padding(.top, 9)
+                    TaskSegments(
+                        completed: session.tasks.completed, total: session.tasks.total,
+                        accent: accent
+                    )
+                    .padding(.top, 4)
                     if let current = session.tasks.current {
-                        CurrentTaskLine(task: current).padding(.top, 2)
+                        CurrentTaskLine(task: current).padding(.top, 4)
                     }
                 }
 
                 if !session.recentTools.isEmpty {
-                    Text("RECENT")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(IslandPalette.tertiary)
-                        .tracking(0.6)
-                        .padding(.top, 8)
+                    SectionLabel("recent").padding(.top, 9)
                     ForEach(session.recentTools) { tool in
-                        HStack(spacing: 6) {
-                            Image(systemName: tool.kind.symbolName)
-                                .font(.system(size: 9))
-                                .foregroundStyle(
-                                    tool.failed ? IslandPalette.error : IslandPalette.secondary
-                                )
-                                .frame(width: 12)
-                            Text(tool.toolName)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.85))
-                            Text(tool.target ?? "")
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(IslandPalette.tertiary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer(minLength: 4)
-                            Text(Format.compactDuration(tool.elapsed(now: model.tick)))
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(IslandPalette.tertiary)
-                                .monospacedDigit()
-                        }
+                        ToolRow(tool: tool, now: model.tick)
                     }
                 }
             }
@@ -346,37 +399,100 @@ struct ExpandedContent: View {
     }
 }
 
-/// One selectable row in the switcher.
+struct SectionLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text.uppercased())
+            .font(.system(size: 7.5, weight: .semibold))
+            .tracking(0.7)
+            .foregroundStyle(IslandPalette.tertiary)
+    }
+}
+
+/// One tool call: a tinted icon plate, the name, its target, and how long it
+/// took. Failures are the only rows that carry colour, so they stand out.
+struct ToolRow: View {
+    let tool: ToolActivity
+    let now: Date
+
+    private var accent: Accent {
+        tool.failed ? IslandPalette.errorAccent : IslandPalette.workingAccent
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(accent.wash)
+                    .frame(width: 15, height: 15)
+                Image(systemName: tool.failed ? "exclamationmark" : tool.kind.symbolName)
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(accent.bright)
+            }
+            Text(tool.toolName)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.88))
+            Text(tool.target ?? "")
+                .font(.system(size: 9.5, design: .monospaced))
+                .foregroundStyle(IslandPalette.tertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            Text(Format.compactDuration(tool.elapsed(now: now)))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(IslandPalette.tertiary)
+                .monospacedDigit()
+        }
+        .padding(.vertical, 1.5)
+    }
+}
+
+/// One selectable row in the switcher, carrying a state-coloured rail so the
+/// list can be scanned by colour before it is read.
 struct SessionRow: View {
     let candidate: Session
     let isShown: Bool
     let onSelect: () -> Void
 
+    private var accent: Accent { IslandPalette.accentPair(for: candidate.state) }
+
     var body: some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(IslandPalette.accent(for: candidate.state))
-                .frame(width: 5, height: 5)
-            Text(Format.name(candidate.displayName, limit: 26))
-                .font(.system(size: 10, weight: isShown ? .semibold : .regular))
-                .foregroundStyle(isShown ? .white : .white.opacity(0.7))
+        HStack(spacing: 8) {
+            Capsule()
+                .fill(accent.gradient)
+                .frame(width: 2.5, height: 15)
+                .shadow(color: accent.glow, radius: isShown ? 3 : 0)
+
+            Text(Format.name(candidate.displayName, limit: 22))
+                .font(.system(size: 10.5, weight: isShown ? .semibold : .regular, design: .rounded))
+                .foregroundStyle(isShown ? .white : .white.opacity(0.66))
                 .lineLimit(1)
-            Spacer(minLength: 4)
-            if candidate.state.isAlert {
+
+            Spacer(minLength: 6)
+
+            if candidate.state.needsUser {
                 Image(systemName: "hand.raised.fill")
                     .font(.system(size: 8))
-                    .foregroundStyle(IslandPalette.alert)
+                    .foregroundStyle(IslandPalette.turnAccent.bright)
             }
             Text(candidate.state.statusWord)
-                .font(.system(size: 9))
-                .foregroundStyle(IslandPalette.tertiary)
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(isShown ? accent.bright : IslandPalette.tertiary)
         }
-        .padding(.vertical, 3)
-        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 7)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isShown ? Color.white.opacity(0.10) : .clear))
-        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(isShown ? accent.wash : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(
+                    isShown ? accent.base.opacity(0.30) : Color.clear, lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .onTapGesture(perform: onSelect)
     }
 }
@@ -436,41 +552,38 @@ struct CurrentTaskLine: View {
 
 // MARK: - Pieces
 
-struct TokenStat: View {
-    let label: String
-    let value: String
-    let tint: Color
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(tint)
-                .monospacedDigit()
-            Text(label)
-                .font(.system(size: 8))
-                .foregroundStyle(IslandPalette.tertiary)
-        }
-    }
-}
-
-/// The resting pill's leading mark: session identity, tinted by state.
+/// The resting pill's leading mark: session identity, tinted by state, wrapped
+/// in an arc showing how full the context window is.
 ///
 /// Deliberately not the tool's icon — the pill names the session, and a glyph
 /// that changed on every tool call would be noise beside a status word that
-/// already says what is happening.
+/// already says what is happening. The arc earns its place instead: it is the
+/// one number you cannot infer from anything else on the row.
 struct SessionGlyph: View {
     let state: SessionState
+    var contextFraction: Double = 0
+    var size: CGFloat = 20
+
+    private var accent: Accent { IslandPalette.accentPair(for: state) }
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(IslandPalette.accent(for: state).opacity(0.18))
-                .frame(width: 20, height: 20)
-            Image(systemName: "sparkle")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(IslandPalette.accent(for: state))
+        ContextRing(
+            fraction: contextFraction,
+            accent: IslandPalette.contextAccent(contextFraction)
+        ) {
+            ZStack {
+                Circle()
+                    .fill(accent.wash)
+                    .overlay(Circle().strokeBorder(accent.base.opacity(0.30), lineWidth: 1))
+                    .frame(width: size, height: size)
+                Image(systemName: "sparkle")
+                    .font(.system(size: size * 0.5, weight: .semibold))
+                    .foregroundStyle(accent.gradient)
+                    .shadow(color: accent.glow, radius: 3)
+            }
         }
+        .frame(width: size, height: size)
     }
 }
 

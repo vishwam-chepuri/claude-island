@@ -192,6 +192,32 @@ animations moved.
 | Tests | 98 passing |
 | Self-test | 41 checks passing |
 
+## Visual language
+
+Every state owns a two-stop accent rather than a flat colour, so a glyph, a ring
+and a bar all tint from one source and read as lit rather than filled — blue for
+working, indigo for thinking, amber for your turn, mint for done, rose for
+failed, violet for compacting. The island's own fill stays essentially black: it
+has to keep passing for the camera housing, so the gradient on it is a few points
+of lift at the top and nothing more.
+
+Two things are drawn rather than written, because a figure alone does not carry
+them:
+
+- **Context occupancy** is an arc around the session glyph and a meter in the
+  cards, coloured mint → amber → rose as the window fills. The limit is
+  *inferred*, never asserted: the model id sometimes carries `[1m]`, but a
+  transcript can record the plain id for a session running the larger window, so
+  an observed count above a tier is taken as proof of the next one up. Reading
+  "603.2k / 200.0k" is worse than having no bar at all. Only the bar is inferred
+  — the token counts themselves are exact.
+- **Plan progress** is a row of segments, countable at a glance in a way `3/7`
+  is not.
+
+Session rows in the switcher carry a state-coloured rail so the list can be
+scanned by colour before it is read, and the row that needs you is washed and
+outlined in amber.
+
 ## Interaction
 
 Three levels of detail, each earning its own layout.

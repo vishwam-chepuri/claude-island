@@ -38,7 +38,11 @@ struct IslandView: View {
                 // Pure black, no material: it has to read as the physical
                 // cutout. The debug tint replaces it with something visible so
                 // the shape's edges can actually be seen while iterating.
-                .fill(model.debugTint ? IslandPalette.debugFill : Color.black)
+                .fill(
+                    model.debugTint
+                        ? AnyShapeStyle(IslandPalette.debugFillGradient)
+                        : AnyShapeStyle(IslandPalette.islandFill)
+                )
                 // The shadow lives on the shape leaf, not on the container.
                 // Attached to the container, every animating child invalidated
                 // it and the recomposite cost measured 4.6% CPU during the

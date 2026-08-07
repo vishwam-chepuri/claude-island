@@ -83,7 +83,9 @@ private final class StreamCollector: @unchecked Sendable {
         return buffer.isEmpty ? nil : buffer.removeFirst()
     }
 
-    func next(timeout: TimeInterval = 3) async -> HookEnvelope? {
+    /// Generous by default. These assert that a payload arrives, not how fast,
+    /// and a tight bound made the suite flake on a loaded machine.
+    func next(timeout: TimeInterval = 6) async -> HookEnvelope? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if let head = take() { return head }
