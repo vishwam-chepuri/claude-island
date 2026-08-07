@@ -89,16 +89,14 @@ struct FlankingRow<Leading: View, Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            flank(leading, width: model.flankLeftWidth, alignment: .leading)
-                .padding(.leading, IslandViewModel.sidePadding)
+            flank(leading, width: model.flankLeftWidth, alignment: .leading, edge: .leading)
 
             // The camera. Nothing may be drawn here — these pixels are a hole
             // in the display, not a region that merely gets clipped.
             Color.clear
                 .frame(width: model.notchGap)
 
-            flank(trailing, width: model.flankRightWidth, alignment: .trailing)
-                .padding(.trailing, IslandViewModel.sidePadding)
+            flank(trailing, width: model.flankRightWidth, alignment: .trailing, edge: .trailing)
         }
         .frame(height: model.rowHeight)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -106,12 +104,22 @@ struct FlankingRow<Leading: View, Trailing: View>: View {
 
     /// A fixed width while resting, so each flank is snug to its own content;
     /// an even share once the card is open and the shape is wider than needed.
+    ///
+    /// The edge padding goes INSIDE the frame. Applied outside, it added
+    /// `2 * sidePadding` to a row that was already exactly the shape's width,
+    /// and the overflow showed up as a truncated label.
     @ViewBuilder
-    private func flank<V: View>(_ view: V, width: CGFloat?, alignment: Alignment) -> some View {
+    private func flank<V: View>(
+        _ view: V, width: CGFloat?, alignment: Alignment, edge: Edge.Set
+    ) -> some View {
         if let width {
-            view.frame(width: max(0, width - IslandViewModel.sidePadding), alignment: alignment)
+            view
+                .padding(edge, IslandViewModel.sidePadding)
+                .frame(width: width, alignment: alignment)
         } else {
-            view.frame(maxWidth: .infinity, alignment: alignment)
+            view
+                .padding(edge, IslandViewModel.sidePadding)
+                .frame(maxWidth: .infinity, alignment: alignment)
         }
     }
 }
@@ -149,62 +157,76 @@ struct PeekContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header flanks the camera, exactly like the resting row.
-            FlankingRow(model: model) {
-                HStack(spacing: 8) {
-                    ToolGlyph(session: session)
-                    Text(Format.name(session.displayName))
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
+            // Full width: FlankingRow supplies its own edge padding, and the
+            // gap it leaves has to line up with the real camera.
+            PeekHeader(session: session, model: model)
+
+            VStack(alignment: .leading, spacing: IslandViewModel.bodyRowSpacing) {
+                if let sub = subline {
+                    Text(sub)
+                        .font(
+                            .system(size: 10, design: subIsMonospaced ? .monospaced : .default)
+                        )
+                        .foregroundStyle(
+                            session.state.isAlert
+                                ? IslandPalette.alert : IslandPalette.secondary
+                        )
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-            } trailing: {
-                HStack(spacing: 8) {
-                    Text(session.state.statusWord)
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundStyle(IslandPalette.accent(for: session.state))
-                    StatusMark(state: session.state)
+
+                MetaLine(session: session, tick: model.tick)
+
+                HStack(alignment: .top, spacing: 16) {
+                    TokenStat(
+                        label: "context",
+                        value: Format.tokens(session.tokens.contextTokens), tint: .white)
+                    TokenStat(
+                        label: "output",
+                        value: Format.tokens(session.tokens.cumulativeOutput),
+                        tint: IslandPalette.secondary)
+                    if let tasks = session.tasks.summary {
+                        TokenStat(label: "tasks", value: tasks, tint: IslandPalette.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                if let current = session.tasks.current {
+                    CurrentTaskLine(task: current)
                 }
             }
-            .frame(height: model.bodyTopInset)
-
-            if let sub = subline {
-                Text(sub)
-                    .font(.system(size: 10, design: subIsMonospaced ? .monospaced : .default))
-                    .foregroundStyle(
-                        session.state.isAlert ? IslandPalette.alert : IslandPalette.secondary
-                    )
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.top, 3)
-            }
-
-            MetaLine(session: session, tick: model.tick)
-                .padding(.top, 4)
-
-            HStack(spacing: 14) {
-                TokenStat(
-                    label: "context",
-                    value: Format.tokens(session.tokens.contextTokens), tint: .white)
-                TokenStat(
-                    label: "output",
-                    value: Format.tokens(session.tokens.cumulativeOutput),
-                    tint: IslandPalette.secondary)
-                if let tasks = session.tasks.summary {
-                    TokenStat(label: "tasks", value: tasks, tint: IslandPalette.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.top, 8)
-
-            if let current = session.tasks.current {
-                CurrentTaskLine(task: current)
-                    .padding(.top, 5)
-            }
+            .padding(.horizontal, IslandViewModel.sidePadding)
+            .padding(.top, IslandViewModel.bodyTopPadding)
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, IslandViewModel.sidePadding)
+    }
+}
+
+/// The identity row shared by peek and expanded: same flanking geometry as the
+/// resting pill, so the header does not jump when the card opens.
+struct PeekHeader: View {
+    let session: Session
+    @Bindable var model: IslandViewModel
+
+    var body: some View {
+        FlankingRow(model: model) {
+            HStack(spacing: 8) {
+                SessionGlyph(state: session.state)
+                Text(Format.name(session.displayName))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+        } trailing: {
+            HStack(spacing: 8) {
+                Text(session.state.statusWord)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(IslandPalette.accent(for: session.state))
+                StatusMark(state: session.state)
+            }
+        }
+        .frame(height: model.bodyTopInset)
     }
 }
 
@@ -216,123 +238,111 @@ struct ExpandedContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            FlankingRow(model: model) {
-                HStack(spacing: 8) {
-                    ToolGlyph(session: session)
-                    Text(Format.name(session.displayName))
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                }
-            } trailing: {
-                HStack(spacing: 8) {
-                    Text(session.state.statusWord)
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundStyle(IslandPalette.accent(for: session.state))
-                    StatusMark(state: session.state)
-                }
-            }
-            .frame(height: model.bodyTopInset)
+            PeekHeader(session: session, model: model)
 
-            HStack(spacing: 6) {
-                Text("SESSIONS")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(IslandPalette.tertiary)
-                    .tracking(0.6)
-                Text("\(model.allSessions.count)")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(IslandPalette.tertiary)
-                Spacer(minLength: 0)
-                if model.isOverriddenByAlert {
-                    // The selection is kept and will resume; say so rather than
-                    // let the view look like it jumped for no reason.
-                    Text("permission request took over")
-                        .font(.system(size: 8))
-                        .foregroundStyle(IslandPalette.alert)
-                }
-            }
-
-            ForEach(model.allSessions.prefix(4)) { candidate in
-                SessionRow(
-                    candidate: candidate,
-                    isShown: candidate.id == session.id,
-                    onSelect: { model.select(candidate.id) })
-            }
-
-            Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 7)
-
-            MetaLine(session: session, tick: model.tick)
-
-            HStack(spacing: 14) {
-                TokenStat(
-                    label: "context",
-                    value: Format.tokens(session.tokens.contextTokens), tint: .white)
-                TokenStat(
-                    label: "output",
-                    value: Format.tokens(session.tokens.cumulativeOutput),
-                    tint: IslandPalette.secondary)
-                TokenStat(
-                    label: "cache hit",
-                    value: session.tokens.cacheHitRatio.map(Format.percent) ?? "—",
-                    tint: IslandPalette.secondary)
-                TokenStat(
-                    label: "written",
-                    value: Format.tokens(session.tokens.cumulativeCacheCreation),
-                    tint: IslandPalette.tertiary)
-                Spacer(minLength: 0)
-            }
-            .padding(.top, 6)
-
-            if !session.tasks.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
-                    Text("TASKS")
+                    Text("SESSIONS")
                         .font(.system(size: 8, weight: .semibold))
                         .foregroundStyle(IslandPalette.tertiary)
                         .tracking(0.6)
-                    Text(session.tasks.summary ?? "")
+                    Text("\(model.allSessions.count)")
                         .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(IslandPalette.secondary)
+                        .foregroundStyle(IslandPalette.tertiary)
+                    Spacer(minLength: 0)
+                    if model.isOverriddenByAlert {
+                        // The selection is kept and will resume; say so rather
+                        // than let the view look like it jumped for no reason.
+                        Text("permission request took over")
+                            .font(.system(size: 8))
+                            .foregroundStyle(IslandPalette.alert)
+                    }
                 }
-                .padding(.top, 8)
-                if let current = session.tasks.current {
-                    CurrentTaskLine(task: current).padding(.top, 2)
-                }
-            }
+                .padding(.bottom, 3)
 
-            if !session.recentTools.isEmpty {
-                Text("RECENT")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(IslandPalette.tertiary)
-                    .tracking(0.6)
-                    .padding(.top, 8)
-                ForEach(session.recentTools) { tool in
+                ForEach(model.allSessions.prefix(4)) { candidate in
+                    SessionRow(
+                        candidate: candidate,
+                        isShown: candidate.id == session.id,
+                        onSelect: { model.select(candidate.id) })
+                }
+
+                Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 7)
+
+                MetaLine(session: session, tick: model.tick)
+
+                HStack(alignment: .top, spacing: 16) {
+                    TokenStat(
+                        label: "context",
+                        value: Format.tokens(session.tokens.contextTokens), tint: .white)
+                    TokenStat(
+                        label: "output",
+                        value: Format.tokens(session.tokens.cumulativeOutput),
+                        tint: IslandPalette.secondary)
+                    TokenStat(
+                        label: "cache hit",
+                        value: session.tokens.cacheHitRatio.map(Format.percent) ?? "—",
+                        tint: IslandPalette.secondary)
+                    TokenStat(
+                        label: "written",
+                        value: Format.tokens(session.tokens.cumulativeCacheCreation),
+                        tint: IslandPalette.tertiary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 6)
+
+                if !session.tasks.isEmpty {
                     HStack(spacing: 6) {
-                        Image(systemName: tool.kind.symbolName)
-                            .font(.system(size: 9))
-                            .foregroundStyle(
-                                tool.failed ? IslandPalette.error : IslandPalette.secondary
-                            )
-                            .frame(width: 12)
-                        Text(tool.toolName)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.85))
-                        Text(tool.target ?? "")
-                            .font(.system(size: 10, design: .monospaced))
+                        Text("TASKS")
+                            .font(.system(size: 8, weight: .semibold))
                             .foregroundStyle(IslandPalette.tertiary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer(minLength: 4)
-                        Text(Format.compactDuration(tool.elapsed(now: model.tick)))
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundStyle(IslandPalette.tertiary)
-                            .monospacedDigit()
+                            .tracking(0.6)
+                        Text(session.tasks.summary ?? "")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(IslandPalette.secondary)
+                    }
+                    .padding(.top, 8)
+                    if let current = session.tasks.current {
+                        CurrentTaskLine(task: current).padding(.top, 2)
+                    }
+                }
+
+                if !session.recentTools.isEmpty {
+                    Text("RECENT")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(IslandPalette.tertiary)
+                        .tracking(0.6)
+                        .padding(.top, 8)
+                    ForEach(session.recentTools) { tool in
+                        HStack(spacing: 6) {
+                            Image(systemName: tool.kind.symbolName)
+                                .font(.system(size: 9))
+                                .foregroundStyle(
+                                    tool.failed ? IslandPalette.error : IslandPalette.secondary
+                                )
+                                .frame(width: 12)
+                            Text(tool.toolName)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.85))
+                            Text(tool.target ?? "")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(IslandPalette.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 4)
+                            Text(Format.compactDuration(tool.elapsed(now: model.tick)))
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(IslandPalette.tertiary)
+                                .monospacedDigit()
+                        }
                     }
                 }
             }
+            .padding(.horizontal, IslandViewModel.sidePadding)
+            .padding(.top, IslandViewModel.bodyTopPadding)
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, IslandViewModel.sidePadding)
     }
 }
 

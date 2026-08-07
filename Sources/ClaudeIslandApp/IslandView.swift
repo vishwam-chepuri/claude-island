@@ -53,11 +53,12 @@ struct IslandView: View {
                 )
                 .matchedGeometryEffect(id: "island", in: shapeNamespace, isSource: true)
 
+            // Full shape width, no outer padding. Every tier pads its own
+            // content: FlankingRow insets each flank, and the card bodies pad
+            // themselves. An outer inset here narrowed the flanking row and
+            // shifted its camera gap off the real cutout.
             content
-                .frame(
-                    width: max(0, model.shapeSize.width - contentPadding * 2),
-                    height: model.shapeSize.height)
-                .padding(.horizontal, contentPadding)
+                .frame(width: model.shapeSize.width, height: model.shapeSize.height)
         }
         .frame(width: model.shapeSize.width, height: model.shapeSize.height)
         .clipShape(IslandShape(cornerRadius: model.cornerRadius, topFlare: model.topFlare))
@@ -67,15 +68,6 @@ struct IslandView: View {
         .onTapGesture {
             guard model.mode != .dormant else { return }
             model.togglePinned()
-        }
-    }
-
-    private var contentPadding: CGFloat {
-        switch model.mode {
-        case .dormant: 0
-        case .compact, .alert: 14
-        case .peek: 15
-        case .expanded: 16
         }
     }
 

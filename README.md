@@ -156,6 +156,11 @@ Three consequences worth knowing, each of which produced a bug first:
 - **The panel has to be wider than the widest island.** The shape is clipped to
   its window, so an undersized panel silently caps the island and reads as yet
   another truncation bug.
+- **Padding belongs inside the flanking frames, applied exactly once.** Padding
+  a flank from outside adds to a row already sized to the shape; an outer inset
+  on the content narrows the row and drags its camera gap off the real cutout.
+  Both present as a truncated label, which is the same symptom as the three
+  causes above — five different bugs with one appearance.
 
 ## Two implementation notes that cost real work
 
@@ -272,10 +277,15 @@ menu bar extra has **Show Debug Tint**, which fills it indigo with a cyan edge
 so the outline, the corner radii and the notch punch-out are all visible.
 
 ```bash
-touch ~/.claude-island/tint     # or toggle it from the menu bar
+touch ~/.claude-island/tint            # or toggle it from the menu bar
+echo peek > ~/.claude-island/force-mode   # pin a tier: compact|alert|peek|expanded
 ```
 
-Off by default, persisted by the sentinel file, and independent of logging.
+Both are off by default and persisted by their sentinel files. `force-mode`
+exists because hover and click cannot be synthesised without Accessibility
+permission — without it the open tiers cannot be looked at at all, and three
+padding bugs in the peek layout survived precisely because they had never been
+seen.
 
 ## Configuration
 

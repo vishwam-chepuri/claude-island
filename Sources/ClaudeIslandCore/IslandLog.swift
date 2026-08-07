@@ -15,6 +15,10 @@ public enum IslandPaths {
     /// edges can be seen against the notch and the menu bar, which pure #000
     /// deliberately blends into.
     public static var tintFlag: URL { root.appendingPathComponent("tint") }
+    /// Development aid: contains "peek" or "expanded" to pin the HUD to that
+    /// tier. Hover and click cannot be synthesised without Accessibility
+    /// permission, so without this the open tiers cannot be inspected.
+    public static var forceModeFlag: URL { root.appendingPathComponent("force-mode") }
 
     public static var claudeHome: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(

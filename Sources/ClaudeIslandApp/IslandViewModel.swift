@@ -30,6 +30,20 @@ final class IslandViewModel {
     var isEnabled = true
     /// Development aid, off by default. See IslandPaths.tintFlag.
     var debugTint = FileManager.default.fileExists(atPath: IslandPaths.tintFlag.path)
+    /// Development aid: pins the HUD to a tier so peek and expanded can be
+    /// inspected without a real cursor. See IslandPaths.forceModeFlag.
+    var forcedMode: IslandMode? = {
+        guard
+            let raw = try? String(contentsOf: IslandPaths.forceModeFlag, encoding: .utf8)
+        else { return nil }
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "peek": return .peek
+        case "expanded": return .expanded
+        case "alert": return .alert
+        case "compact": return .compact
+        default: return nil
+        }
+    }()
 
     /// Drives elapsed-time labels. Nil — and therefore not scheduled at all —
     /// whenever nothing is running. This is the idle-CPU contract: no session,
@@ -42,6 +56,7 @@ final class IslandViewModel {
 
     var mode: IslandMode {
         guard isEnabled, let shown = displaySession else { return .dormant }
+        if let forcedMode { return forcedMode }
         if isPinnedOpen { return .expanded }
         if isHovered { return .peek }
         if shown.state.isAlert { return .alert }
@@ -97,6 +112,19 @@ final class IslandViewModel {
 
     /// Padding between the shape's outer edge and its content.
     static let sidePadding: CGFloat = 12
+    /// Gap above the first body row and below the last.
+    static let bodyTopPadding: CGFloat = 7
+    static let bodyBottomPadding: CGFloat = 13
+    static let bodyRowSpacing: CGFloat = 5
+
+    /// Body heights, kept next to the layouts they describe so the shape and
+    /// its contents cannot drift apart and clip.
+    ///   subline 13 + meta 13 + tokens 30, three gaps, plus top and bottom.
+    static let peekBodyHeight: CGFloat =
+        bodyTopPadding + 13 + bodyRowSpacing + 13 + bodyRowSpacing + 30 + bodyBottomPadding
+    /// header chrome + meta + tokens + section labels, excluding the variable
+    /// session rows, tool rows and task block the caller adds.
+    static let expandedChromeHeight: CGFloat = 96
     /// Breathing room between content and the camera cutout.
     static let notchPadding: CGFloat = 12
 
@@ -204,16 +232,21 @@ final class IslandViewModel {
             return CGSize(width: max(flanking, base.width + 80), height: rowHeight)
         case .peek:
             let taskRow: CGFloat = (displaySession?.tasks.isEmpty == false) ? 18 : 0
+            // The open tiers split their flanks evenly, so the width has to fit
+            // TWICE the wider side — sizing to the sum truncates the header.
+            let even = notchGap + 2 * max(leftClusterWidth, rightClusterWidth)
             return CGSize(
-                width: max(flanking, 420),
-                height: bodyTopInset + 62 + taskRow)
+                width: max(even, 440),
+                height: bodyTopInset + Self.peekBodyHeight + taskRow)
         case .expanded:
             let rows = CGFloat(min(allSessions.count, 4))
             let tools = CGFloat(min(displaySession?.recentTools.count ?? 0, 3))
             let taskBlock: CGFloat = (displaySession?.tasks.isEmpty == false) ? 34 : 0
+            let evenWidth = notchGap + 2 * max(leftClusterWidth, rightClusterWidth)
             return CGSize(
-                width: max(flanking, NotchGeometryResolver.cardWidth),
-                height: bodyTopInset + 108 + rows * 22 + tools * 15 + taskBlock)
+                width: max(evenWidth, NotchGeometryResolver.cardWidth),
+                height: bodyTopInset + Self.expandedChromeHeight
+                    + rows * 22 + tools * 15 + taskBlock)
         }
     }
 
