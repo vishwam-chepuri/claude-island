@@ -73,10 +73,13 @@ all. That is what lets the whole pipeline run headlessly.
 expanded size permanently with a transparent background; the island shape is
 drawn inside it, so the morph never resizes a window.
 
-The silhouette is `IslandShape`: flush with the top of the screen, rounded only
-along the bottom, so it reads as the camera housing having grown sideways rather
-than as a panel floating below the menu bar. `IslandOutline` is the same path
-left open at the top, so stroking it never draws a line across the screen edge.
+The silhouette is `IslandShape`: flush with the top of the screen, rounded
+generously along the bottom, and *concave* where it meets the top edge. Those
+inverted corners are what make it seamless — the shape flares out of the bezel
+instead of sitting on it as a rectangle, so in pure black the camera housing
+disappears into the fill rather than sitting in a visible gap. `IslandOutline`
+is the same path left open at the top, so stroking it never draws a line across
+the screen edge.
 
 ## Things worth knowing
 

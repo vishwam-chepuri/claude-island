@@ -229,9 +229,19 @@ final class IslandViewModel {
     var cornerRadius: CGFloat {
         switch mode {
         case .dormant: hasNotch ? 12 : 16
-        case .compact, .alert: 14
-        case .peek: 20
-        case .expanded: 24
+        case .compact, .alert: 18
+        case .peek: 26
+        case .expanded: 30
+        }
+    }
+
+    /// The concave fillet where the shape meets the screen edge. Zero when
+    /// dormant, so the resting shape is exactly the cutout and nothing more.
+    var topFlare: CGFloat {
+        switch mode {
+        case .dormant: 0
+        case .compact, .alert: 11
+        case .peek, .expanded: 14
         }
     }
 
@@ -242,10 +252,13 @@ final class IslandViewModel {
     var interactiveScreenRect: CGRect {
         guard let g = geometry else { return .zero }
         let size = shapeSize
+        // The concave fillets flare past the frame at the top, so the visible
+        // shape is slightly wider than shapeSize. The hit region has to match
+        // what is drawn, not what was measured.
         return CGRect(
-            x: g.islandRect.midX + shapeOffsetX - size.width / 2,
+            x: g.islandRect.midX + shapeOffsetX - size.width / 2 - topFlare,
             y: g.islandRect.maxY - size.height,
-            width: size.width,
+            width: size.width + topFlare * 2,
             height: size.height)
     }
 

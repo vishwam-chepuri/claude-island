@@ -34,7 +34,7 @@ struct IslandView: View {
         ZStack(alignment: .top) {
             // .continuous so the corner curvature interpolates rather than
             // snapping between radii mid-morph.
-            IslandShape(cornerRadius: model.cornerRadius)
+            IslandShape(cornerRadius: model.cornerRadius, topFlare: model.topFlare)
                 // Pure black, no material: it has to read as the physical
                 // cutout. The debug tint replaces it with something visible so
                 // the shape's edges can actually be seen while iterating.
@@ -48,7 +48,7 @@ struct IslandView: View {
                 )
                 // An open path, so no line is ever drawn along the top edge.
                 .overlay(
-                    IslandOutline(cornerRadius: model.cornerRadius)
+                    IslandOutline(cornerRadius: model.cornerRadius, topFlare: model.topFlare)
                         .stroke(strokeColor, lineWidth: strokeWidth)
                 )
                 .matchedGeometryEffect(id: "island", in: shapeNamespace, isSource: true)
@@ -60,10 +60,10 @@ struct IslandView: View {
                 .padding(.horizontal, contentPadding)
         }
         .frame(width: model.shapeSize.width, height: model.shapeSize.height)
-        .clipShape(IslandShape(cornerRadius: model.cornerRadius))
+        .clipShape(IslandShape(cornerRadius: model.cornerRadius, topFlare: model.topFlare))
         // contentShape limits the tap target to the drawn shape; without it the
         // gesture would claim the surrounding transparent frame too.
-        .contentShape(IslandShape(cornerRadius: model.cornerRadius))
+        .contentShape(IslandShape(cornerRadius: model.cornerRadius, topFlare: model.topFlare))
         .onTapGesture {
             guard model.mode != .dormant else { return }
             model.togglePinned()
