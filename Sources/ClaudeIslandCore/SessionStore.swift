@@ -17,7 +17,17 @@ public struct HUDSnapshot: Sendable, Equatable {
 
     /// True when something on screen needs a continuous animation. When false
     /// the HUD must schedule no redraws at all — this is the idle-CPU contract.
-    public var wantsAnimation: Bool { primary?.state.wantsAnimation ?? false }
+    ///
+    /// Asking every session is equivalent to asking `primary` alone *today*,
+    /// because `isActive` and `wantsAnimation` happen to cover the same cases
+    /// and `priority` sorts active sessions first. That equivalence is a
+    /// coincidence of two switch statements agreeing, not a property anyone
+    /// declared — and if they ever diverge, the primary-only form silently
+    /// freezes the elapsed labels of a session that is still running.
+    public var wantsAnimation: Bool {
+        if primary?.state.wantsAnimation == true { return true }
+        return others.contains { $0.state.wantsAnimation }
+    }
 
     public var isDormant: Bool { primary == nil }
 }
