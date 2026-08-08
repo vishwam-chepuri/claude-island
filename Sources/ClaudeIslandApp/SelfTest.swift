@@ -375,12 +375,14 @@ enum SelfTest {
         await switcherChecks(&checks, model: model)
     }
 
-    /// The lit border belongs to a permission prompt and nothing else.
+    /// The edge belongs to a permission prompt, and only a permission prompt.
     ///
     /// `SelfTest` works at view-model level and cannot inspect `CALayer` state,
     /// so the seam is the predicate the view mounts `PulsingOutline` on. The
-    /// negative cases are the point: `done` is the most common resting state,
-    /// and a border that is on almost always trains the eye to ignore it.
+    /// negative cases are the point: the idle nudge stays dark because it is a
+    /// nudge, not a block — Claude isn't stopped waiting on an answer, you
+    /// just haven't typed yet — and thinking, a failure and a dormant HUD stay
+    /// dark because none of them is Claude waiting on you either.
     private static func attentionBorderChecks(_ checks: inout [Check], model: IslandViewModel) {
         model.isHovered = false
         model.apply(
