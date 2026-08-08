@@ -175,7 +175,16 @@ struct PulsingOutline: NSViewRepresentable {
     /// One yellow cycle. Matches the `PulsingGlyph` breath in `AlertContent` so
     /// the edge and the raised hand do not beat against each other.
     static let attentionCycle: CFTimeInterval = 1.7
-    fileprivate static let lineWidth: CGFloat = 1.5
+    fileprivate static let lineWidth: CGFloat = 1.1
+
+    /// Where the edge fades out. Clear at both extremes, solid across the middle
+    /// — so the line is at full strength along the bottom, where the pulse is
+    /// born, and has thinned to nothing by the time it reaches either flare.
+    fileprivate static let taperStops: [NSNumber] = [0, 0.12, 0.88, 1]
+
+    /// How far past the shape the halo reaches. The taper mask has to clear it,
+    /// or the glow gets a hard rectangular edge the line itself does not have.
+    fileprivate static let haloReach: CGFloat = 22
 
     final class OutlineView: NSView {
         /// The full outline at its resting colour. Static, and the only layer
@@ -200,6 +209,27 @@ struct PulsingOutline: NSViewRepresentable {
             let reduceMotion: Bool
         }
 
+        /// Fades the edge out toward the two ends so it has no visible
+        /// termination — it thins away into the screen edge instead of stopping.
+        ///
+        /// This is a mask rather than a varying `lineWidth` because a
+        /// `CAShapeLayer`'s stroke is one width for the whole path. A true taper
+        /// means abandoning the stroke and filling a hand-built ribbon, which
+        /// would also take `strokeStart`/`strokeEnd` away from the sweep. At this
+        /// line width the two are indistinguishable, and the mask has the better
+        /// edges — a sub-pixel fill aliases where an alpha ramp does not.
+        ///
+        /// It masks `content` rather than the base and sweep separately, so the
+        /// line and its halo taper as one — masked apart, the glow would outlive
+        /// the line it belongs to.
+        let taper = CAGradientLayer()
+
+        /// Exists only to carry the mask. The mask cannot go on the view's own
+        /// backing layer: AppKit owns that layer and resets properties on it out
+        /// from under you, which silently killed the sweep's animation the first
+        /// time this was built. A plain sublayer we own is stable.
+        let content = CALayer()
+
         override init(frame: NSRect) {
             super.init(frame: frame)
             wantsLayer = true
@@ -209,8 +239,17 @@ struct PulsingOutline: NSViewRepresentable {
                 layer.lineCap = .round
             }
             base.shadowOffset = .zero
-            self.layer?.addSublayer(base)
-            self.layer?.addSublayer(sweep)
+            taper.startPoint = CGPoint(x: 0, y: 0.5)
+            taper.endPoint = CGPoint(x: 1, y: 0.5)
+            taper.colors = [
+                NSColor.clear.cgColor, NSColor.white.cgColor,
+                NSColor.white.cgColor, NSColor.clear.cgColor,
+            ]
+            taper.locations = PulsingOutline.taperStops
+            content.addSublayer(base)
+            content.addSublayer(sweep)
+            content.mask = taper
+            self.layer?.addSublayer(content)
         }
 
         @available(*, unavailable)
@@ -246,6 +285,14 @@ struct PulsingOutline: NSViewRepresentable {
                 layer.path = outline
             }
             base.shadowPath = ribbon
+            // The mask has to reach past `bounds` on every side or it becomes a
+            // crop instead of a taper: the concave flares overhang by `topFlare`
+            // at each end, and the halo spreads further still. Anything outside a
+            // mask is alpha zero, so a mask sized to `bounds` would cut the tips
+            // clean off — the exact hard ending this is meant to remove.
+            let reach = bounds.insetBy(dx: -topFlare, dy: -PulsingOutline.haloReach)
+            content.frame = bounds
+            taper.frame = reach
             CATransaction.commit()
 
             apply()
