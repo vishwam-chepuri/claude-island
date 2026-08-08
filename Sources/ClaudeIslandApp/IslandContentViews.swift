@@ -227,10 +227,7 @@ struct PeekContent: View {
                     StatChip(
                         label: "output", value: Format.tokens(session.tokens.cumulativeOutput),
                         accent: accent)
-                    StatChip(
-                        label: "cache hit",
-                        value: session.tokens.cacheHitRatio.map(Format.percent) ?? "—",
-                        accent: IslandPalette.doneAccent)
+                    CacheChip(tokens: session.tokens)
                     if let summary = session.tasks.summary {
                         StatChip(label: "tasks", value: summary, accent: accent)
                     }
@@ -359,17 +356,16 @@ struct ExpandedContent: View {
                 }
                 .padding(.top, 7)
 
+                // `written` used to sit here, and a `cache hit` chip that was
+                // always 98%. Neither answered a question: cumulative cache
+                // creation reads as bytes written to disk in a card whose next
+                // section is a trail of Edit calls, and it tracks the context
+                // bar directly above while telling that story worse.
                 HStack(spacing: 7) {
                     StatChip(
                         label: "output", value: Format.tokens(session.tokens.cumulativeOutput),
                         accent: accent, emphasised: true)
-                    StatChip(
-                        label: "cache hit",
-                        value: session.tokens.cacheHitRatio.map(Format.percent) ?? "—",
-                        accent: IslandPalette.doneAccent)
-                    StatChip(
-                        label: "written",
-                        value: Format.tokens(session.tokens.cumulativeCacheCreation))
+                    CacheChip(tokens: session.tokens)
                     Spacer(minLength: 0)
                 }
                 .padding(.top, 7)

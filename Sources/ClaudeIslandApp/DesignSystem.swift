@@ -179,6 +179,23 @@ struct StatChip: View {
     }
 }
 
+/// The cache hit ratio, on screen only while it is worth reading — see
+/// `TokenStats.degradedCacheHitRatio` for when that is.
+///
+/// Amber, not green: by the time this appears it is an explanation for a turn
+/// that ran slow and expensive, not a badge for one that went well.
+struct CacheChip: View {
+    let tokens: TokenStats
+
+    var body: some View {
+        if let ratio = tokens.degradedCacheHitRatio {
+            StatChip(
+                label: "cache hit", value: Format.percent(ratio),
+                accent: IslandPalette.turnAccent)
+        }
+    }
+}
+
 /// A slim capsule bar. Used for context occupancy and plan progress.
 struct MeterBar: View {
     let fraction: Double

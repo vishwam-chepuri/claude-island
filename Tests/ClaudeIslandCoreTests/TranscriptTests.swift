@@ -85,6 +85,47 @@ func registerTranscriptTests() {
         test("Cache hit ratio is nil before any input") {
             await expectEqual(TokenStats().cacheHitRatio, nil)
         }
+
+        test("A healthy cache is not worth reporting") {
+            var acc = TranscriptAccumulator()
+            for i in 0..<8 { acc.consume(line: assistantLine(requestID: "r\(i)", output: 10)) }
+
+            let ratio = try await require(acc.tokens.cacheHitRatio)
+            await expect(ratio > 0.9, "expected a warm cache, got \(ratio)")
+            await expectEqual(acc.tokens.degradedCacheHitRatio, nil)
+        }
+
+        test("A collapsed cache is") {
+            var acc = TranscriptAccumulator()
+            for i in 0..<8 {
+                acc.consume(
+                    line: assistantLine(
+                        requestID: "r\(i)", output: 10, cacheRead: 1_000, cacheCreate: 50_000))
+            }
+
+            let ratio = try await require(acc.tokens.degradedCacheHitRatio)
+            await expect(ratio < 0.1, "got \(ratio)")
+        }
+
+        test("A young session is not blamed for a cache it has not filled yet") {
+            // Turn one has nothing to read back, so the cumulative ratio is 0 by
+            // construction — reporting it would flag every new session.
+            var acc = TranscriptAccumulator()
+            for i in 0..<(TokenStats.cacheHitJudgeableAfter - 1) {
+                acc.consume(
+                    line: assistantLine(
+                        requestID: "r\(i)", output: 10, cacheRead: 0, cacheCreate: 50_000))
+            }
+
+            await expectEqual(acc.tokens.cacheHitRatio, 0)
+            await expectEqual(acc.tokens.degradedCacheHitRatio, nil)
+
+            acc.consume(
+                line: assistantLine(
+                    requestID: "last", output: 10, cacheRead: 0, cacheCreate: 50_000))
+            await expectEqual(acc.tokens.messageCount, TokenStats.cacheHitJudgeableAfter)
+            await expectEqual(acc.tokens.degradedCacheHitRatio, 0)
+        }
     }
 
     suite("Incremental line splitting") {

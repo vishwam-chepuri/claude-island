@@ -23,6 +23,29 @@ public struct TokenStats: Sendable, Equatable {
         guard total > 0 else { return nil }
         return Double(cumulativeCacheRead) / Double(total)
     }
+
+    /// Below this the cache has stopped paying for itself.
+    public static let cacheHitFloor = 0.85
+    /// Turns the cache needs before its cumulative ratio means anything.
+    public static let cacheHitJudgeableAfter = 5
+
+    /// The hit ratio, but only while it is news.
+    ///
+    /// A healthy session sits at 97–99% — the harness caches the prompt
+    /// aggressively and there is nothing the reader can do to move the figure,
+    /// so shown unconditionally it is a constant occupying a chip. Shown only
+    /// once it collapses, it is the explanation for a turn that went slow and
+    /// expensive.
+    ///
+    /// Withheld until `cacheHitJudgeableAfter` turns because the ratio is
+    /// cumulative: turn one has nothing to read back, so a fresh session reads
+    /// 0% by construction rather than by fault.
+    public var degradedCacheHitRatio: Double? {
+        guard messageCount >= Self.cacheHitJudgeableAfter,
+            let ratio = cacheHitRatio, ratio < Self.cacheHitFloor
+        else { return nil }
+        return ratio
+    }
 }
 
 /// One tracked Claude Code session.
