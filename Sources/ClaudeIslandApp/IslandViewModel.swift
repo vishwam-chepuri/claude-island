@@ -66,6 +66,16 @@ final class IslandViewModel {
         return .compact
     }
 
+    /// Whether the shape's edge should be lit and pulsing.
+    ///
+    /// A permission prompt only. It is the one state where Claude is fully
+    /// blocked on you, and there is no sound, no dock bounce and no
+    /// notification behind it — on a second display the HUD is all there is.
+    /// The idle nudge and `done` are deliberately excluded: `done` is the most
+    /// common resting state, and an edge that is lit almost always is one the
+    /// eye learns to skip.
+    var wantsAttentionBorder: Bool { mode == .alert }
+
     var primary: Session? { snapshot.primary }
     var others: [Session] { snapshot.others }
 

@@ -69,6 +69,20 @@ struct IslandView: View {
         }
         .frame(width: model.shapeSize.width, height: model.shapeSize.height)
         .clipShape(IslandShape(cornerRadius: model.cornerRadius, topFlare: model.topFlare))
+        // Mounted here, *after* the clip, and not as another overlay inside the
+        // ZStack: everything in there is clipped to the shape, so a halo drawn
+        // there would be cut off at exactly the edge it needs to spread past.
+        // The panel is far larger than the shape, so out here it has room.
+        //
+        // The fade matters. The CA path snaps straight to its final geometry
+        // while the SwiftUI fill springs into the alert layout, and without the
+        // transition that mismatch is visible for the length of the morph.
+        .overlay {
+            if model.wantsAttentionBorder {
+                PulsingOutline(cornerRadius: model.cornerRadius, topFlare: model.topFlare)
+                    .transition(.opacity)
+            }
+        }
         // contentShape limits the tap target to the drawn shape; without it the
         // gesture would claim the surrounding transparent frame too.
         .contentShape(IslandShape(cornerRadius: model.cornerRadius, topFlare: model.topFlare))
@@ -78,15 +92,12 @@ struct IslandView: View {
         }
     }
 
-    private var strokeColor: Color {
-        if model.mode == .alert { return IslandPalette.alert.opacity(0.9) }
-        return model.debugTint ? IslandPalette.debugStroke : .clear
-    }
+    // The alert's edge belongs to `PulsingOutline` now. Leaving a branch for it
+    // here as well would draw the outline twice, and the static copy underneath
+    // would flatten the pulse it is meant to be showing.
+    private var strokeColor: Color { model.debugTint ? IslandPalette.debugStroke : .clear }
 
-    private var strokeWidth: CGFloat {
-        if model.mode == .alert { return 1.5 }
-        return model.debugTint ? 1 : 0
-    }
+    private var strokeWidth: CGFloat { model.debugTint ? 1 : 0 }
 
     @ViewBuilder
     private var content: some View {
@@ -125,6 +136,14 @@ enum IslandPalette {
 
     /// Permission requests. Warm enough to read as "you specifically".
     static let alert = Color(red: 1.0, green: 0.58, blue: 0.16)
+    /// The bright end of the attention border's breath. The green channel
+    /// travels 148 to 219 in 8-bit terms — far enough to read as a shift, close
+    /// enough that it reads as one warm colour breathing rather than two
+    /// colours alternating.
+    static let alertPulse = Color(red: 1.0, green: 0.859, blue: 0.278)
+    /// Where that breath rests under Reduce Motion: the midpoint of the two, so
+    /// the edge is still clearly lit and unlike every other state, just still.
+    static let alertStill = Color(red: 1.0, green: 0.706, blue: 0.220)
     static let running = Color(red: 0.42, green: 0.78, blue: 1.0)
     static let thinking = Color(red: 0.62, green: 0.62, blue: 0.68)
     static let error = Color(red: 1.0, green: 0.35, blue: 0.35)

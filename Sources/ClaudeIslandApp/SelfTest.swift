@@ -370,7 +370,52 @@ enum SelfTest {
                 detail: "canBecomeKey=\(panel.canBecomeKey) active=\(NSApp.isActive)"))
 
         await restingLineChecks(&checks, model: model)
+        attentionBorderChecks(&checks, model: model)
+        outlineGeometryChecks(&checks)
         await switcherChecks(&checks, model: model)
+    }
+
+    /// The lit border belongs to a permission prompt and nothing else.
+    ///
+    /// `SelfTest` works at view-model level and cannot inspect `CALayer` state,
+    /// so the seam is the predicate the view mounts `PulsingOutline` on. The
+    /// negative cases are the point: `done` is the most common resting state,
+    /// and a border that is on almost always trains the eye to ignore it.
+    private static func attentionBorderChecks(_ checks: inout [Check], model: IslandViewModel) {
+        model.isHovered = false
+        model.apply(
+            HUDSnapshot(
+                primary: session(
+                    "s",
+                    state: .awaitingPermission(
+                        PermissionAsk(
+                            toolName: "Write", kind: .write, target: "/tmp/x", since: Date()))),
+                others: []))
+        checks.append(
+            Check(
+                name: "a permission prompt lights the border",
+                passed: model.wantsAttentionBorder,
+                detail: "mode=\(model.mode) wants=\(model.wantsAttentionBorder)"))
+
+        for (label, state) in [
+            ("the idle nudge", SessionState.idle(waitingOnUser: true)),
+            ("done", SessionState.done),
+            ("thinking", SessionState.thinking),
+        ] {
+            model.apply(HUDSnapshot(primary: session("s", state: state), others: []))
+            checks.append(
+                Check(
+                    name: "\(label) leaves the border dark",
+                    passed: !model.wantsAttentionBorder,
+                    detail: "mode=\(model.mode) wants=\(model.wantsAttentionBorder)"))
+        }
+
+        model.apply(HUDSnapshot())
+        checks.append(
+            Check(
+                name: "a dormant HUD leaves the border dark",
+                passed: !model.wantsAttentionBorder,
+                detail: "mode=\(model.mode) wants=\(model.wantsAttentionBorder)"))
     }
 
     /// Every tracked session rests as one line, including the two states you are
@@ -419,6 +464,39 @@ enum SelfTest {
                 name: "only a session-free HUD goes dormant",
                 passed: { model.apply(HUDSnapshot()); return model.mode == .dormant }(),
                 detail: "mode=\(model.mode)"))
+    }
+
+    /// The attention border's path must not be drawn on its head.
+    ///
+    /// `IslandOutline` is a SwiftUI `Shape`, so it is authored y-down: the
+    /// concave flares curve out of `minY`, which is the screen edge. A CALayer
+    /// inside an unflipped `NSView` is y-up — `StatusMark`'s checkmark in the
+    /// same file only reads as a tick because of it — so handing that path
+    /// straight to the layer inverts the whole silhouette.
+    ///
+    /// Which is worth a check rather than an eyeball, because the island is very
+    /// nearly symmetric about its waist: inverted, it still looks like a lit
+    /// island with a glow, and the tell is only that the flares hang off the
+    /// bottom instead of meeting the screen edge.
+    private static func outlineGeometryChecks(_ checks: inout [Check]) {
+        let rect = CGRect(x: 0, y: 0, width: 300, height: 38)
+        let flare: CGFloat = 11
+        let path = PulsingOutline.layerPath(in: rect, cornerRadius: 18, topFlare: flare)
+
+        // The path opens at the left flare's tip, which is the one point that is
+        // both outside the frame and level with the screen edge.
+        var start: CGPoint?
+        path.applyWithBlock { element in
+            guard element.pointee.type == .moveToPoint, start == nil else { return }
+            start = element.pointee.points[0]
+        }
+
+        checks.append(
+            Check(
+                name: "the outline's flares meet the screen edge",
+                passed: start.map { $0.x < rect.minX && $0.y > rect.midY } ?? false,
+                detail: "opens at \(start.map(String.init(describing:)) ?? "nothing") "
+                    + "— want x < \(rect.minX) and y > \(rect.midY) in \(rect)"))
     }
 
     /// The session switcher, including the rule that a permission prompt takes
