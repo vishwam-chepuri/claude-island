@@ -371,6 +371,7 @@ enum SelfTest {
 
         await restingLineChecks(&checks, model: model)
         attentionBorderChecks(&checks, model: model)
+        completionPulseChecks(&checks, model: model)
         outlineGeometryChecks(&checks)
         await switcherChecks(&checks, model: model)
     }
@@ -418,6 +419,57 @@ enum SelfTest {
                 name: "a dormant HUD asks for no pulse",
                 passed: model.borderPulse == nil,
                 detail: "mode=\(model.mode) pulse=\(String(describing: model.borderPulse))"))
+    }
+
+    /// A completion is an instant, not a condition: it fires on the edge into
+    /// `done` and then stops. Firing on the state instead would re-pulse on
+    /// every snapshot, on launch with an already-finished session, and every
+    /// time the switcher landed on one.
+    private static func completionPulseChecks(_ checks: inout [Check], model: IslandViewModel) {
+        model.isHovered = false
+
+        // A session first seen already finished must not pulse — that is the
+        // HUD launching, not work completing.
+        model.apply(HUDSnapshot(primary: session("s", state: .done), others: []))
+        checks.append(
+            Check(
+                name: "a session first seen as done does not pulse",
+                passed: model.borderPulse == nil,
+                detail: "pulse=\(String(describing: model.borderPulse))"))
+
+        // Working, then finished: that is the edge.
+        model.apply(HUDSnapshot(primary: session("s", state: .thinking), others: []))
+        model.apply(HUDSnapshot(primary: session("s", state: .done), others: []))
+        checks.append(
+            Check(
+                name: "crossing into done asks for the completion pulse",
+                passed: model.borderPulse == .completion,
+                detail: "pulse=\(String(describing: model.borderPulse))"))
+
+        // Another snapshot arrives mid-window. The pulse is a fixed span of
+        // time, so it neither restarts nor is cut short by unrelated traffic.
+        model.apply(HUDSnapshot(primary: session("s", state: .done), others: []))
+        checks.append(
+            Check(
+                name: "the pulse rides out its window across snapshots",
+                passed: model.borderPulse == .completion,
+                detail: "pulse=\(String(describing: model.borderPulse))"))
+
+        model.endCompletionPulse()
+        checks.append(
+            Check(
+                name: "the completion pulse ends on its own",
+                passed: model.borderPulse == nil && model.completionPulseID == nil,
+                detail: "pulse=\(String(describing: model.borderPulse))"))
+
+        model.apply(HUDSnapshot(primary: session("s", state: .done), others: []))
+        checks.append(
+            Check(
+                name: "a finished session does not pulse again once the window closes",
+                passed: model.borderPulse == nil,
+                detail: "pulse=\(String(describing: model.borderPulse))"))
+
+        model.apply(HUDSnapshot())
     }
 
     /// Every tracked session rests as one line, including the two states you are

@@ -65,6 +65,19 @@ final class IslandViewModel {
     private(set) var tick = Date()
     private var tickTimer: Timer?
 
+    /// The session whose completion is currently being announced, if any.
+    /// Cleared by a one-shot timer — a completion is an instant, so nothing here
+    /// outlives its own window.
+    private(set) var completionPulseID: String?
+    private var completionTimer: Timer?
+    /// Every session's state as of the last snapshot, so a completion can be
+    /// detected as a crossing rather than as a condition.
+    private var lastStates: [String: SessionState] = [:]
+
+    /// How long a completion is announced for: the sweep reaches the flares,
+    /// holds long enough to read the name, then fades.
+    static let completionPulseDuration: TimeInterval = 1.8
+
     /// The switcher selection. Nil means "follow automatic priority".
     private(set) var selectedSessionID: String?
 
@@ -87,6 +100,7 @@ final class IslandViewModel {
     var borderPulse: BorderPulse? {
         guard mode != .dormant else { return nil }
         if mode == .alert { return .attention }
+        if let id = completionPulseID, displaySession?.id == id { return .completion }
         return nil
     }
 
@@ -489,6 +503,7 @@ final class IslandViewModel {
     }
 
     func apply(_ snapshot: HUDSnapshot) {
+        let previous = lastStates
         self.snapshot = snapshot
         // Nothing left to pin open once the last session goes away.
         if snapshot.primary == nil {
@@ -501,7 +516,50 @@ final class IslandViewModel {
         {
             selectedSessionID = nil
         }
+        lastStates = Dictionary(
+            allSessions.map { ($0.id, $0.state) }, uniquingKeysWith: { _, latest in latest })
+        // A session that has gone away takes its pulse with it.
+        if let id = completionPulseID, !allSessions.contains(where: { $0.id == id }) {
+            endCompletionPulse()
+        }
+        noteCompletions(since: previous)
         syncTicker()
+    }
+
+    /// Starts a completion pulse for the first session that crossed into `done`.
+    ///
+    /// Suppressed while a prompt is up — a prompt blocks Claude entirely and the
+    /// edge can only say one thing — and while a pulse is already running, so a
+    /// burst of completions does not make the display hop.
+    private func noteCompletions(since previous: [String: SessionState]) {
+        guard completionPulseID == nil else { return }
+        guard !allSessions.contains(where: { $0.state.isAlert }) else { return }
+        let finished = allSessions.first { session in
+            guard let was = previous[session.id] else { return false }
+            return was != .done && session.state == .done
+        }
+        guard let finished else { return }
+        beginCompletionPulse(finished.id)
+    }
+
+    private func beginCompletionPulse(_ id: String) {
+        completionPulseID = id
+        completionTimer?.invalidate()
+        let timer = Timer(
+            timeInterval: Self.completionPulseDuration, repeats: false
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endCompletionPulse() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        completionTimer = timer
+    }
+
+    /// Ends the announcement. Called by the one-shot timer, and directly by the
+    /// self-test so the checks do not have to sleep through the window.
+    func endCompletionPulse() {
+        completionTimer?.invalidate()
+        completionTimer = nil
+        completionPulseID = nil
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -509,6 +567,7 @@ final class IslandViewModel {
         if !enabled {
             isPinnedOpen = false
             selectedSessionID = nil
+            endCompletionPulse()
         }
         syncTicker()
     }
@@ -533,6 +592,7 @@ final class IslandViewModel {
     func shutdown() {
         tickTimer?.invalidate()
         tickTimer = nil
+        endCompletionPulse()
     }
 }
 
