@@ -188,6 +188,17 @@ struct PulsingOutline: NSViewRepresentable {
         var pulse: BorderPulse = .attention
         var cornerRadius: CGFloat = 0
         var topFlare: CGFloat = 0
+        /// What the sweep's animation was last built for. `apply()` runs from
+        /// `layout()`, and SwiftUI calls that on every relayout — a resize, or
+        /// the elapsed label ticking once a second through a live prompt —
+        /// not just when the pulse actually changes. Comparing against this
+        /// is what lets a plain relayout leave a running cycle alone instead
+        /// of restarting it before it ever reaches its fade.
+        private var appliedConfiguration: SweepConfiguration?
+        private struct SweepConfiguration: Equatable {
+            let pulse: BorderPulse
+            let reduceMotion: Bool
+        }
 
         override init(frame: NSRect) {
             super.init(frame: frame)
@@ -242,7 +253,6 @@ struct PulsingOutline: NSViewRepresentable {
 
         func apply() {
             let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            for key in PulsingOutline.animationKeys { sweep.removeAnimation(forKey: key) }
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -267,6 +277,19 @@ struct PulsingOutline: NSViewRepresentable {
             }
             CATransaction.commit()
 
+            // Colour and geometry are cheap to redo on every pass; the
+            // animation is not allowed to be. Only a change in what it should
+            // look like — the pulse kind, or Reduce Motion flipping — may
+            // touch it. Checking the layer itself ("is an animation already
+            // attached?") would go wrong here: the completion sweep sets
+            // `isRemovedOnCompletion = false` so it stays attached long after
+            // it finishes, and that leftover would then block a later
+            // attention pulse from ever starting on the same view.
+            let configuration = SweepConfiguration(pulse: pulse, reduceMotion: still)
+            guard configuration != appliedConfiguration else { return }
+            appliedConfiguration = configuration
+
+            for key in PulsingOutline.animationKeys { sweep.removeAnimation(forKey: key) }
             guard !still else { return }
             switch pulse {
             case .attention: addAttentionSweep()
