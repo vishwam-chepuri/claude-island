@@ -190,13 +190,14 @@ In `SelfTest.swift`, add this function and call it from `run()`'s check block im
                 passed: model.borderPulse == .completion,
                 detail: "pulse=\(String(describing: model.borderPulse))"))
 
-        // Still done on the next snapshot: the instant has passed.
+        // Another snapshot arrives mid-window. The pulse is a fixed span of
+        // time, so it neither restarts nor is cut short by unrelated traffic.
         model.apply(HUDSnapshot(primary: session("s", state: .done), others: []))
         checks.append(
             Check(
-                name: "staying done does not re-pulse",
+                name: "the pulse rides out its window across snapshots",
                 passed: model.borderPulse == .completion,
-                detail: "still within the window: \(String(describing: model.borderPulse))"))
+                detail: "pulse=\(String(describing: model.borderPulse))"))
 
         model.endCompletionPulse()
         checks.append(
@@ -734,10 +735,10 @@ In `IslandView.swift`, replace the overlay body with:
         }
 ```
 
-- [ ] **Step 3: Build (expect one error — the blue is added in Task 5)**
+- [ ] **Step 3: Build to see exactly what the new branch needs**
 
 Run: `swift build 2>&1 | grep -E "error:|Build complete"`
-Expected: FAIL with `type 'IslandPalette' has no member 'completionPulse'`. That is the seam Task 5 fills; do not add it here.
+Expected: FAIL with `type 'IslandPalette' has no member 'completionPulse'`. Step 4 adds it.
 
 - [ ] **Step 4: Add the blue constant so the build passes**
 
