@@ -78,9 +78,12 @@ struct IslandView: View {
         // while the SwiftUI fill springs into the alert layout, and without the
         // transition that mismatch is visible for the length of the morph.
         .overlay {
-            if model.borderPulse != nil {
-                PulsingOutline(cornerRadius: model.cornerRadius, topFlare: model.topFlare)
-                    .transition(.opacity)
+            if let pulse = model.borderPulse {
+                PulsingOutline(
+                    pulse: pulse,
+                    cornerRadius: model.cornerRadius, topFlare: model.topFlare
+                )
+                .transition(.opacity)
             }
         }
         // contentShape limits the tap target to the drawn shape; without it the
@@ -144,6 +147,10 @@ enum IslandPalette {
     /// Where that breath rests under Reduce Motion: the midpoint of the two, so
     /// the edge is still clearly lit and unlike every other state, just still.
     static let alertStill = Color(red: 1.0, green: 0.706, blue: 0.220)
+    /// A finished session's one blue pulse. `running` is blue too, but the two
+    /// never meet: a running session draws no border at all, so blue on the edge
+    /// can only mean finished.
+    static let completionPulse = Color(red: 0.349, green: 0.678, blue: 1.0)
     static let running = Color(red: 0.42, green: 0.78, blue: 1.0)
     static let thinking = Color(red: 0.62, green: 0.62, blue: 0.68)
     static let error = Color(red: 1.0, green: 0.35, blue: 0.35)

@@ -152,8 +152,12 @@ struct LiveRail: NSViewRepresentable {
     }
 }
 
-/// The permission prompt's lit edge: the stroke cycles orange to yellow while a
-/// halo swells and fades in step with it, so the island reads as lit from within.
+/// The permission prompt's lit edge, and a finished session's one-shot pulse.
+///
+/// Both are a bright band that grows out from the bottom centre to the two top
+/// flares rather than a uniform glow switching on — the eye follows the travel
+/// from where the island meets the screen edge up toward the corners, instead
+/// of an edge that just changes brightness in place.
 ///
 /// A prompt is the one state where Claude is fully blocked on the human, and
 /// nothing else escalates it — no sound, no dock bounce, no system notification.
@@ -164,115 +168,171 @@ struct LiveRail: NSViewRepresentable {
 /// SwiftUI stroke, or driving its colour from a `TimelineView(.animation)`, both
 /// land on the view-graph-per-frame path this file exists to avoid.
 struct PulsingOutline: NSViewRepresentable {
+    let pulse: BorderPulse
     var cornerRadius: CGFloat
     var topFlare: CGFloat
 
-    /// Half a cycle, 1.7s round trip. Matches the `PulsingGlyph` breath in
-    /// `AlertContent`, so the edge and the raised hand pulse together instead of
-    /// beating against each other. Retuning this means retuning the glyph too.
-    static let period: CFTimeInterval = 0.85
+    /// One yellow cycle. Matches the `PulsingGlyph` breath in `AlertContent` so
+    /// the edge and the raised hand do not beat against each other.
+    static let attentionCycle: CFTimeInterval = 1.7
     fileprivate static let lineWidth: CGFloat = 1.5
 
     final class OutlineView: NSView {
-        let edge = CAShapeLayer()
+        /// The full outline at its resting colour. Static, and the only layer
+        /// carrying a shadow — the halo cannot ride on the sweep, because an
+        /// explicit shadowPath covers the whole ribbon and would glow around
+        /// stretches of border that are not lit yet.
+        let base = CAShapeLayer()
+        /// The bright segment that grows out from the bottom centre.
+        let sweep = CAShapeLayer()
+        var pulse: BorderPulse = .attention
         var cornerRadius: CGFloat = 0
         var topFlare: CGFloat = 0
 
         override init(frame: NSRect) {
             super.init(frame: frame)
             wantsLayer = true
-            edge.fillColor = nil
-            edge.lineWidth = PulsingOutline.lineWidth
-            edge.shadowOffset = .zero
-            layer?.addSublayer(edge)
+            for layer in [base, sweep] {
+                layer.fillColor = nil
+                layer.lineWidth = PulsingOutline.lineWidth
+                layer.lineCap = .round
+            }
+            base.shadowOffset = .zero
+            self.layer?.addSublayer(base)
+            self.layer?.addSublayer(sweep)
         }
 
         @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError("not used") }
 
-        /// Decoration only. This view covers the whole alert pill, and without
-        /// this it swallows the click that pins the card open — `.allowsHitTesting`
-        /// on the SwiftUI side does not reach an AppKit subview's own hit test.
+        /// Decoration only. This view covers the whole pill, and without this it
+        /// swallows the click that pins the card open — `.allowsHitTesting` on
+        /// the SwiftUI side does not reach an AppKit subview's own hit test.
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
         /// Laid out here rather than in `updateNSView`, for the reason `LiveRail`
         /// documents above: SwiftUI resizes the view without necessarily calling
-        /// `updateNSView`. The alert pill does resize while mounted — its width
-        /// follows the elapsed counter as it rolls 9s -> 10s -> 1:00 — and a path
-        /// built against stale bounds draws the edge in the wrong place.
+        /// `updateNSView`. The pill does resize while mounted — its width follows
+        /// the elapsed counter as it rolls 9s -> 10s -> 1:00.
         override func layout() {
             super.layout()
             guard bounds.width > 0 else { return }
 
             let outline = PulsingOutline.layerPath(
                 in: bounds, cornerRadius: cornerRadius, topFlare: topFlare)
-
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            edge.frame = bounds
-            edge.path = outline
             // The halo's geometry is the STROKE, not the silhouette. An explicit
             // shadowPath is *filled* to derive the shadow, so handing it the
-            // outline would wash a blurred orange island across the fill and its
-            // content instead of haloing the edge. Stroking it first gives a
-            // closed ribbon whose fill is exactly the 1.5pt line — correct, and
-            // still explicit, so Core Animation never rasterises the layer to
-            // work the shape out for itself.
-            edge.shadowPath = outline.copy(
+            // outline would wash a blurred wedge across the fill and its content
+            // instead of haloing the edge.
+            let ribbon = outline.copy(
                 strokingWithWidth: PulsingOutline.lineWidth, lineCap: .butt,
                 lineJoin: .round, miterLimit: 10)
-            CATransaction.commit()
-
-            applyPulse()
-        }
-
-        func applyPulse() {
-            let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            // The resting values are the dim end of the cycle, so the first
-            // frame after mounting is where the animation is about to begin.
-            let base = NSColor(still ? IslandPalette.alertStill : IslandPalette.alert).cgColor
-            edge.strokeColor = base
-            edge.shadowColor = base
-            edge.shadowOpacity = still ? 0.5 : Float(PulsingOutline.dimOpacity)
-            edge.shadowRadius = still ? 8 : PulsingOutline.tightRadius
+            for layer in [base, sweep] {
+                layer.frame = bounds
+                layer.path = outline
+            }
+            base.shadowPath = ribbon
             CATransaction.commit()
 
-            guard !still else {
-                for key in PulsingOutline.animationKeys { edge.removeAnimation(forKey: key) }
-                return
-            }
-            // Re-added only when absent: a width change from a longer session
-            // name must not restart the cycle mid-phase.
-            guard edge.animation(forKey: PulsingOutline.animationKeys[0]) == nil else { return }
+            apply()
+        }
 
-            for (keyPath, from, to) in PulsingOutline.breath {
-                let pulse = CABasicAnimation(keyPath: keyPath)
-                pulse.fromValue = from
-                pulse.toValue = to
-                // Identical duration and curve across all four, so they stay in
-                // phase by construction rather than by tuning.
-                pulse.duration = PulsingOutline.period
-                pulse.autoreverses = true
-                pulse.repeatCount = .infinity
-                pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                edge.add(pulse, forKey: "island.outline.\(keyPath)")
+        func apply() {
+            let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            for key in PulsingOutline.animationKeys { sweep.removeAnimation(forKey: key) }
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            switch pulse {
+            case .attention:
+                let baseColor = NSColor(
+                    still ? IslandPalette.alertStill : IslandPalette.alert
+                ).cgColor
+                base.isHidden = false
+                base.strokeColor = baseColor
+                base.shadowColor = baseColor
+                base.shadowOpacity = 0.55
+                base.shadowRadius = 9
+                sweep.strokeColor = NSColor(IslandPalette.alertPulse).cgColor
+                sweep.isHidden = still
+            case .completion:
+                // Nothing rests behind a completion — it is an instant, and must
+                // leave no trace once it has passed.
+                base.isHidden = true
+                sweep.strokeColor = NSColor(IslandPalette.completionPulse).cgColor
+                sweep.isHidden = false
             }
+            CATransaction.commit()
+
+            guard !still else { return }
+            switch pulse {
+            case .attention: addAttentionSweep()
+            case .completion: addCompletionSweep()
+            }
+        }
+
+        /// Grows from the bottom centre to both flares over the first half of
+        /// the cycle, then fades out over the second while `base` stays lit.
+        private func addAttentionSweep() {
+            let cycle = PulsingOutline.attentionCycle
+            add(
+                grow: [0, 0.5, 1], fadeAt: 0.5, duration: cycle, repeats: true)
+        }
+
+        private func addCompletionSweep() {
+            add(
+                grow: [0, 0.33, 1], fadeAt: 0.67,
+                duration: PulsingOutline.completionWindow, repeats: false)
+        }
+
+        /// Keyframes rather than a group: every property shares one duration and
+        /// one set of key times, so the two halves stay mirrored and the fade
+        /// stays in step by construction rather than by tuning.
+        private func add(
+            grow keyTimes: [NSNumber], fadeAt: NSNumber, duration: CFTimeInterval, repeats: Bool
+        ) {
+            let spec: [(String, [Any])] = [
+                ("strokeStart", [0.5, 0.0, 0.0]),
+                ("strokeEnd", [0.5, 1.0, 1.0]),
+            ]
+            for (keyPath, values) in spec {
+                let animation = CAKeyframeAnimation(keyPath: keyPath)
+                animation.values = values
+                animation.keyTimes = keyTimes
+                animation.duration = duration
+                animation.repeatCount = repeats ? .infinity : 1
+                animation.timingFunctions = [
+                    CAMediaTimingFunction(name: .easeInEaseOut),
+                    CAMediaTimingFunction(name: .linear),
+                ]
+                animation.fillMode = .forwards
+                animation.isRemovedOnCompletion = false
+                sweep.add(animation, forKey: "island.outline.\(keyPath)")
+            }
+
+            let fade = CAKeyframeAnimation(keyPath: "opacity")
+            fade.values = [1.0, 1.0, 0.0]
+            fade.keyTimes = [0, fadeAt, 1]
+            fade.duration = duration
+            fade.repeatCount = repeats ? .infinity : 1
+            fade.timingFunctions = [
+                CAMediaTimingFunction(name: .linear),
+                CAMediaTimingFunction(name: .easeInEaseOut),
+            ]
+            fade.fillMode = .forwards
+            fade.isRemovedOnCompletion = false
+            sweep.add(fade, forKey: "island.outline.opacity")
         }
     }
 
-    /// The silhouette in the layer's coordinates.
-    ///
-    /// `IslandOutline` stays the single source of truth for the shape — no path
-    /// maths is duplicated here — but it is a SwiftUI `Shape`, so it is authored
-    /// y-down: the concave flares curve out of `minY`, the screen edge. A
-    /// CALayer inside an unflipped `NSView` is y-up, which is why `StatusMark`'s
-    /// checkmark a few types down only reads as a tick with its vertex at the
-    /// *lower* y. Handed that path unflipped, the island draws on its head:
-    /// rounded corners jammed against the screen edge and the flares hanging off
-    /// the bottom into open air.
+    /// How long a completion is announced for. Must match
+    /// `IslandViewModel.completionPulseDuration`, or the layer outlives the
+    /// state that mounted it (or dies before it).
+    static let completionWindow: CFTimeInterval = 1.8
+
     static func layerPath(in rect: CGRect, cornerRadius: CGFloat, topFlare: CGFloat) -> CGPath {
         let authored = IslandOutline(cornerRadius: cornerRadius, topFlare: topFlare)
             .path(in: rect).cgPath
@@ -283,26 +343,8 @@ struct PulsingOutline: NSViewRepresentable {
         return flipped
     }
 
-    fileprivate static let dimOpacity = 0.25
-    fileprivate static let tightRadius: CGFloat = 5
-
-    /// One breath: the stroke warms, and the halo brightens and spreads with it.
-    fileprivate static var breath: [(String, Any, Any)] {
-        let warm = NSColor(IslandPalette.alert).cgColor
-        let bright = NSColor(IslandPalette.alertPulse).cgColor
-        return [
-            ("strokeColor", warm, bright),
-            ("shadowColor", warm, bright),
-            ("shadowOpacity", dimOpacity, 0.75),
-            ("shadowRadius", tightRadius, CGFloat(11)),
-        ]
-    }
-
-    /// Kept separate from `breath` so the hot path — the guard that runs on
-    /// every layout pass — does not build four colours to look at one string.
     fileprivate static let animationKeys = [
-        "island.outline.strokeColor", "island.outline.shadowColor",
-        "island.outline.shadowOpacity", "island.outline.shadowRadius",
+        "island.outline.strokeStart", "island.outline.strokeEnd", "island.outline.opacity",
     ]
 
     func makeNSView(context: NSViewRepresentableContext<Self>) -> OutlineView {
@@ -310,6 +352,7 @@ struct PulsingOutline: NSViewRepresentable {
     }
 
     func updateNSView(_ view: OutlineView, context: NSViewRepresentableContext<Self>) {
+        view.pulse = pulse
         view.cornerRadius = cornerRadius
         view.topFlare = topFlare
         view.needsLayout = true
