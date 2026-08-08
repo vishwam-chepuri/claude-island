@@ -7,10 +7,13 @@ public struct TranscriptUpdate: Sendable, Equatable {
     public var gitBranch: String?
     public var effort: String?
     public var tasks: TaskProgress
+    public var customTitle: String?
+    public var aiTitle: String?
 
     public init(
         sessionID: String, model: String?, tokens: TokenStats,
-        gitBranch: String? = nil, effort: String? = nil, tasks: TaskProgress = TaskProgress()
+        gitBranch: String? = nil, effort: String? = nil, tasks: TaskProgress = TaskProgress(),
+        customTitle: String? = nil, aiTitle: String? = nil
     ) {
         self.sessionID = sessionID
         self.model = model
@@ -18,6 +21,8 @@ public struct TranscriptUpdate: Sendable, Equatable {
         self.gitBranch = gitBranch
         self.effort = effort
         self.tasks = tasks
+        self.customTitle = customTitle
+        self.aiTitle = aiTitle
     }
 }
 
@@ -31,6 +36,8 @@ public struct TranscriptAccumulator: Sendable {
     public private(set) var gitBranch: String?
     public private(set) var effort: String?
     public private(set) var tasks = TaskProgress()
+    public private(set) var customTitle: String?
+    public private(set) var aiTitle: String?
 
     /// Claude Code writes one JSONL line per content block, and every line of a
     /// single API response repeats that response's `usage`. Measured on a real
@@ -47,6 +54,13 @@ public struct TranscriptAccumulator: Sendable {
         // Present on nearly every line type, not just assistant ones.
         if let branch = row.gitBranch, !branch.isEmpty { gitBranch = branch }
         if let effortValue = row.effort, !effortValue.isEmpty { effort = effortValue }
+
+        // Sidecar records — `custom-title` from `/rename`, `ai-title` generated
+        // after the first turn — carrying the same two strings the terminal tab
+        // title is built from. Re-emitted verbatim on resume rather than
+        // revised, so last-wins costs nothing and survives a `/clear` rewrite.
+        if let title = row.customTitle, !title.isEmpty { customTitle = title }
+        if let title = row.aiTitle, !title.isEmpty { aiTitle = title }
 
         guard row.type == "assistant", let message = row.message else { return }
 
@@ -90,6 +104,8 @@ public struct TranscriptAccumulator: Sendable {
         let isSidechain: Bool?
         let gitBranch: String?
         let effort: String?
+        let customTitle: String?
+        let aiTitle: String?
         let message: Message?
 
         enum CodingKeys: String, CodingKey {
@@ -98,6 +114,8 @@ public struct TranscriptAccumulator: Sendable {
             case isSidechain
             case gitBranch
             case effort
+            case customTitle
+            case aiTitle
             case message
         }
 

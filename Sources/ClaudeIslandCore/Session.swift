@@ -54,9 +54,11 @@ public struct Session: Sendable, Equatable, Identifiable {
     public var state: SessionState
     public var cwd: String?
     public var transcriptPath: String?
-    /// Name set via `/session`, resolved from ~/.claude/sessions. Preferred
-    /// label; falls back to the cwd basename.
-    public var sessionName: String?
+    /// The `/rename` title, read from the transcript's `custom-title` record.
+    public var customTitle: String?
+    /// Claude Code's own generated topic label, read from the transcript's
+    /// `ai-title` record. Appears after the first assistant turn.
+    public var aiTitle: String?
     public var model: String?
     public var gitBranch: String?
     public var effort: String?
@@ -88,9 +90,17 @@ public struct Session: Sendable, Equatable, Identifiable {
         self.lastEventAt = startedAt
     }
 
-    /// Label for the HUD: session name, else repo/worktree basename, else id.
+    /// Label for the HUD, matching what Claude Code puts in the terminal tab:
+    /// the `/rename` title, else its generated topic title.
+    ///
+    /// Claude Code's own chain ends `?? agentType ?? "Claude Code"`. This one
+    /// ends at the folder because a HUD row has to say *which* session it is:
+    /// several at once in one repo is the ordinary case here, and a column of
+    /// four rows all reading "Claude Code" names none of them. The folder also
+    /// covers the first turn of every session, before the title is generated.
     public var displayName: String {
-        if let n = sessionName, !n.isEmpty { return n }
+        if let n = customTitle, !n.isEmpty { return n }
+        if let n = aiTitle, !n.isEmpty { return n }
         if let c = cwd, !c.isEmpty {
             let base = (c as NSString).lastPathComponent
             if !base.isEmpty { return base }

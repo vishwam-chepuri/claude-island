@@ -161,61 +161,8 @@ public final class TranscriptWatcher: @unchecked Sendable {
                 tokens: entry.accumulator.tokens,
                 gitBranch: entry.accumulator.gitBranch,
                 effort: entry.accumulator.effort,
-                tasks: entry.accumulator.tasks))
-    }
-}
-
-/// Resolves the `/session` name for a session id.
-///
-/// `~/.claude/sessions/*.json` holds `{"sessionId": ..., "name": ...}`. Cheap
-/// enough to scan on demand and cache, since it changes rarely.
-public final class SessionNameResolver: @unchecked Sendable {
-    private let lock = NSLock()
-    private var cache: [String: String] = [:]
-    private var lastScan: Date = .distantPast
-    private let minRescanInterval: TimeInterval = 5
-
-    public init() {}
-
-    public func name(for sessionID: String) -> String? {
-        lock.lock()
-        if let hit = cache[sessionID] {
-            lock.unlock()
-            return hit
-        }
-        let shouldScan = Date().timeIntervalSince(lastScan) > minRescanInterval
-        lock.unlock()
-        guard shouldScan else { return nil }
-
-        let found = Self.scan()
-        lock.lock()
-        cache = found
-        lastScan = Date()
-        let result = cache[sessionID]
-        lock.unlock()
-        return result
-    }
-
-    private static func scan() -> [String: String] {
-        let dir = IslandPaths.claudeSessions
-        guard
-            let files = try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: nil)
-        else { return [:] }
-
-        var result: [String: String] = [:]
-        for file in files where file.pathExtension == "json" {
-            guard let data = try? Data(contentsOf: file),
-                let row = try? JSONDecoder().decode(SessionNameRow.self, from: data),
-                let id = row.sessionId, let name = row.name, !name.isEmpty
-            else { continue }
-            result[id] = name
-        }
-        return result
-    }
-
-    private struct SessionNameRow: Decodable {
-        let sessionId: String?
-        let name: String?
+                tasks: entry.accumulator.tasks,
+                customTitle: entry.accumulator.customTitle,
+                aiTitle: entry.accumulator.aiTitle))
     }
 }

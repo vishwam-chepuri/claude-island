@@ -38,8 +38,6 @@ public actor SessionStore {
     private let scheduler: TransitionScheduler
     private let now: @Sendable () -> Date
     private let log: IslandLog
-    /// Resolves a session id to the name set via `/session`, if any.
-    private let nameResolver: @Sendable (String) -> String?
 
     private var continuations: [UUID: AsyncStream<HUDSnapshot>.Continuation] = [:]
     private var sweepTask: Task<Void, Never>?
@@ -50,13 +48,11 @@ public actor SessionStore {
     public init(
         scheduler: TransitionScheduler = RealScheduler(),
         log: IslandLog = .disabled,
-        now: @escaping @Sendable () -> Date = { Date() },
-        nameResolver: @escaping @Sendable (String) -> String? = { _ in nil }
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.scheduler = scheduler
         self.log = log
         self.now = now
-        self.nameResolver = nameResolver
     }
 
     // MARK: - Observation
@@ -102,8 +98,7 @@ public actor SessionStore {
 
     public func ingest(_ envelope: HookEnvelope) {
         let outcome = SessionReducer.apply(envelope, to: sessions[envelope.sessionID])
-        var session = outcome.session
-        if session.sessionName == nil { session.sessionName = nameResolver(session.id) }
+        let session = outcome.session
         sessions[session.id] = session
 
         let revision = (revisions[session.id] ?? 0) + 1
@@ -127,6 +122,8 @@ public actor SessionStore {
         if let model = update.model { s.model = model }
         if let branch = update.gitBranch { s.gitBranch = branch }
         if let effort = update.effort { s.effort = effort }
+        if let title = update.customTitle { s.customTitle = title }
+        if let title = update.aiTitle { s.aiTitle = title }
         if !update.tasks.isEmpty { s.tasks = update.tasks }
         s.tokens = update.tokens
         sessions[update.sessionID] = s

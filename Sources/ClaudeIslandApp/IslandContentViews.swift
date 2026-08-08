@@ -55,7 +55,8 @@ struct AlertContent: View {
                     color: NSColor(IslandPalette.alert),
                     pointSize: 12,
                     animating: true)
-                Text(Format.name(session.displayName))
+                // Same string `leftClusterWidth` measures, by construction.
+                Text(model.compactLeadingText(session))
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
                     .lineLimit(1)
@@ -264,7 +265,7 @@ struct PeekHeader: View {
                     state: session.state,
                     contextFraction: ContextWindow.fraction(
                         used: session.tokens.contextTokens, model: session.model))
-                Text(Format.name(session.displayName))
+                Text(model.headerLeadingText(session))
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
                     .lineLimit(1)
@@ -618,7 +619,13 @@ struct SessionRow: View {
 
             // Constant weight: switching it on selection changed the label's
             // intrinsic width and reflowed the row under the cursor.
-            Text(Format.name(candidate.displayName, limit: 22))
+            //
+            // Unclamped, unlike the pill. Telling two sessions apart is the only
+            // reason this list exists, and sessions in one repo differ in the
+            // back half of their titles. It fits by construction: the row spans
+            // the card, which is already sized so that *half* of it holds this
+            // title at a larger, heavier font than the row draws it in.
+            Text(candidate.displayName)
                 .font(.system(size: 10.5, weight: .medium, design: .rounded))
                 .foregroundStyle(isShown ? .white : .white.opacity(0.62))
                 .lineLimit(1)

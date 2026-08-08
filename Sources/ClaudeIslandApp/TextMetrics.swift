@@ -27,8 +27,13 @@ enum TextMetrics {
 
 extension NSFont {
     /// Matches `.system(size:weight:design: .rounded)` in the SwiftUI views.
-    static func roundedMedium(_ size: CGFloat) -> NSFont {
-        let base = NSFont.systemFont(ofSize: size, weight: .medium)
+    static func roundedMedium(_ size: CGFloat) -> NSFont { rounded(size, weight: .medium) }
+
+    /// The weight the header and alert rows draw their session label in.
+    static func roundedSemibold(_ size: CGFloat) -> NSFont { rounded(size, weight: .semibold) }
+
+    private static func rounded(_ size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        let base = NSFont.systemFont(ofSize: size, weight: weight)
         guard let descriptor = base.fontDescriptor.withDesign(.rounded) else { return base }
         return NSFont(descriptor: descriptor, size: size) ?? base
     }

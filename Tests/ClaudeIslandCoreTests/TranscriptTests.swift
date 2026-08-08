@@ -310,6 +310,37 @@ func registerTaskProgressTests() {
             await expectEqual(acc.effort, "xhigh")
         }
 
+        test("Titles are read from the sidecar records the terminal tab uses") {
+            var acc = TranscriptAccumulator()
+            acc.consume(
+                line: Data(
+                    #"{"type":"ai-title","aiTitle":"Do not truncate the branch name","sessionId":"s1"}"#
+                        .utf8))
+            await expectEqual(acc.aiTitle, "Do not truncate the branch name")
+            await expectEqual(acc.customTitle, nil)
+
+            acc.consume(
+                line: Data(
+                    #"{"type":"custom-title","customTitle":"debug playwright","sessionId":"s1"}"#
+                        .utf8))
+            await expectEqual(acc.customTitle, "debug playwright")
+            // The two are kept apart: a rename must not erase what it outranks,
+            // or clearing it later would leave the session with no title at all.
+            await expectEqual(acc.aiTitle, "Do not truncate the branch name")
+        }
+
+        test("A re-emitted title on resume does not disturb the accumulator") {
+            // Claude Code writes the ai-title record again on every resume. In 50
+            // real transcripts the value never varied within a session, so last
+            // -wins is stable — but an empty re-emission must not blank it.
+            var acc = TranscriptAccumulator()
+            let line = #"{"type":"ai-title","aiTitle":"Fix scroll functionality issue"}"#
+            acc.consume(line: Data(line.utf8))
+            acc.consume(line: Data(line.utf8))
+            acc.consume(line: Data(#"{"type":"ai-title","aiTitle":""}"#.utf8))
+            await expectEqual(acc.aiTitle, "Fix scroll functionality issue")
+        }
+
         test("An empty plan reports no summary") {
             await expectEqual(TaskProgress().summary, nil)
             await expect(TaskProgress().isEmpty)

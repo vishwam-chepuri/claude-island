@@ -184,9 +184,22 @@ final class IslandViewModel {
     private var shownSession: Session? { displaySession }
 
     func leftClusterWidth(for session: Session) -> CGFloat {
-        // Must match the font the row actually renders in, or the label
-        // truncates inside a frame that looked wide enough.
-        let text = TextMetrics.width(compactLeadingText(session), font: .roundedMedium(11))
+        clusterWidth(leading: compactLeadingText(session))
+    }
+
+    /// The open tiers draw the title whole, so they must be measured from the
+    /// unclamped string. Measuring the pill's would size the card to an
+    /// ellipsis and truncate the very label the card exists to show.
+    func headerLeftClusterWidth(for session: Session) -> CGFloat {
+        clusterWidth(leading: headerLeadingText(session))
+    }
+
+    /// Measured at semibold, the heavier of the two weights the leading label
+    /// is drawn in — the pill uses medium, the header and the alert row
+    /// semibold. Overshooting the pill costs it a pixel of padding;
+    /// undershooting the header would truncate a title mid-word.
+    private func clusterWidth(leading: String) -> CGFloat {
+        let text = TextMetrics.width(leading, font: .roundedSemibold(11))
         return Self.sidePadding + 20 + 8 + text + Self.notchPadding
     }
 
@@ -202,6 +215,7 @@ final class IslandViewModel {
     }
 
     var leftClusterWidth: CGFloat { shownSession.map(leftClusterWidth(for:)) ?? 0 }
+    var headerLeftClusterWidth: CGFloat { shownSession.map(headerLeftClusterWidth(for:)) ?? 0 }
     var rightClusterWidth: CGFloat { shownSession.map(rightClusterWidth(for:)) ?? 0 }
 
     // MARK: - Stable sizing for the open card
@@ -215,7 +229,7 @@ final class IslandViewModel {
     /// Widest flank any session would need, so the header never reflows.
     private var widestFlank: CGFloat {
         allSessions.reduce(0) { widest, session in
-            max(widest, max(leftClusterWidth(for: session), rightClusterWidth(for: session)))
+            max(widest, max(headerLeftClusterWidth(for: session), rightClusterWidth(for: session)))
         }
     }
 
@@ -276,6 +290,14 @@ final class IslandViewModel {
     /// says less than the status word already does.
     func compactLeadingText(_ session: Session) -> String {
         Format.name(session.displayName)
+    }
+
+    /// Peek and expanded show the title whole; the card is sized to it. The
+    /// pill cannot afford that — it rests in the menu bar — but a card the user
+    /// deliberately opened can, and a title clipped to "Implement Claude
+    /// session…" loses the half that distinguishes it from its neighbours.
+    func headerLeadingText(_ session: Session) -> String {
+        session.displayName
     }
 
     func compactElapsedText(_ session: Session) -> String? {
@@ -361,7 +383,7 @@ final class IslandViewModel {
             let taskRow: CGFloat = (displaySession?.tasks.current != nil) ? 28 : 0
             // The open tiers split their flanks evenly, so the width has to fit
             // TWICE the wider side — sizing to the sum truncates the header.
-            let even = notchGap + 2 * max(leftClusterWidth, rightClusterWidth)
+            let even = notchGap + 2 * max(headerLeftClusterWidth, rightClusterWidth)
             let meta = displaySession.map(metaLineWidth(for:)) ?? 0
             return CGSize(
                 width: Self.withinPanel(max(even, 460, meta)),
@@ -509,8 +531,14 @@ extension SessionState {
 }
 
 enum Format {
-    /// Session names are user-chosen and can be long; the pill has a fixed slot.
-    static func name(_ raw: String, limit: Int = 14) -> String {
+    /// Titles run long — Claude Code's generated ones average five words, and a
+    /// `/rename` has no limit at all — while the resting pill sits in the menu
+    /// bar and has to stay narrow. 24 is where a five-word title still reads as
+    /// a phrase; the open card shows it whole (`headerLeadingText`).
+    ///
+    /// Unlike a branch, a title is read rather than matched against something,
+    /// so an ellipsis here costs comprehension, not identification.
+    static func name(_ raw: String, limit: Int = 24) -> String {
         raw.count <= limit ? raw : String(raw.prefix(limit - 1)) + "\u{2026}"
     }
 

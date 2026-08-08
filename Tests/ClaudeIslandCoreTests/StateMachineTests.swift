@@ -223,13 +223,23 @@ func registerStateMachineTests() {
                 s.state.needsUser, "a permission prompt was not counted as needing the user")
         }
 
-        test("displayName prefers session name, then cwd basename, then id") {
+        test("displayName follows the terminal title: rename, ai title, folder, id") {
             var s = Session(id: "abcdef123456", startedAt: base)
             await expectEqual(s.displayName, "abcdef12")
             s.cwd = "/Users/dev/worktrees/feature-a"
             await expectEqual(s.displayName, "feature-a")
-            s.sessionName = "retry work"
+            s.aiTitle = "Do not truncate the branch name"
+            await expectEqual(s.displayName, "Do not truncate the branch name")
+            s.customTitle = "retry work"
             await expectEqual(s.displayName, "retry work")
+        }
+
+        test("An empty title falls through instead of blanking the label") {
+            var s = Session(id: "abcdef123456", startedAt: base)
+            s.cwd = "/Users/dev/worktrees/feature-a"
+            s.customTitle = ""
+            s.aiTitle = ""
+            await expectEqual(s.displayName, "feature-a")
         }
 
         test("A payload with no session_id decodes to nil rather than throwing") {

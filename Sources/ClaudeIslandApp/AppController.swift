@@ -5,7 +5,6 @@ import SwiftUI
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate {
     private let log = IslandLog.fromEnvironment()
-    private let nameResolver = SessionNameResolver()
 
     private var store: SessionStore!
     private var server: SocketServer!
@@ -106,10 +105,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     // MARK: - Pipeline
 
     private func startPipeline() {
-        let resolver = nameResolver
-        store = SessionStore(
-            log: log,
-            nameResolver: { [resolver] id in resolver.name(for: id) })
+        store = SessionStore(log: log)
 
         watcher = TranscriptWatcher(log: log) { [weak self] update in
             Task { @MainActor [weak self] in

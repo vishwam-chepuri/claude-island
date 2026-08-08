@@ -27,9 +27,6 @@ public enum IslandPaths {
     public static var claudeProjects: URL {
         claudeHome.appendingPathComponent("projects", isDirectory: true)
     }
-    public static var claudeSessions: URL {
-        claudeHome.appendingPathComponent("sessions", isDirectory: true)
-    }
     public static var claudeSettings: URL {
         claudeHome.appendingPathComponent("settings.json")
     }

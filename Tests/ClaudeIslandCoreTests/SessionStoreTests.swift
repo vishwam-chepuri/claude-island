@@ -226,6 +226,31 @@ func registerSessionStoreTests() {
             await expectEqual(await store.session("a")?.tokens.contextTokens, 51_333)
         }
 
+        test("A title from the transcript becomes the session's label") {
+            let clock = ClockBox(now: base)
+            let (store, _) = makeStore(clock)
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .sessionStart, cwd: "/Users/dev/code/widgets",
+                    receivedAt: base))
+            // Until the first turn generates one, the folder is the label.
+            await expectEqual(await store.session("a")?.displayName, "widgets")
+
+            await store.applyTranscript(
+                TranscriptUpdate(
+                    sessionID: "a", model: nil, tokens: TokenStats(),
+                    aiTitle: "Fix scroll functionality issue"))
+            await expectEqual(
+                await store.session("a")?.displayName, "Fix scroll functionality issue")
+
+            // A later update carrying no title must not clear the one we have —
+            // most transcript reads are token-only and would blank the label.
+            await store.applyTranscript(
+                TranscriptUpdate(sessionID: "a", model: nil, tokens: TokenStats()))
+            await expectEqual(
+                await store.session("a")?.displayName, "Fix scroll functionality issue")
+        }
+
         test("A transcript update for an unknown session is ignored") {
             let clock = ClockBox(now: base)
             let (store, _) = makeStore(clock)

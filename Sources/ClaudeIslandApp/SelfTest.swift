@@ -601,6 +601,7 @@ enum SelfTest {
         model.apply(HUDSnapshot())
 
         await branchFitChecks(&checks, model: model)
+        await titleFitChecks(&checks, model: model)
     }
 
     /// A branch name is shown whole, and the card is what gives.
@@ -645,6 +646,62 @@ enum SelfTest {
                     name: "\(mode) is wide enough for a long branch",
                     passed: needed <= available + 0.5,
                     detail: "meta=\(needed) available=\(available)"))
+        }
+
+        model.forcedMode = nil
+        model.apply(HUDSnapshot())
+    }
+
+    /// The open card shows the session title whole; the pill is what clips.
+    ///
+    /// Claude Code's generated titles run to five or six words, and the ones
+    /// that matter are the ones that share a prefix — three sessions in one
+    /// repo all begin "Implement session…". Clipped, the card answers a
+    /// question the pill already answered and none of the one it was opened
+    /// for. Laid out rather than computed, for the reason above: an arithmetic
+    /// check would inherit the same premises as the width it is checking.
+    ///
+    /// Bounded by the panel, exactly as the branch is: the card stops growing at
+    /// 980pt, which leaves 328pt for the label and so fits roughly 58 characters
+    /// at this weight. The longest title Claude Code was observed to generate
+    /// across 50 transcripts was 46 ("Evaluate relevance of output cache hit
+    /// metrics"), so the ceiling sits above the real range rather than inside
+    /// it. Past it SwiftUI truncates, and there is no width left to give.
+    private static func titleFitChecks(_ checks: inout [Check], model: IslandViewModel) async {
+        let long = "Implement Claude session naming across the island"
+        var titled = Session(id: "titled", startedAt: Date().addingTimeInterval(-3 * 3600))
+        titled.cwd = "/tmp/titled"
+        titled.state = .thinking
+        titled.aiTitle = long
+
+        checks.append(
+            Check(
+                name: "the open card never abbreviates the title",
+                passed: model.headerLeadingText(titled) == long,
+                detail: model.headerLeadingText(titled)))
+
+        model.apply(HUDSnapshot(primary: titled))
+
+        for mode in [IslandMode.peek, .expanded] {
+            model.forcedMode = mode
+            // Both open tiers split their width evenly across the cutout, so the
+            // header's leading label gets one half less its own padding.
+            let available =
+                (model.shapeSize.width - model.notchGap) / 2
+                - IslandViewModel.sidePadding - 20 - 8 - IslandViewModel.notchPadding
+            let host = NSHostingView(
+                rootView: Text(model.headerLeadingText(titled))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .lineLimit(1))
+            host.frame = CGRect(origin: .zero, size: CGSize(width: available, height: 20))
+            host.layoutSubtreeIfNeeded()
+            let needed = host.fittingSize.width
+
+            checks.append(
+                Check(
+                    name: "\(mode) is wide enough for a long title",
+                    passed: needed <= available + 0.5,
+                    detail: "title=\(needed) available=\(available)"))
         }
 
         model.forcedMode = nil
