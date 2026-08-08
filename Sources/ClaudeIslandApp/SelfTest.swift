@@ -373,6 +373,14 @@ enum SelfTest {
         attentionBorderChecks(&checks, model: model)
         completionPulseChecks(&checks, model: model)
         completionTakeoverChecks(&checks, model: model)
+        checks.append(
+            Check(
+                name: "the blue layer's window matches the model's",
+                passed: PulsingOutline.completionWindow
+                    == IslandViewModel.completionPulseDuration,
+                detail:
+                    "layer=\(PulsingOutline.completionWindow) model=\(IslandViewModel.completionPulseDuration)"
+            ))
         outlineGeometryChecks(&checks)
         await switcherChecks(&checks, model: model)
     }
