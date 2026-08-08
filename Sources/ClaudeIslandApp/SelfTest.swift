@@ -652,21 +652,15 @@ enum SelfTest {
         model.apply(HUDSnapshot())
     }
 
-    /// The open card shows the session title whole; the pill is what clips.
+    /// Each tier shortens the title differently, and each must fit what it
+    /// shows.
     ///
-    /// Claude Code's generated titles run to five or six words, and the ones
-    /// that matter are the ones that share a prefix — three sessions in one
-    /// repo all begin "Implement session…". Clipped, the card answers a
-    /// question the pill already answered and none of the one it was opened
-    /// for. Laid out rather than computed, for the reason above: an arithmetic
-    /// check would inherit the same premises as the width it is checking.
-    ///
-    /// Bounded by the panel, exactly as the branch is: the card stops growing at
-    /// 980pt, which leaves 328pt for the label and so fits roughly 58 characters
-    /// at this weight. The longest title Claude Code was observed to generate
-    /// across 50 transcripts was 46 ("Evaluate relevance of output cache hit
-    /// metrics"), so the ceiling sits above the real range rather than inside
-    /// it. Past it SwiftUI truncates, and there is no width left to give.
+    /// Three separate promises: the pill cuts on a word and wears no ellipsis,
+    /// the shared header cuts at 25 and does, and whatever a tier ends up
+    /// drawing, its flank is wide enough to draw it. The last one is laid out
+    /// rather than computed — an arithmetic check would inherit the same
+    /// premises as the width it is checking, and those premises are what break.
+    /// It already caught the glyph size being tuned in two places out of three.
     private static func titleFitChecks(_ checks: inout [Check], model: IslandViewModel) async {
         let long = "Implement Claude session naming across the island"
         var titled = Session(id: "titled", startedAt: Date().addingTimeInterval(-3 * 3600))
@@ -674,13 +668,59 @@ enum SelfTest {
         titled.state = .thinking
         titled.aiTitle = long
 
+        let header = model.headerLeadingText(titled)
         checks.append(
             Check(
-                name: "the open card never abbreviates the title",
-                passed: model.headerLeadingText(titled) == long,
-                detail: model.headerLeadingText(titled)))
+                name: "the header is bounded and says so",
+                passed: header.count <= 25 && header.hasSuffix("\u{2026}")
+                    && long.hasPrefix(header.dropLast()),
+                detail: header))
+        checks.append(
+            Check(
+                name: "the header shows more of the title than the pill",
+                passed: header.count > model.compactLeadingText(titled).count,
+                detail: "\(header) | vs | \(model.compactLeadingText(titled))"))
+
+        // The pill does shorten, but it must not look broken doing it.
+        let pill = model.compactLeadingText(titled)
+        checks.append(
+            Check(
+                name: "the pill shortens without an ellipsis",
+                passed: !pill.contains("\u{2026}") && !pill.hasSuffix(" "),
+                detail: pill))
+        checks.append(
+            Check(
+                name: "the pill cuts on a word, not mid-word",
+                passed: long.hasPrefix(pill)
+                    && (long.count == pill.count
+                        || Array(long)[pill.count] == " "),
+                detail: "\(pill) | of | \(long)"))
+        // A single token long enough to overrun has no boundary to fall back
+        // to, and must still be cut rather than left to widen the pill.
+        var unbroken = Session(id: "unbroken", startedAt: Date())
+        unbroken.aiTitle = String(repeating: "x", count: 40)
+        checks.append(
+            Check(
+                name: "a title with no word break is still bounded",
+                passed: model.compactLeadingText(unbroken).count == 18,
+                detail: model.compactLeadingText(unbroken)))
 
         model.apply(HUDSnapshot(primary: titled))
+
+        // The cutout is a physical feature the eye reads as a midpoint, so the
+        // resting pill has to actually be centred on it — both flanks equal and
+        // the shape drawn without an offset.
+        model.forcedMode = .compact
+        let leftFlank = model.flankLeftWidth ?? 0
+        let rightFlank = model.flankRightWidth ?? 0
+        checks.append(
+            Check(
+                name: "the resting pill is symmetric about the cutout",
+                passed: abs(leftFlank - rightFlank) < 0.5 && model.shapeOffsetX == 0
+                    && model.shapeSize.width >= model.notchGap + 2 * leftFlank - 0.5,
+                detail:
+                    "left=\(leftFlank) right=\(rightFlank) offset=\(model.shapeOffsetX) "
+                    + "width=\(model.shapeSize.width) gap=\(model.notchGap)"))
 
         for mode in [IslandMode.peek, .expanded] {
             model.forcedMode = mode
@@ -688,7 +728,8 @@ enum SelfTest {
             // header's leading label gets one half less its own padding.
             let available =
                 (model.shapeSize.width - model.notchGap) / 2
-                - IslandViewModel.sidePadding - 20 - 8 - IslandViewModel.notchPadding
+                - IslandViewModel.sidePadding - SessionGlyph.size - 8
+                - IslandViewModel.notchPadding
             let host = NSHostingView(
                 rootView: Text(model.headerLeadingText(titled))
                     .font(.system(size: 11, weight: .semibold, design: .rounded))

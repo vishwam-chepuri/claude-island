@@ -724,9 +724,13 @@ struct CurrentTaskLine: View {
 /// already says what is happening. The arc earns its place instead: it is the
 /// one number you cannot infer from anything else on the row.
 struct SessionGlyph: View {
+    /// Named because the flank measurement reserves exactly this much for it;
+    /// a literal in both places drifts the moment one of them is tuned.
+    static let size: CGFloat = 17
+
     let state: SessionState
     var contextFraction: Double = 0
-    var size: CGFloat = 20
+    var size: CGFloat = SessionGlyph.size
 
     private var accent: Accent { IslandPalette.accentPair(for: state) }
 

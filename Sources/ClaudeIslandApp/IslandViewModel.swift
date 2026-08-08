@@ -200,7 +200,7 @@ final class IslandViewModel {
     /// undershooting the header would truncate a title mid-word.
     private func clusterWidth(leading: String) -> CGFloat {
         let text = TextMetrics.width(leading, font: .roundedSemibold(11))
-        return Self.sidePadding + 20 + 8 + text + Self.notchPadding
+        return Self.sidePadding + SessionGlyph.size + 8 + text + Self.notchPadding
     }
 
     func rightClusterWidth(for session: Session) -> CGFloat {
@@ -257,30 +257,37 @@ final class IslandViewModel {
     private var anyTasks: Bool { allSessions.contains { !$0.tasks.isEmpty } }
     private var anyCurrentTask: Bool { allSessions.contains { $0.tasks.current != nil } }
 
+    /// What each flank of the resting pill measures: the wider side's width,
+    /// taken by both.
+    ///
+    /// The alternative is sizing each side to its own content, which is snugger
+    /// — the pill is then never wider than it has to be — but it puts the
+    /// cutout off-centre by the difference, and that reads as a mistake rather
+    /// than as economy. The shape is the most-looked-at object on the screen
+    /// and it sits on a physical feature the eye already uses as a midpoint.
+    /// The cost is dead space on the shorter side, usually the right, of the
+    /// order of the gap between the title and the status word.
+    var evenFlankWidth: CGFloat { max(leftClusterWidth, rightClusterWidth) }
+
     /// How far the drawn shape sits from the panel's centre.
     ///
-    /// The panel is centred on the camera, but the island is not: it extends
-    /// exactly as far as each side's content needs, so a long label on the left
-    /// grows the shape leftward rather than padding the right.
-    var shapeOffsetX: CGFloat {
-        switch mode {
-        case .compact, .alert: (rightClusterWidth - leftClusterWidth) / 2
-        case .dormant, .peek, .expanded: 0
-        }
-    }
+    /// Zero everywhere: the panel is centred on the camera and so is every tier
+    /// of the island, now that the resting flanks match.
+    var shapeOffsetX: CGFloat { 0 }
 
-    /// Width of each flank for the row layout. Snug to content while resting;
-    /// an even split once the card is open and the shape is wider than needed.
+    /// Width of each flank for the row layout. Equal to each other while
+    /// resting; an even split once the card is open, which comes to the same
+    /// thing by a different route.
     var flankLeftWidth: CGFloat? {
         switch mode {
-        case .compact, .alert: leftClusterWidth
+        case .compact, .alert: evenFlankWidth
         case .dormant, .peek, .expanded: nil
         }
     }
 
     var flankRightWidth: CGFloat? {
         switch mode {
-        case .compact, .alert: rightClusterWidth
+        case .compact, .alert: evenFlankWidth
         case .dormant, .peek, .expanded: nil
         }
     }
@@ -292,12 +299,11 @@ final class IslandViewModel {
         Format.name(session.displayName)
     }
 
-    /// Peek and expanded show the title whole; the card is sized to it. The
-    /// pill cannot afford that — it rests in the menu bar — but a card the user
-    /// deliberately opened can, and a title clipped to "Implement Claude
-    /// session…" loses the half that distinguishes it from its neighbours.
+    /// The header the open tiers share. Longer than the pill's label but still
+    /// bounded — a hover is a glance, and a header that grew to whatever the
+    /// title happened to be made the shape lurch outward on its way open.
     func headerLeadingText(_ session: Session) -> String {
-        session.displayName
+        Format.headerName(session.displayName)
     }
 
     func compactElapsedText(_ session: Session) -> String? {
@@ -366,9 +372,10 @@ final class IslandViewModel {
     var shapeSize: CGSize {
         guard let g = geometry else { return .zero }
         let base = g.dormantSize
-        // Sized to its content, not centred on the camera. Forcing symmetry
-        // would make the shorter side carry dead space equal to the difference.
-        let flanking = leftClusterWidth + notchGap + rightClusterWidth
+        // Centred on the camera: both flanks take the wider one's width, so the
+        // cutout sits at the middle of the shape rather than wherever the
+        // longer side happens to leave it.
+        let flanking = notchGap + 2 * evenFlankWidth
 
         switch mode {
         case .dormant:
@@ -533,12 +540,42 @@ extension SessionState {
 enum Format {
     /// Titles run long — Claude Code's generated ones average five words, and a
     /// `/rename` has no limit at all — while the resting pill sits in the menu
-    /// bar and has to stay narrow. 24 is where a five-word title still reads as
-    /// a phrase; the open card shows it whole (`headerLeadingText`).
+    /// bar and has to stay narrow. 18 keeps it to the two or three words that
+    /// carry the subject; the open card shows it whole (`headerLeadingText`).
     ///
     /// Unlike a branch, a title is read rather than matched against something,
-    /// so an ellipsis here costs comprehension, not identification.
-    static func name(_ raw: String, limit: Int = 24) -> String {
+    /// so shortening here costs comprehension, not identification.
+    ///
+    /// Cut on a word, and with no ellipsis. The pill is a label, not a claim to
+    /// be complete: "Implement Claude session" reads as a name, where
+    /// "Implement Claude sessio…" reads as a name that broke. The card holding
+    /// the whole title is one hover away, so nothing here has to advertise that
+    /// there is more.
+    static func name(_ raw: String, limit: Int = 18) -> String {
+        guard raw.count > limit else { return raw }
+        let end = raw.index(raw.startIndex, offsetBy: limit)
+        let cut = raw[..<end]
+        // Already on a boundary — the character we stopped before is the space.
+        if raw[end] == " " { return String(cut) }
+        // Otherwise back up to the last whole word, unless so little of it
+        // survives that the blunt cut says more. One long token has no boundary
+        // to find and is left cut.
+        if let space = cut.lastIndex(of: " "),
+            cut.distance(from: cut.startIndex, to: space) >= limit / 2
+        {
+            return String(cut[..<space])
+        }
+        return String(cut)
+    }
+
+    /// The open tiers' header: longer than the pill, and marked where it ends.
+    ///
+    /// The ellipsis the pill omits earns its place here. At 18 characters the
+    /// cut lands on a word and reads as a name; at 25 it lands most of the way
+    /// through a title, and the mark is what says "there is a little more"
+    /// rather than leaving a phrase that looks finished but isn't. The
+    /// switcher rows below carry the titles whole, so nothing is out of reach.
+    static func headerName(_ raw: String, limit: Int = 25) -> String {
         raw.count <= limit ? raw : String(raw.prefix(limit - 1)) + "\u{2026}"
     }
 
