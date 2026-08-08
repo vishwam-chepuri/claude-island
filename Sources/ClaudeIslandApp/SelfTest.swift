@@ -599,6 +599,56 @@ enum SelfTest {
 
         model.forcedMode = nil
         model.apply(HUDSnapshot())
+
+        await branchFitChecks(&checks, model: model)
+    }
+
+    /// A branch name is shown whole, and the card is what gives.
+    ///
+    /// Clamping it to 20 characters turned every branch under a shared prefix
+    /// into the same string — `feature/attention-b…` for all of them — which is
+    /// worse than showing no branch at all, because it looks like an answer.
+    ///
+    /// Laid out rather than computed: an arithmetic check would share the width
+    /// calculation's premises, and those premises are what break.
+    private static func branchFitChecks(_ checks: inout [Check], model: IslandViewModel) async {
+        // Long enough to overrun the card's default width, which is the case
+        // that used to lose characters and the only one worth asserting on.
+        let long = "feature/attention-border-design-and-the-idle-nudge-that-follows-it"
+        checks.append(
+            Check(
+                name: "the branch name is never abbreviated",
+                passed: Format.branch(long) == long,
+                detail: Format.branch(long) ?? "nil"))
+
+        // Started hours ago, so the elapsed figure is as wide as it realistically
+        // gets — a fresh session would leave slack the real card will not have.
+        var branchy = Session(id: "branchy", startedAt: Date().addingTimeInterval(-3 * 3600))
+        branchy.cwd = "/tmp/branchy"
+        branchy.state = .thinking
+        branchy.gitBranch = long
+        branchy.model = "claude-opus-5"
+        branchy.effort = "xhigh"
+
+        model.apply(HUDSnapshot(primary: branchy))
+
+        for mode in [IslandMode.peek, .expanded] {
+            model.forcedMode = mode
+            let available = model.shapeSize.width - 2 * IslandViewModel.sidePadding
+            let host = NSHostingView(rootView: MetaLine(session: branchy, tick: Date()))
+            host.frame = CGRect(origin: .zero, size: CGSize(width: available, height: 20))
+            host.layoutSubtreeIfNeeded()
+            let needed = host.fittingSize.width
+
+            checks.append(
+                Check(
+                    name: "\(mode) is wide enough for a long branch",
+                    passed: needed <= available + 0.5,
+                    detail: "meta=\(needed) available=\(available)"))
+        }
+
+        model.forcedMode = nil
+        model.apply(HUDSnapshot())
     }
 
     private static func session(_ id: String, state: SessionState) -> Session {

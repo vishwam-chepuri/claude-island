@@ -661,7 +661,7 @@ struct MetaLine: View {
     let tick: Date
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: IslandViewModel.metaSpacing) {
             ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
                 if index > 0 {
                     Text("·").font(.system(size: 9)).foregroundStyle(IslandPalette.tertiary)
@@ -670,18 +670,23 @@ struct MetaLine: View {
                     .font(.system(size: 10))
                     .foregroundStyle(IslandPalette.secondary)
                     .lineLimit(1)
+                    // The card is sized for the branch in full, but the elapsed
+                    // figure grows a digit at a time and a plan can push the row
+                    // over regardless. Whatever gives, it is not the branch.
+                    .layoutPriority(index == branchIndex ? 1 : 0)
             }
             Spacer(minLength: 0)
         }
     }
 
     private var parts: [String] {
-        var out: [String] = []
-        if let branch = Format.branch(session.gitBranch) { out.append(branch) }
-        if let model = Format.model(session.model) { out.append(model) }
-        if let effort = session.effort, !effort.isEmpty { out.append(effort) }
-        out.append(Format.duration(session.age(now: tick)))
-        return out
+        IslandViewModel.metaParts(
+            for: session, elapsed: Format.duration(session.age(now: tick)))
+    }
+
+    /// The branch leads the line whenever there is one.
+    private var branchIndex: Int? {
+        Format.branch(session.gitBranch) != nil ? 0 : nil
     }
 }
 

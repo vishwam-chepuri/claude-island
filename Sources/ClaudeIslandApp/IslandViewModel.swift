@@ -286,6 +286,60 @@ final class IslandViewModel {
         }
     }
 
+    // MARK: - Meta line
+    //
+    // branch · model · effort · elapsed. Assembled here rather than in the view
+    // so the width the card is sized to and the string the card draws cannot
+    // drift apart — the branch is shown in full, and the only thing that keeps
+    // that promise is the card being wide enough for it.
+
+    static let metaSpacing: CGFloat = 5
+
+    /// Stand-in for the elapsed figure while measuring. Sizing to the real one
+    /// would widen the card a hair every time a digit rolled over, and the
+    /// expanded card is meant to hold still.
+    private static let elapsedMeasuringStick = "88h 88m"
+
+    static func metaParts(for session: Session, elapsed: String) -> [String] {
+        var out: [String] = []
+        if let branch = Format.branch(session.gitBranch) { out.append(branch) }
+        if let model = Format.model(session.model) { out.append(model) }
+        if let effort = session.effort, !effort.isEmpty { out.append(effort) }
+        out.append(elapsed)
+        return out
+    }
+
+    /// Width the meta line needs to draw in full, body padding included.
+    ///
+    /// `Format.branch` refuses to abbreviate, so this is what makes that stick:
+    /// without it SwiftUI would simply do the truncating instead, at the card's
+    /// edge, and the label would be no more readable for having been left whole.
+    func metaLineWidth(for session: Session) -> CGFloat {
+        let parts = Self.metaParts(for: session, elapsed: Self.elapsedMeasuringStick)
+        guard !parts.isEmpty else { return 0 }
+        // Same fonts the row renders in — an estimate here truncates the very
+        // label this exists to protect.
+        let text = parts.reduce(CGFloat(0)) {
+            $0 + TextMetrics.width($1, font: .systemFont(ofSize: 10))
+        }
+        let separator = TextMetrics.width("·", font: .systemFont(ofSize: 9)) + 2 * Self.metaSpacing
+        return text + CGFloat(parts.count - 1) * separator + 2 * Self.sidePadding
+    }
+
+    /// Widest meta line any session would need, so the card does not resize as
+    /// you browse — the same rule `widestFlank` follows.
+    private var widestMetaLine: CGFloat {
+        allSessions.reduce(0) { max($0, metaLineWidth(for: $1)) }
+    }
+
+    /// The panel is a fixed container the shape is drawn inside, so a card wider
+    /// than it is not a wide card — it is a clipped one. Growing to fit a branch
+    /// stops here; git allows 255 bytes, and past roughly 160 characters nothing
+    /// on this screen can show the name whole.
+    private static func withinPanel(_ width: CGFloat) -> CGFloat {
+        min(width, NotchGeometryResolver.panelWidth)
+    }
+
     /// Size of the drawn shape for the current mode.
     var shapeSize: CGSize {
         guard let g = geometry else { return .zero }
@@ -308,8 +362,9 @@ final class IslandViewModel {
             // The open tiers split their flanks evenly, so the width has to fit
             // TWICE the wider side — sizing to the sum truncates the header.
             let even = notchGap + 2 * max(leftClusterWidth, rightClusterWidth)
+            let meta = displaySession.map(metaLineWidth(for:)) ?? 0
             return CGSize(
-                width: max(even, 460),
+                width: Self.withinPanel(max(even, 460, meta)),
                 height: bodyTopInset + Self.peekBodyHeight + taskRow)
         case .expanded:
             // Every term here is measured across all sessions, so switching
@@ -320,7 +375,8 @@ final class IslandViewModel {
             let taskBlock: CGFloat = anyTasks ? (34 + (anyCurrentTask ? 18 : 0)) : 0
             let evenWidth = notchGap + 2 * widestFlank
             return CGSize(
-                width: max(evenWidth, NotchGeometryResolver.cardWidth),
+                width: Self.withinPanel(
+                    max(evenWidth, NotchGeometryResolver.cardWidth, widestMetaLine)),
                 height: bodyTopInset + Self.expandedChromeHeight
                     + rows * Self.sessionRowHeight + overflow + taskBlock
                     + Self.nowRowTopPadding + Self.nowRowHeight
@@ -459,9 +515,15 @@ enum Format {
     }
 
     /// `HEAD` means detached, which reads better than showing the literal.
+    ///
+    /// Never abbreviated. Every other label here is something you read; a branch
+    /// is something you match — against a PR, a worktree, a checkout you are
+    /// about to type. `feature/attention-border-des…` identifies nothing, and
+    /// the two branches it could be are exactly the pair you need told apart.
+    /// The card is sized to fit it instead (`metaLineWidth`).
     static func branch(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
-        return raw == "HEAD" ? "detached" : name(raw, limit: 20)
+        return raw == "HEAD" ? "detached" : raw
     }
 
     static func duration(_ seconds: TimeInterval) -> String {
