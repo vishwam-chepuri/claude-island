@@ -372,6 +372,7 @@ enum SelfTest {
         await restingLineChecks(&checks, model: model)
         attentionBorderChecks(&checks, model: model)
         completionPulseChecks(&checks, model: model)
+        completionTakeoverChecks(&checks, model: model)
         outlineGeometryChecks(&checks)
         await switcherChecks(&checks, model: model)
     }
@@ -469,6 +470,89 @@ enum SelfTest {
                 passed: model.borderPulse == nil,
                 detail: "pulse=\(String(describing: model.borderPulse))"))
 
+        model.apply(HUDSnapshot())
+    }
+
+    /// The border wraps a pill that names one session, so a completion elsewhere
+    /// has to bring its session with it or say nothing at all.
+    private static func completionTakeoverChecks(_ checks: inout [Check], model: IslandViewModel) {
+        func working(_ id: String) -> Session { session(id, state: .thinking) }
+        func finished(_ id: String) -> Session { session(id, state: .done) }
+        let prompt = PermissionAsk(
+            toolName: "Write", kind: .write, target: "/tmp/x", since: Date())
+
+        // Background session finishes: it takes the display and pulses.
+        model.isHovered = false
+        model.apply(HUDSnapshot(primary: working("alpha"), others: [working("beta")]))
+        model.apply(HUDSnapshot(primary: working("alpha"), others: [finished("beta")]))
+        checks.append(
+            Check(
+                name: "a finished background session takes the display",
+                passed: model.displaySession?.id == "beta" && model.borderPulse == .completion,
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+
+        model.endCompletionPulse()
+        checks.append(
+            Check(
+                name: "the display returns when the pulse ends",
+                passed: model.displaySession?.id == "alpha",
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+
+        // Rule 1: a prompt is up, so no takeover at all.
+        model.apply(
+            HUDSnapshot(
+                primary: session("alpha", state: .awaitingPermission(prompt)),
+                others: [working("beta")]))
+        model.apply(
+            HUDSnapshot(
+                primary: session("alpha", state: .awaitingPermission(prompt)),
+                others: [finished("beta")]))
+        checks.append(
+            Check(
+                name: "a prompt is never displaced by a completion",
+                passed: model.displaySession?.id == "alpha" && model.borderPulse == .attention,
+                detail:
+                    "shown=\(model.displaySession?.id ?? "nil") pulse=\(String(describing: model.borderPulse))"
+            ))
+        model.endCompletionPulse()
+
+        // Rule 2: hovering holds the display where it is.
+        model.apply(HUDSnapshot(primary: working("alpha"), others: [working("beta")]))
+        model.isHovered = true
+        model.apply(HUDSnapshot(primary: working("alpha"), others: [finished("beta")]))
+        checks.append(
+            Check(
+                name: "hovering holds the display through a completion",
+                passed: model.displaySession?.id == "alpha" && model.borderPulse == nil,
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+        model.isHovered = false
+        model.endCompletionPulse()
+
+        // Rule 3: the finished session is already shown — pulses in place.
+        model.apply(HUDSnapshot(primary: working("alpha"), others: []))
+        model.apply(HUDSnapshot(primary: finished("alpha"), others: []))
+        checks.append(
+            Check(
+                name: "a finished session already shown pulses in place",
+                passed: model.displaySession?.id == "alpha" && model.borderPulse == .completion,
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+        model.endCompletionPulse()
+
+        // Rule 4: only the first of a burst takes the display.
+        model.apply(
+            HUDSnapshot(primary: working("alpha"), others: [working("beta"), working("gamma")]))
+        model.apply(
+            HUDSnapshot(primary: working("alpha"), others: [finished("beta"), working("gamma")]))
+        let firstTaker = model.displaySession?.id
+        model.apply(
+            HUDSnapshot(primary: working("alpha"), others: [finished("beta"), finished("gamma")]))
+        checks.append(
+            Check(
+                name: "a second completion does not steal the display",
+                passed: firstTaker == "beta" && model.displaySession?.id == "beta",
+                detail: "first=\(firstTaker ?? "nil") now=\(model.displaySession?.id ?? "nil")"))
+
+        model.endCompletionPulse()
         model.apply(HUDSnapshot())
     }
 

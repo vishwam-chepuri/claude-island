@@ -118,8 +118,18 @@ final class IslandViewModel {
     /// A permission prompt always takes over, even from an explicit selection —
     /// missing one is worse than losing your place. The selection is kept, not
     /// cleared, so the view returns to it once the prompt is answered.
+    ///
+    /// A session announcing its completion takes over too, but only briefly and
+    /// only if you are not already reading something: hover and pin both hold
+    /// the display where it is, because losing your place mid-read costs more
+    /// than a completion notice is worth.
     var displaySession: Session? {
         if let alerting = allSessions.first(where: { $0.state.isAlert }) { return alerting }
+        if let id = completionPulseID, !isHovered, !isPinnedOpen,
+            let finished = allSessions.first(where: { $0.id == id })
+        {
+            return finished
+        }
         if let id = selectedSessionID,
             let selected = allSessions.first(where: { $0.id == id })
         {
