@@ -393,29 +393,29 @@ enum SelfTest {
                 others: []))
         checks.append(
             Check(
-                name: "a permission prompt lights the border",
-                passed: model.wantsAttentionBorder,
-                detail: "mode=\(model.mode) wants=\(model.wantsAttentionBorder)"))
+                name: "a permission prompt asks for the attention pulse",
+                passed: model.borderPulse == .attention,
+                detail: "mode=\(model.mode) pulse=\(String(describing: model.borderPulse))"))
 
         for (label, state) in [
             ("the idle nudge", SessionState.idle(waitingOnUser: true)),
-            ("done", SessionState.done),
             ("thinking", SessionState.thinking),
+            ("a failure", SessionState.error("Bash failed")),
         ] {
             model.apply(HUDSnapshot(primary: session("s", state: state), others: []))
             checks.append(
                 Check(
-                    name: "\(label) leaves the border dark",
-                    passed: !model.wantsAttentionBorder,
-                    detail: "mode=\(model.mode) wants=\(model.wantsAttentionBorder)"))
+                    name: "\(label) asks for no pulse",
+                    passed: model.borderPulse == nil,
+                    detail: "mode=\(model.mode) pulse=\(String(describing: model.borderPulse))"))
         }
 
         model.apply(HUDSnapshot())
         checks.append(
             Check(
-                name: "a dormant HUD leaves the border dark",
-                passed: !model.wantsAttentionBorder,
-                detail: "mode=\(model.mode) wants=\(model.wantsAttentionBorder)"))
+                name: "a dormant HUD asks for no pulse",
+                passed: model.borderPulse == nil,
+                detail: "mode=\(model.mode) pulse=\(String(describing: model.borderPulse))"))
     }
 
     /// Every tracked session rests as one line, including the two states you are

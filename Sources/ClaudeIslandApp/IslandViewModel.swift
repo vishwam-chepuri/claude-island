@@ -17,6 +17,20 @@ enum IslandMode: Equatable {
     case expanded
 }
 
+/// What the island's edge should be doing.
+///
+/// The edge is reserved for the two events worth looking up for. A running
+/// session gets nothing: it is the longest-lived state there is, and an edge lit
+/// most of the time is one the eye stops reading.
+enum BorderPulse: Equatable {
+    /// A permission prompt. Repeating, yellow — a standing condition that stays
+    /// true until you answer, so its signal has to stay visible.
+    case attention
+    /// A session just finished. One shot, blue — an instant, not a condition, so
+    /// it must not linger.
+    case completion
+}
+
 @MainActor
 @Observable
 final class IslandViewModel {
@@ -66,15 +80,15 @@ final class IslandViewModel {
         return .compact
     }
 
-    /// Whether the shape's edge should be lit and pulsing.
+    /// Which pulse the edge should run, if any.
     ///
-    /// A permission prompt only. It is the one state where Claude is fully
-    /// blocked on you, and there is no sound, no dock bounce and no
-    /// notification behind it — on a second display the HUD is all there is.
-    /// The idle nudge and `done` are deliberately excluded: `done` is the most
-    /// common resting state, and an edge that is lit almost always is one the
-    /// eye learns to skip.
-    var wantsAttentionBorder: Bool { mode == .alert }
+    /// A prompt outranks a completion: it blocks Claude entirely, and the edge
+    /// can only say one thing at a time.
+    var borderPulse: BorderPulse? {
+        guard mode != .dormant else { return nil }
+        if mode == .alert { return .attention }
+        return nil
+    }
 
     var primary: Session? { snapshot.primary }
     var others: [Session] { snapshot.others }

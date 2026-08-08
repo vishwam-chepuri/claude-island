@@ -78,7 +78,7 @@ struct IslandView: View {
         // while the SwiftUI fill springs into the alert layout, and without the
         // transition that mismatch is visible for the length of the morph.
         .overlay {
-            if model.wantsAttentionBorder {
+            if model.borderPulse != nil {
                 PulsingOutline(cornerRadius: model.cornerRadius, topFlare: model.topFlare)
                     .transition(.opacity)
             }
