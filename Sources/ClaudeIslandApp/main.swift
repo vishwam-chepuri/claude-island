@@ -89,10 +89,29 @@ case "--print-hooks":
 
 case "--install-hooks":
     do {
-        let result = try HookInstaller.install(binaryPath: AppController.notifyBinaryPath())
+        let notify = AppController.notifyBinaryPath()
+        let result = try HookInstaller.install(binaryPath: notify)
         print("Installed \(result.installedEvents.count) hook events.")
         print("Preserved \(result.preservedOtherHooks) hook(s) belonging to other tools.")
         if let backup = result.backupPath { print("Backup: \(backup)") }
+
+        // The status line is where Claude Code publishes the exact context
+        // window. Optional: without it the window is inferred, and everything
+        // else still works.
+        switch try StatuslineInstaller.install(binaryPath: notify) {
+        case .installed(let script, let backup):
+            print("Status line: forwarding from \(script).")
+            if let backup { print("Backup: \(backup)") }
+        case .alreadyInstalled(let script):
+            print("Status line: already forwarding from \(script).")
+        case .skipped(let reason):
+            print("Status line: skipped — \(reason.description).")
+            print("  The context window will be inferred instead. To wire it up by hand,")
+            print("  add this after your status-line script reads stdin:")
+            print("    \(StatuslineInstaller.forwardLine(binaryPath: notify))")
+        case .removed, .notPresent:
+            break
+        }
         exit(0)
     } catch {
         FileHandle.standardError.write(Data("install failed: \(error)\n".utf8))
@@ -103,6 +122,9 @@ case "--uninstall-hooks":
     do {
         try HookInstaller.uninstall()
         print("Removed ClaudeIsland hook entries.")
+        if case .removed(let script) = try StatuslineInstaller.uninstall() {
+            print("Removed the status-line forward line from \(script).")
+        }
         exit(0)
     } catch {
         FileHandle.standardError.write(Data("uninstall failed: \(error)\n".utf8))

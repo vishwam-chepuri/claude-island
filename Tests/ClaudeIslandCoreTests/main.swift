@@ -5,6 +5,8 @@ import Foundation
 registerStateMachineTests()
 registerRedactorTests()
 registerSessionStoreTests()
+registerContextWindowTests()
+registerStatuslineTests()
 registerTranscriptTests()
 registerTaskProgressTests()
 registerHookInstallerTests()

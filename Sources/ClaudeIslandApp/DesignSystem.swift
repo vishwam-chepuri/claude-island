@@ -88,35 +88,6 @@ extension IslandPalette {
     }
 }
 
-/// How full the context window is.
-///
-/// The limit is inferred, never asserted. The model id sometimes carries `[1m]`
-/// for the long-context variants, but a transcript can just as easily record
-/// the plain id for a session that is running with the larger window — so an
-/// observed count above a tier is treated as proof of the next one up. Reading
-/// "603.2k / 200.0k" is worse than having no bar at all.
-///
-/// This only ever scales a bar. The token counts themselves are exact.
-enum ContextWindow {
-    private static let tiers = [200_000, 1_000_000]
-
-    static func limit(for model: String?, observed: Int = 0) -> Int {
-        let declared: Int = {
-            guard let model = model?.lowercased() else { return tiers[0] }
-            return (model.contains("[1m]") || model.contains("-1m")) ? 1_000_000 : tiers[0]
-        }()
-        // Usage above the declared tier means the declared tier was wrong.
-        let implied = tiers.first { observed <= $0 } ?? tiers.last!
-        return max(declared, implied)
-    }
-
-    static func fraction(used: Int, model: String?) -> Double {
-        let cap = limit(for: model, observed: used)
-        guard cap > 0, used > 0 else { return 0 }
-        return min(1, Double(used) / Double(cap))
-    }
-}
-
 // MARK: - Components
 
 /// A thin arc showing context occupancy, wrapped around whatever it encloses.

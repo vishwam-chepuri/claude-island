@@ -18,6 +18,10 @@ public enum HookEvent: Sendable, Equatable, Hashable {
     case stop
     case subagentStop
     case sessionEnd
+    /// Not a hook at all: the periodic payload Claude Code feeds the status
+    /// line. It arrives over the same socket because it is the only place the
+    /// exact context-window size is published.
+    case statusline
     case unknown(String)
 
     public init(rawValue: String) {
@@ -50,6 +54,7 @@ public enum HookEvent: Sendable, Equatable, Hashable {
         case .stop: "Stop"
         case .subagentStop: "SubagentStop"
         case .sessionEnd: "SessionEnd"
+        case .statusline: "StatusLine"
         case .unknown(let s): s
         }
     }
@@ -78,6 +83,9 @@ public struct HookEnvelope: Sendable, Equatable {
     public let trigger: String?
     public let source: String?
     public let reason: String?
+    /// `context_window.context_window_size` from a status-line payload: the
+    /// exact window for this session, stated rather than inferred.
+    public let contextWindowSize: Int?
     /// Wall clock, used for session age and expiry. Injected so tests are
     /// deterministic.
     public let receivedAt: Date
@@ -93,6 +101,7 @@ public struct HookEnvelope: Sendable, Equatable {
         trigger: String? = nil,
         source: String? = nil,
         reason: String? = nil,
+        contextWindowSize: Int? = nil,
         receivedAt: Date = Date()
     ) {
         self.sessionID = sessionID
@@ -105,6 +114,7 @@ public struct HookEnvelope: Sendable, Equatable {
         self.trigger = trigger
         self.source = source
         self.reason = reason
+        self.contextWindowSize = contextWindowSize
         self.receivedAt = receivedAt
     }
 }
@@ -122,7 +132,12 @@ extension HookEnvelope {
         case trigger
         case source
         case reason
+        case contextWindow = "context_window"
         case delayMs = "_delayMs"
+    }
+
+    private enum ContextWindowKey: String, CodingKey {
+        case contextWindowSize = "context_window_size"
     }
 
     /// Decode one payload. Returns nil only when there is no session id at all —
@@ -131,9 +146,20 @@ extension HookEnvelope {
         let d = JSONDecoder()
         let raw = try d.decode(RawPayload.self, from: data)
         guard let sid = raw.sessionID, !sid.isEmpty else { return nil }
+        // The status-line payload names no hook event. It is recognised by the
+        // one field no hook carries, so it can never be mistaken for a real
+        // event and driven through the state machine.
+        let event: HookEvent =
+            if let name = raw.hookEventName, !name.isEmpty {
+                HookEvent(rawValue: name)
+            } else if raw.contextWindowSize != nil {
+                .statusline
+            } else {
+                .unknown("")
+            }
         return HookEnvelope(
             sessionID: sid,
-            event: HookEvent(rawValue: raw.hookEventName ?? ""),
+            event: event,
             cwd: raw.cwd,
             transcriptPath: raw.transcriptPath,
             toolName: raw.toolName,
@@ -142,6 +168,7 @@ extension HookEnvelope {
             trigger: raw.trigger,
             source: raw.source,
             reason: raw.reason,
+            contextWindowSize: raw.contextWindowSize,
             receivedAt: receivedAt
         )
     }
@@ -166,6 +193,7 @@ extension HookEnvelope {
         let trigger: String?
         let source: String?
         let reason: String?
+        let contextWindowSize: Int?
         let delayMs: Int?
 
         init(from decoder: Decoder) throws {
@@ -185,6 +213,13 @@ extension HookEnvelope {
             trigger = try? c.decodeIfPresent(String.self, forKey: .trigger)
             source = try? c.decodeIfPresent(String.self, forKey: .source)
             reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+            contextWindowSize = {
+                guard
+                    let window = try? c.nestedContainer(
+                        keyedBy: ContextWindowKey.self, forKey: .contextWindow)
+                else { return nil }
+                return try? window.decodeIfPresent(Int.self, forKey: .contextWindowSize)
+            }()
             delayMs = try? c.decodeIfPresent(Int.self, forKey: .delayMs)
         }
     }

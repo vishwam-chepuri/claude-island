@@ -60,6 +60,13 @@ public struct Session: Sendable, Equatable, Identifiable {
     /// `ai-title` record. Appears after the first assistant turn.
     public var aiTitle: String?
     public var model: String?
+    /// Whether this session runs the million-token variant of its model. Not
+    /// derivable from the transcript — see `ClaudeConfig`.
+    public var usesLongContext = false
+    /// The exact window, as stated by Claude Code's status line. Outranks every
+    /// inference when present; nil until a status-line payload arrives, which
+    /// is never for a user who has not configured one.
+    public var contextLimit: Int?
     public var gitBranch: String?
     public var effort: String?
     public var tasks = TaskProgress()
@@ -228,7 +235,9 @@ public enum SessionReducer {
             s.endedAt = now
             pending.append(.removeSession(after: Timings.sessionEndFade))
 
-        case .unknown:
+        // Neither reaches the reducer in practice — the store routes status-line
+        // payloads away before this — but both must leave a good state alone.
+        case .statusline, .unknown:
             break
         }
 

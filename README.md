@@ -35,6 +35,16 @@ first, preserves hook entries belonging to other tools, and is idempotent.
 `--print-hooks` prints the block to paste by hand instead. Restart any running
 Claude Code sessions afterwards.
 
+It also adds one line to the status-line script `settings.json` already points
+at, forwarding that payload to the same socket — `context_window_size` is the
+only place Claude Code states the exact window, and a transcript never carries
+the `[1m]` suffix that would imply it. Claude Code allows a single status-line
+command, so this threads into yours rather than replacing it: backup first,
+only where it can see stdin being captured, and it declines with the line to
+paste when it cannot. Skipping it costs only exactness — the window falls back
+to being inferred from `~/.claude.json` and from usage that has already passed
+a tier.
+
 ## Architecture
 
 Three pieces.

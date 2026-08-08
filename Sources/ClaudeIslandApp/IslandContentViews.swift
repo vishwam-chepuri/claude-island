@@ -13,8 +13,7 @@ struct CompactContent: View {
             HStack(spacing: 8) {
                 SessionGlyph(
                     state: session.state,
-                    contextFraction: ContextWindow.fraction(
-                        used: session.tokens.contextTokens, model: session.model))
+                    contextFraction: ContextWindow.fraction(for: session))
                 Text(model.compactLeadingText(session))
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(.white)
@@ -171,7 +170,7 @@ struct PeekContent: View {
 
     private var accent: Accent { IslandPalette.accentPair(for: session.state) }
     private var contextFraction: Double {
-        ContextWindow.fraction(used: session.tokens.contextTokens, model: session.model)
+        ContextWindow.fraction(for: session)
     }
     private var contextAccent: Accent { IslandPalette.contextAccent(contextFraction) }
 
@@ -215,7 +214,7 @@ struct PeekContent: View {
                             .foregroundStyle(contextAccent.bright)
                             .monospacedDigit()
                         Text(
-                            "/ \(Format.tokens(ContextWindow.limit(for: session.model, observed: session.tokens.contextTokens)))"
+                            "/ \(Format.tokens(ContextWindow.limit(for: session)))"
                         )
                             .font(.system(size: 9, design: .rounded))
                             .foregroundStyle(IslandPalette.tertiary)
@@ -263,8 +262,7 @@ struct PeekHeader: View {
             HStack(spacing: 8) {
                 SessionGlyph(
                     state: session.state,
-                    contextFraction: ContextWindow.fraction(
-                        used: session.tokens.contextTokens, model: session.model))
+                    contextFraction: ContextWindow.fraction(for: session))
                 Text(model.headerLeadingText(session))
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
@@ -290,7 +288,7 @@ struct ExpandedContent: View {
 
     private var accent: Accent { IslandPalette.accentPair(for: session.state) }
     private var contextFraction: Double {
-        ContextWindow.fraction(used: session.tokens.contextTokens, model: session.model)
+        ContextWindow.fraction(for: session)
     }
     private var contextAccent: Accent { IslandPalette.contextAccent(contextFraction) }
 
@@ -347,7 +345,7 @@ struct ExpandedContent: View {
                             .foregroundStyle(contextAccent.bright)
                             .monospacedDigit()
                         Text(
-                            "/ \(Format.tokens(ContextWindow.limit(for: session.model, observed: session.tokens.contextTokens)))"
+                            "/ \(Format.tokens(ContextWindow.limit(for: session)))"
                         )
                             .font(.system(size: 9, design: .rounded))
                             .foregroundStyle(IslandPalette.tertiary)
