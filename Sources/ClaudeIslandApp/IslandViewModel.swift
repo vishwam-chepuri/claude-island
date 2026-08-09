@@ -238,12 +238,22 @@ final class IslandViewModel {
     /// The band the camera occupies. Anything drawn here is not on the screen.
     var notchBandHeight: CGFloat { hasNotch ? (geometry?.islandRect.height ?? 38) : 0 }
 
-    /// The flanking row is as tall as the camera band so it sits beside it; on a
-    /// notchless display it is a plain row.
-    var rowHeight: CGFloat { max(notchBandHeight, Self.lineHeight) }
+    /// The flanking row: the camera band plus the lip, so its content centres in
+    /// the band the shape actually draws. On a notchless display it is a plain
+    /// row. Every tier's header is this same row — see `PeekHeader` — so the lip
+    /// has to be in here rather than on the shape alone, or the header would
+    /// shift by half a point the moment the card opened.
+    var rowHeight: CGFloat { max(notchBandHeight, Self.lineHeight) + Self.compactLip }
 
-    /// Extra rows in peek and expanded start below the camera.
-    var bodyTopInset: CGFloat { notchBandHeight }
+    /// How far the resting band hangs below the camera band, giving its bottom
+    /// edge a line of its own to end on instead of stopping exactly where the
+    /// cutout does.
+    static let compactLip: CGFloat = 1
+
+    /// Extra rows in peek and expanded start below the camera — and below the
+    /// lip the header row carries, or the card would budget for a header a
+    /// point shorter than the one it draws and lose that point off the trail.
+    var bodyTopInset: CGFloat { notchBandHeight + Self.compactLip }
 
     // MARK: - Flanking widths
     //
@@ -467,7 +477,7 @@ final class IslandViewModel {
         case .dormant:
             return base
         case .compact, .alert:
-            // Exactly the camera band tall, so the island reads as the cutout
+            // The camera band plus a lip, so the island reads as the cutout
             // having grown sideways rather than as a panel hanging below it.
             return CGSize(width: max(flanking, base.width + 80), height: rowHeight)
         case .peek:
