@@ -86,6 +86,15 @@ public struct HookEnvelope: Sendable, Equatable {
     /// `context_window.context_window_size` from a status-line payload: the
     /// exact window for this session, stated rather than inferred.
     public let contextWindowSize: Int?
+    /// `cost.total_lines_added` / `cost.total_lines_removed` from a status-line
+    /// payload: how much of the working tree this session has rewritten, as
+    /// counted by Claude Code itself.
+    public let linesAdded: Int?
+    public let linesRemoved: Int?
+    /// `rate_limits.five_hour` from a status-line payload. Scoped to the
+    /// account rather than to `sessionID`, so the store keeps one of these
+    /// beside the session table instead of one inside each session.
+    public let rateLimit: RateLimitWindow?
     /// Wall clock, used for session age and expiry. Injected so tests are
     /// deterministic.
     public let receivedAt: Date
@@ -102,6 +111,9 @@ public struct HookEnvelope: Sendable, Equatable {
         source: String? = nil,
         reason: String? = nil,
         contextWindowSize: Int? = nil,
+        linesAdded: Int? = nil,
+        linesRemoved: Int? = nil,
+        rateLimit: RateLimitWindow? = nil,
         receivedAt: Date = Date()
     ) {
         self.sessionID = sessionID
@@ -115,6 +127,9 @@ public struct HookEnvelope: Sendable, Equatable {
         self.source = source
         self.reason = reason
         self.contextWindowSize = contextWindowSize
+        self.linesAdded = linesAdded
+        self.linesRemoved = linesRemoved
+        self.rateLimit = rateLimit
         self.receivedAt = receivedAt
     }
 }
@@ -133,11 +148,27 @@ extension HookEnvelope {
         case source
         case reason
         case contextWindow = "context_window"
+        case cost
+        case rateLimits = "rate_limits"
         case delayMs = "_delayMs"
     }
 
     private enum ContextWindowKey: String, CodingKey {
         case contextWindowSize = "context_window_size"
+    }
+
+    private enum CostKey: String, CodingKey {
+        case totalLinesAdded = "total_lines_added"
+        case totalLinesRemoved = "total_lines_removed"
+    }
+
+    private enum RateLimitsKey: String, CodingKey {
+        case fiveHour = "five_hour"
+    }
+
+    private enum WindowKey: String, CodingKey {
+        case usedPercentage = "used_percentage"
+        case resetsAt = "resets_at"
     }
 
     /// Decode one payload. Returns nil only when there is no session id at all —
@@ -169,6 +200,9 @@ extension HookEnvelope {
             source: raw.source,
             reason: raw.reason,
             contextWindowSize: raw.contextWindowSize,
+            linesAdded: raw.linesAdded,
+            linesRemoved: raw.linesRemoved,
+            rateLimit: raw.rateLimit,
             receivedAt: receivedAt
         )
     }
@@ -180,6 +214,23 @@ extension HookEnvelope {
         let raw = try JSONDecoder().decode(RawPayload.self, from: data)
         guard let env = try decode(data, receivedAt: receivedAt) else { return nil }
         return (env, raw.delayMs ?? 0)
+    }
+
+    /// `resets_at` reaches us in one of two shapes, and which one depends on
+    /// where Claude Code last learned the limit from.
+    ///
+    /// The usual source is the `anthropic-ratelimit-unified-5h-reset` response
+    /// header, forwarded as the raw epoch integer it arrives as. The other is
+    /// the account-usage fetch, which converts the same field through a JS
+    /// `Date` and hands over an ISO 8601 string. Reading only one of them does
+    /// not fail loudly — the type mismatch is swallowed and the countdown just
+    /// never appears, which is how this shipped the first time.
+    private static func decodeResetStamp(_ window: KeyedDecodingContainer<WindowKey>) -> Date? {
+        if let epoch = try? window.decodeIfPresent(Double.self, forKey: .resetsAt) {
+            return Date(timeIntervalSince1970: epoch)
+        }
+        return RateLimitWindow.parseResetTimestamp(
+            try? window.decodeIfPresent(String.self, forKey: .resetsAt))
     }
 
     private struct RawPayload: Decodable {
@@ -194,6 +245,9 @@ extension HookEnvelope {
         let source: String?
         let reason: String?
         let contextWindowSize: Int?
+        let linesAdded: Int?
+        let linesRemoved: Int?
+        let rateLimit: RateLimitWindow?
         let delayMs: Int?
 
         init(from decoder: Decoder) throws {
@@ -219,6 +273,24 @@ extension HookEnvelope {
                         keyedBy: ContextWindowKey.self, forKey: .contextWindow)
                 else { return nil }
                 return try? window.decodeIfPresent(Int.self, forKey: .contextWindowSize)
+            }()
+            let cost = try? c.nestedContainer(keyedBy: CostKey.self, forKey: .cost)
+            linesAdded = try? cost?.decodeIfPresent(Int.self, forKey: .totalLinesAdded)
+            linesRemoved = try? cost?.decodeIfPresent(Int.self, forKey: .totalLinesRemoved)
+            // `rate_limits` is present only on a plan that has them, and its
+            // `five_hour` entry only once the account has used any of it — so
+            // every level here is allowed to be missing without that meaning
+            // the payload was malformed.
+            rateLimit = {
+                guard
+                    let limits = try? c.nestedContainer(
+                        keyedBy: RateLimitsKey.self, forKey: .rateLimits),
+                    let window = try? limits.nestedContainer(
+                        keyedBy: WindowKey.self, forKey: .fiveHour),
+                    let used = try? window.decodeIfPresent(Double.self, forKey: .usedPercentage)
+                else { return nil }
+                return RateLimitWindow(
+                    usedPercentage: used, resetsAt: HookEnvelope.decodeResetStamp(window))
             }()
             delayMs = try? c.decodeIfPresent(Int.self, forKey: .delayMs)
         }

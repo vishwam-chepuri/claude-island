@@ -9,6 +9,10 @@ import Foundation
 public struct TokenStats: Sendable, Equatable {
     /// Last assistant message's input + cache_read + cache_creation.
     public var contextTokens: Int = 0
+    /// Kept for completeness of the usage accounting, and deliberately not
+    /// drawn: it is the one figure here with no ceiling to read it against, it
+    /// rises with nothing but turn count, and there is no lever to move it. See
+    /// `linesAdded` on `Session` for what took its place on the card.
     public var cumulativeOutput: Int = 0
     public var cumulativeCacheCreation: Int = 0
     public var cumulativeCacheRead: Int = 0
@@ -71,6 +75,13 @@ public struct Session: Sendable, Equatable, Identifiable {
     public var effort: String?
     public var tasks = TaskProgress()
     public var tokens = TokenStats()
+    /// Lines this session has written to and cut from the working tree, as
+    /// counted by Claude Code itself. Published only by the status-line
+    /// payload, so both stay at zero without the forwarder — which is why
+    /// `hasLineChanges` gates the chip rather than the figures being drawn
+    /// unconditionally.
+    public var linesAdded: Int = 0
+    public var linesRemoved: Int = 0
     public var startedAt: Date
     public var lastEventAt: Date
     /// Most recent completed or in-flight tool calls, newest first, capped.
@@ -117,6 +128,11 @@ public struct Session: Sendable, Equatable, Identifiable {
 
     public var isInSubagent: Bool { subagentDepth > 0 }
 
+    /// Whether this session has touched the tree at all. A `+0 −0` chip claims
+    /// a measurement was taken and came back empty, which is exactly wrong for
+    /// the far more common case of nobody having told us.
+    public var hasLineChanges: Bool { linesAdded > 0 || linesRemoved > 0 }
+
     public func age(now: Date = Date()) -> TimeInterval { now.timeIntervalSince(startedAt) }
 
     public func idleFor(now: Date = Date()) -> TimeInterval { now.timeIntervalSince(lastEventAt) }
@@ -150,6 +166,8 @@ public enum SessionReducer {
             s.recentTools = []
             s.subagentDepth = 0
             s.tokens = TokenStats()
+            s.linesAdded = 0
+            s.linesRemoved = 0
             s.endedAt = nil
             s.startedAt = now
 

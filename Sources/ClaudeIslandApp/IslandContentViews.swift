@@ -172,7 +172,7 @@ struct PeekContent: View {
     private var contextFraction: Double {
         ContextWindow.fraction(for: session)
     }
-    private var contextAccent: Accent { IslandPalette.contextAccent(contextFraction) }
+    private var contextAccent: Accent { IslandPalette.usageAccent(contextFraction) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -202,36 +202,25 @@ struct PeekContent: View {
 
                 // Context gets a bar rather than a bare figure: the number only
                 // means something against the window it is filling.
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text("CONTEXT")
-                            .font(.system(size: 7.5, weight: .semibold))
-                            .tracking(0.5)
-                            .foregroundStyle(IslandPalette.tertiary)
-                        Spacer(minLength: 0)
-                        Text(Format.tokens(session.tokens.contextTokens))
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundStyle(contextAccent.bright)
-                            .monospacedDigit()
-                        Text(
-                            "/ \(Format.tokens(ContextWindow.limit(for: session)))"
-                        )
-                            .font(.system(size: 9, design: .rounded))
-                            .foregroundStyle(IslandPalette.tertiary)
-                            .monospacedDigit()
-                    }
-                    MeterBar(fraction: contextFraction, accent: contextAccent)
-                }
+                MeterBlock(
+                    label: "CONTEXT",
+                    value: Format.tokens(session.tokens.contextTokens),
+                    note: "/ \(Format.tokens(ContextWindow.limit(for: session)))",
+                    fraction: contextFraction, accent: contextAccent)
 
-                HStack(spacing: 7) {
-                    StatChip(
-                        label: "output", value: Format.tokens(session.tokens.cumulativeOutput),
-                        accent: accent)
-                    CacheChip(tokens: session.tokens)
-                    if let summary = session.tasks.summary {
-                        StatChip(label: "tasks", value: summary, accent: accent)
+                // Every chip in this row is conditional now that `output` — the
+                // one that was always there — is gone, so the row itself has to
+                // be: 34 points of reserved nothing at the foot of the card
+                // reads as the card having failed to finish drawing.
+                if IslandViewModel.peekHasChips(session) {
+                    HStack(spacing: 7) {
+                        LinesChip(session: session, accent: accent)
+                        CacheChip(tokens: session.tokens)
+                        if let summary = session.tasks.summary {
+                            StatChip(label: "tasks", value: summary, accent: accent)
+                        }
+                        Spacer(minLength: 0)
                     }
-                    Spacer(minLength: 0)
                 }
 
                 if let current = session.tasks.current {
@@ -290,13 +279,23 @@ struct ExpandedContent: View {
     private var contextFraction: Double {
         ContextWindow.fraction(for: session)
     }
-    private var contextAccent: Accent { IslandPalette.contextAccent(contextFraction) }
+    private var contextAccent: Accent { IslandPalette.usageAccent(contextFraction) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             PeekHeader(session: session, model: model)
 
             VStack(alignment: .leading, spacing: 0) {
+                // Above the list, not among the per-session figures below it:
+                // every row beneath this bar is spending from the same budget,
+                // and putting it inside the shown session's block would say it
+                // belonged to that one session.
+                if let window = model.rateLimit {
+                    UsageWindowBlock(window: window, now: model.tick)
+                        .padding(.top, IslandViewModel.usageWindowTopPadding)
+                        .padding(.bottom, IslandViewModel.usageWindowBottomPadding)
+                }
+
                 HStack(spacing: 6) {
                     SectionLabel("sessions")
                     Text("\(model.allSessions.count)")
@@ -333,26 +332,12 @@ struct ExpandedContent: View {
 
                 MetaLine(session: session, tick: model.tick)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text("CONTEXT")
-                            .font(.system(size: 7.5, weight: .semibold))
-                            .tracking(0.5)
-                            .foregroundStyle(IslandPalette.tertiary)
-                        Spacer(minLength: 0)
-                        Text(Format.tokens(session.tokens.contextTokens))
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundStyle(contextAccent.bright)
-                            .monospacedDigit()
-                        Text(
-                            "/ \(Format.tokens(ContextWindow.limit(for: session)))"
-                        )
-                            .font(.system(size: 9, design: .rounded))
-                            .foregroundStyle(IslandPalette.tertiary)
-                            .monospacedDigit()
-                    }
-                    MeterBar(fraction: contextFraction, accent: contextAccent)
-                }
+                MeterBlock(
+                    label: "CONTEXT",
+                    value: Format.tokens(session.tokens.contextTokens),
+                    note: "/ \(Format.tokens(ContextWindow.limit(for: session)))",
+                    fraction: contextFraction, accent: contextAccent
+                )
                 .padding(.top, 7)
 
                 // `written` used to sit here, and a `cache hit` chip that was
@@ -360,14 +345,19 @@ struct ExpandedContent: View {
                 // creation reads as bytes written to disk in a card whose next
                 // section is a trail of Edit calls, and it tracks the context
                 // bar directly above while telling that story worse.
-                HStack(spacing: 7) {
-                    StatChip(
-                        label: "output", value: Format.tokens(session.tokens.cumulativeOutput),
-                        accent: accent, emphasised: true)
-                    CacheChip(tokens: session.tokens)
-                    Spacer(minLength: 0)
+                //
+                // `output` went the same way, and for the same reason: an
+                // unbounded counter that rises with turn count alone. `lines`
+                // is what the trail below cannot say — not which calls ran, but
+                // how much of the tree they moved.
+                if IslandViewModel.expandedHasChips(session) {
+                    HStack(spacing: 7) {
+                        LinesChip(session: session, accent: accent, emphasised: true)
+                        CacheChip(tokens: session.tokens)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.top, 7)
                 }
-                .padding(.top, 7)
 
                 if !session.tasks.isEmpty {
                     HStack(spacing: 6) {
@@ -403,6 +393,30 @@ struct ExpandedContent: View {
             .padding(.top, IslandViewModel.bodyTopPadding)
             .padding(.bottom, IslandViewModel.bodyBottomPadding)
         }
+    }
+}
+
+/// The account's 5-hour usage window, drawn above the session list.
+///
+/// The card's second ceiling, and the only one that is not about a session: the
+/// context bar says how much room this conversation has left, this says how
+/// much room *you* have left, and every row below it is drawing down the same
+/// budget. It is also the one figure here you cannot get to without leaving
+/// what you are doing, which is the whole argument for a HUD.
+struct UsageWindowBlock: View {
+    let window: RateLimitWindow
+    let now: Date
+
+    private var accent: Accent { IslandPalette.usageAccent(window.usedFraction) }
+
+    var body: some View {
+        MeterBlock(
+            label: "5-HOUR",
+            value: Format.percent(window.usedFraction),
+            note: window.resetsAt
+                .flatMap { Format.untilReset($0, now: now) }
+                .map { "· \($0) to reset" },
+            fraction: window.usedFraction, accent: accent)
     }
 }
 
@@ -737,7 +751,7 @@ struct SessionGlyph: View {
     var body: some View {
         ContextRing(
             fraction: contextFraction,
-            accent: IslandPalette.contextAccent(contextFraction)
+            accent: IslandPalette.usageAccent(contextFraction)
         ) {
             ZStack {
                 Circle()

@@ -5,11 +5,18 @@ import Foundation
 public struct HUDSnapshot: Sendable, Equatable {
     public var primary: Session?
     public var others: [Session]
+    /// The account's 5-hour usage window. Outside `primary`/`others` because it
+    /// belongs to none of them and to all of them at once.
+    public var rateLimit: RateLimitWindow?
     public var generatedAt: Date
 
-    public init(primary: Session? = nil, others: [Session] = [], generatedAt: Date = Date()) {
+    public init(
+        primary: Session? = nil, others: [Session] = [], rateLimit: RateLimitWindow? = nil,
+        generatedAt: Date = Date()
+    ) {
         self.primary = primary
         self.others = others
+        self.rateLimit = rateLimit
         self.generatedAt = generatedAt
     }
 
@@ -50,6 +57,9 @@ public actor SessionStore {
     private var revisions: [String: Int] = [:]
     /// The (model, cwd) pair the context tier was last resolved for, per session.
     private var resolvedTiers: [String: String] = [:]
+    /// Account-wide, so it lives beside the session table rather than in it —
+    /// and outlives any one session, which is the point of a shared budget.
+    private var rateLimit: RateLimitWindow?
 
     public init(
         scheduler: TransitionScheduler = RealScheduler(),
@@ -85,6 +95,7 @@ public actor SessionStore {
         return HUDSnapshot(
             primary: ranked.first,
             others: Array(ranked.dropFirst()),
+            rateLimit: rateLimit,
             generatedAt: now())
     }
 
@@ -153,18 +164,44 @@ public actor SessionStore {
         publish()
     }
 
-    /// Record the exact context window a status-line render reported.
+    /// Record the facts only a status-line render publishes: the exact context
+    /// window, the lines this session has rewritten, and the account's 5-hour
+    /// usage window.
     ///
     /// Decoration only, and silent when nothing moved: the status line
     /// re-renders continuously, and publishing every time would wake the HUD
     /// several times a second to redraw an identical frame.
     private func applyStatusline(_ envelope: HookEnvelope) {
-        guard let size = envelope.contextWindowSize, size > 0,
-            var s = sessions[envelope.sessionID], s.contextLimit != size
-        else { return }
-        s.contextLimit = size
-        sessions[envelope.sessionID] = s
-        log.debug("statusline session=\(s.id.prefix(8)) context window \(size)")
+        var changed = false
+
+        // Recorded even for a session we do not track, because the window is
+        // the account's: the reading is still the right one to show the moment
+        // some session does appear.
+        if let window = envelope.rateLimit, rateLimit != window {
+            rateLimit = window
+            changed = true
+        }
+
+        if var s = sessions[envelope.sessionID] {
+            if let size = envelope.contextWindowSize, size > 0, s.contextLimit != size {
+                s.contextLimit = size
+                log.debug("statusline session=\(s.id.prefix(8)) context window \(size)")
+                changed = true
+            }
+            if let added = envelope.linesAdded, s.linesAdded != added {
+                s.linesAdded = added
+                changed = true
+            }
+            if let removed = envelope.linesRemoved, s.linesRemoved != removed {
+                s.linesRemoved = removed
+                changed = true
+            }
+            sessions[s.id] = s
+        }
+
+        // Nothing is on screen to redraw when there are no sessions, and the
+        // stored window is carried into the next real publish regardless.
+        guard changed, !sessions.isEmpty else { return }
         publish()
     }
 

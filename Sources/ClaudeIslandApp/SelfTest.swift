@@ -777,7 +777,8 @@ enum SelfTest {
         busy.model = "claude-opus-5"
         busy.effort = "xhigh"
         busy.tokens.contextTokens = 131_100
-        busy.tokens.cumulativeOutput = 37_900
+        busy.linesAdded = 1_412
+        busy.linesRemoved = 386
         // One in flight plus a full trail, which is the tallest the body gets.
         busy.recentTools =
             [
@@ -794,9 +795,14 @@ enum SelfTest {
             TaskItem(id: "2", subject: "a reasonably long in-flight task", status: .inProgress),
         ])
 
-        // Five sessions, so the switcher is full and the overflow line shows.
+        // Five sessions, so the switcher is full and the overflow line shows,
+        // and a 5-hour window so the tallest chrome is the one measured.
         let others = (0..<4).map { session("other\($0)", state: .thinking) }
-        model.apply(HUDSnapshot(primary: busy, others: others))
+        model.apply(
+            HUDSnapshot(
+                primary: busy, others: others,
+                rateLimit: RateLimitWindow(
+                    usedPercentage: 74, resetsAt: Date().addingTimeInterval(4_320))))
         model.forcedMode = .expanded
 
         let size = model.shapeSize
@@ -824,8 +830,65 @@ enum SelfTest {
         model.forcedMode = nil
         model.apply(HUDSnapshot())
 
+        await peekFitChecks(&checks, model: model)
         await branchFitChecks(&checks, model: model)
         await titleFitChecks(&checks, model: model)
+    }
+
+    /// Peek's chip row is conditional, and the height budget has to follow it
+    /// both ways.
+    ///
+    /// Every chip in that row earns its place — lines changed, a cache ratio
+    /// gone bad, plan progress — which means all three can be absent at once,
+    /// which `output` used to prevent by always being there. Budget for the row
+    /// unconditionally and a fresh session gets 41 points of nothing at the
+    /// foot of the card; drop it unconditionally and a busy one has its chips
+    /// clipped off. Both directions are measured.
+    private static func peekFitChecks(_ checks: inout [Check], model: IslandViewModel) async {
+        var bare = session("bare", state: .thinking)
+        bare.gitBranch = "main"
+        bare.model = "claude-opus-5"
+        bare.tokens.contextTokens = 42_000
+
+        var busy = bare
+        busy.linesAdded = 1_412
+        busy.linesRemoved = 386
+        busy.tasks = TaskProgress(items: [
+            TaskItem(id: "1", subject: "first", status: .completed),
+            TaskItem(id: "2", subject: "a reasonably long in-flight task", status: .inProgress),
+        ])
+
+        for (label, session) in [("with no chips", bare), ("with chips", busy)] {
+            model.apply(HUDSnapshot(primary: session))
+            model.forcedMode = .peek
+            let size = model.shapeSize
+            let host = NSHostingView(rootView: PeekContent(session: session, model: model))
+            host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let needed = host.fittingSize.height
+
+            checks.append(
+                Check(
+                    name: "peek \(label) is never shorter than its contents",
+                    passed: needed <= size.height + 0.5,
+                    detail: "content=\(needed) card=\(size.height)"))
+        }
+
+        // The saving is the whole reason the row is conditional; without this
+        // the budget could satisfy the fit checks above by never shrinking.
+        model.apply(HUDSnapshot(primary: bare))
+        model.forcedMode = .peek
+        let bareHeight = model.shapeSize.height
+        model.apply(HUDSnapshot(primary: busy))
+        let busyHeight = model.shapeSize.height
+        checks.append(
+            Check(
+                name: "peek gives back the chip row when there are no chips",
+                passed: bareHeight < busyHeight,
+                detail: "bare=\(bareHeight) busy=\(busyHeight)"))
+
+        model.forcedMode = nil
+        model.apply(HUDSnapshot())
     }
 
     /// A branch name is shown whole, and the card is what gives.

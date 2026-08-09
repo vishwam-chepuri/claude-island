@@ -36,7 +36,11 @@ enum BorderPulse: Equatable {
 final class IslandViewModel {
     private(set) var snapshot = HUDSnapshot()
     private(set) var geometry: NotchGeometry?
-    var isHovered = false
+    /// The reset countdown keeps moving while every session is still, so the
+    /// ticker has to follow the card being open as well as work being done.
+    var isHovered = false {
+        didSet { if oldValue != isHovered { syncTicker() } }
+    }
     /// Set by clicking the island. Keeps the card open after the cursor leaves,
     /// so it can actually be read; hover alone collapses the moment you move.
     private(set) var isPinnedOpen = false
@@ -107,6 +111,10 @@ final class IslandViewModel {
     var primary: Session? { snapshot.primary }
     var others: [Session] { snapshot.others }
 
+    /// The account's 5-hour usage window, when a status-line render has
+    /// published one. Not on `Session`: it belongs to every row at once.
+    var rateLimit: RateLimitWindow? { snapshot.rateLimit }
+
     /// Every tracked session, already ranked by the store.
     var allSessions: [Session] {
         guard let primary = snapshot.primary else { return [] }
@@ -167,10 +175,21 @@ final class IslandViewModel {
 
     /// Body heights, kept next to the layouts they describe so the shape and
     /// its contents cannot drift apart and clip.
-    ///   subline 13 + meta 13 + tokens 30, three gaps, plus top and bottom.
-    ///   subline 13 + meta 13 + context block 22 + chip row 34, four gaps of 7.
+    ///   subline 13 + meta 13 + context block 22, three gaps of 7, plus top and
+    ///   bottom. The chip row is added separately: it is conditional now, so a
+    ///   constant that included it would leave a hole whenever it did not draw.
     static let peekBodyHeight: CGFloat =
-        bodyTopPadding + 13 + 7 + 13 + 7 + 22 + 7 + 34 + bodyBottomPadding
+        bodyTopPadding + 13 + 7 + 13 + 7 + 22 + bodyBottomPadding
+    /// The chip row and the 7pt gap above it.
+    static let chipRowHeight: CGFloat = 7 + 34
+    /// The 5-hour meter, grouped downward with the list it describes rather
+    /// than sitting equidistant between that list and the header above it.
+    /// Equidistant, it read as a figure belonging to the shown session, which
+    /// is the one thing it is not.
+    static let usageWindowTopPadding: CGFloat = 5
+    static let usageWindowBottomPadding: CGFloat = 6
+    static let usageWindowHeight: CGFloat =
+        usageWindowTopPadding + 20 + usageWindowBottomPadding
     // MARK: Expanded card metrics
     //
     // A budget, not a contract. The trail at the foot of the card is the one
@@ -202,8 +221,11 @@ final class IslandViewModel {
         + 15  // divider with 7pt above and below
         + 12  // meta line
         + 27  // context label, its 7pt top padding, and the meter
-        + 45  // stat chips with 7pt above
         + bodyBottomPadding  // 13
+    // The chip row (`chipRowHeight` + 4 for the taller emphasised figure) and
+    // the 5-hour meter are both conditional, so they are added in `shapeSize`
+    // rather than tallied here.
+    static let expandedChipRowHeight: CGFloat = chipRowHeight + 4
     /// Breathing room between content and the camera cutout.
     static let notchPadding: CGFloat = 12
 
@@ -304,6 +326,22 @@ final class IslandViewModel {
     /// Whether any session has a plan, and whether any has one still in flight.
     private var anyTasks: Bool { allSessions.contains { !$0.tasks.isEmpty } }
     private var anyCurrentTask: Bool { allSessions.contains { $0.tasks.current != nil } }
+
+    /// Whether peek's chip row draws anything: lines changed, a cache ratio
+    /// worth reporting, or plan progress.
+    static func peekHasChips(_ s: Session) -> Bool {
+        s.hasLineChanges || s.tokens.degradedCacheHitRatio != nil || s.tasks.summary != nil
+    }
+
+    /// The same question for the expanded card, which carries no tasks chip —
+    /// the plan gets a section of its own further down.
+    static func expandedHasChips(_ s: Session) -> Bool {
+        s.hasLineChanges || s.tokens.degradedCacheHitRatio != nil
+    }
+
+    /// Measured across every session, like the rest of the expanded card's
+    /// budget, so browsing the switcher never resizes it.
+    private var anyExpandedChips: Bool { allSessions.contains(where: Self.expandedHasChips) }
 
     /// What each flank of the resting pill measures: the wider side's width,
     /// taken by both.
@@ -436,13 +474,15 @@ final class IslandViewModel {
             // Peek shows one session and cannot be browsed, so sizing it to that
             // session is fine.
             let taskRow: CGFloat = (displaySession?.tasks.current != nil) ? 28 : 0
+            let chips: CGFloat =
+                displaySession.map(Self.peekHasChips) == true ? Self.chipRowHeight : 0
             // The open tiers split their flanks evenly, so the width has to fit
             // TWICE the wider side — sizing to the sum truncates the header.
             let even = notchGap + 2 * max(headerLeftClusterWidth, rightClusterWidth)
             let meta = displaySession.map(metaLineWidth(for:)) ?? 0
             return CGSize(
                 width: Self.withinPanel(max(even, 460, meta)),
-                height: bodyTopInset + Self.peekBodyHeight + taskRow)
+                height: bodyTopInset + Self.peekBodyHeight + chips + taskRow)
         case .expanded:
             // Every term here is measured across all sessions, so switching
             // between them never changes the card's size.
@@ -450,12 +490,14 @@ final class IslandViewModel {
             let overflow: CGFloat =
                 sessionOverflowCount > 0 ? Self.sessionOverflowRowHeight : 0
             let taskBlock: CGFloat = anyTasks ? (34 + (anyCurrentTask ? 18 : 0)) : 0
+            let chipBlock: CGFloat = anyExpandedChips ? Self.expandedChipRowHeight : 0
+            let usageBlock: CGFloat = rateLimit != nil ? Self.usageWindowHeight : 0
             let evenWidth = notchGap + 2 * widestFlank
             return CGSize(
                 width: Self.withinPanel(
                     max(evenWidth, NotchGeometryResolver.cardWidth, widestMetaLine)),
-                height: bodyTopInset + Self.expandedChromeHeight
-                    + rows * Self.sessionRowHeight + overflow + taskBlock
+                height: bodyTopInset + Self.expandedChromeHeight + usageBlock
+                    + rows * Self.sessionRowHeight + overflow + chipBlock + taskBlock
                     + Self.nowRowTopPadding + Self.nowRowHeight
                     + Self.trailTopPadding + trailBudget)
         }
@@ -507,10 +549,12 @@ final class IslandViewModel {
 
     func togglePinned() {
         isPinnedOpen.toggle()
+        syncTicker()
     }
 
     func unpin() {
         isPinnedOpen = false
+        syncTicker()
     }
 
     func apply(_ snapshot: HUDSnapshot) {
@@ -583,10 +627,22 @@ final class IslandViewModel {
         syncTicker()
     }
 
+    /// Whether the card is drawing a countdown that no session's activity keeps
+    /// moving.
+    ///
+    /// `NowRow` shows no elapsed figure on a settled session precisely because
+    /// a counter on screen is a promise that it is running — and a frozen one
+    /// is the exact bug that row exists to prevent. The reset countdown makes
+    /// the same promise while every session is idle, so the card holds the
+    /// ticker open for as long as it is drawing one.
+    private var showsResetCountdown: Bool {
+        mode == .expanded && snapshot.rateLimit?.resetsAt != nil
+    }
+
     /// One shared 1 Hz timer for every elapsed label, running only when
     /// something is actually elapsing.
     private func syncTicker() {
-        let wanted = isEnabled && snapshot.wantsAnimation
+        let wanted = isEnabled && (snapshot.wantsAnimation || showsResetCountdown)
         if wanted, tickTimer == nil {
             let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.tick = Date() }
@@ -708,6 +764,36 @@ enum Format {
 
     static func percent(_ ratio: Double) -> String {
         "\(Int((ratio * 100).rounded()))%"
+    }
+
+    /// `+412 −86`.
+    ///
+    /// A true minus (U+2212) rather than a hyphen: beside the `+` it has to
+    /// match its weight and width, and a hyphen sitting between two numbers
+    /// reads as a range.
+    ///
+    /// Exact below ten thousand, where every other count on the card
+    /// abbreviates. A line count is nearly always three or four digits, and
+    /// `+412` tells you something `+0.4k` does not — which is the entire reason
+    /// this figure replaced a token total.
+    static func lines(added: Int, removed: Int) -> String {
+        "+\(lineCount(added)) \u{2212}\(lineCount(removed))"
+    }
+
+    private static func lineCount(_ n: Int) -> String {
+        n < 10_000 ? "\(n)" : tokens(n)
+    }
+
+    /// How long until a usage window rolls over. Nil once it has.
+    ///
+    /// Coarse on purpose. A countdown to the second invites watching it, and
+    /// the answer only ever changes a decision at the scale of minutes.
+    static func untilReset(_ date: Date, now: Date) -> String? {
+        let s = date.timeIntervalSince(now)
+        guard s > 0 else { return nil }
+        if s < 60 { return "<1m" }
+        if s < 3600 { return "\(Int(s) / 60)m" }
+        return "\(Int(s) / 3600)h \((Int(s) % 3600) / 60)m"
     }
 
     /// `claude-opus-5` reads better as `Opus 5` at 10pt.

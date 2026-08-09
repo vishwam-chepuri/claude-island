@@ -4,7 +4,9 @@ import Foundation
 /// A status-line payload shaped like the one Claude Code actually emits,
 /// trimmed to the fields that matter here.
 private func statuslinePayload(
-    sessionID: String = "s1", windowSize: Int? = 1_000_000, modelID: String = "claude-opus-5[1m]"
+    sessionID: String = "s1", windowSize: Int? = 1_000_000, modelID: String = "claude-opus-5[1m]",
+    linesAdded: Int? = 412, linesRemoved: Int? = 86,
+    fiveHourUsed: Double? = 43.5, resetsAt: Any? = 1_786_300_200
 ) -> Data {
     var context: [String: Any] = [
         "total_input_tokens": 95860,
@@ -13,14 +15,27 @@ private func statuslinePayload(
         "remaining_percentage": 90,
     ]
     if let windowSize { context["context_window_size"] = windowSize }
-    let body: [String: Any] = [
+    var cost: [String: Any] = [
+        "total_cost_usd": 1.42,
+        "total_duration_ms": 900_000,
+        "total_api_duration_ms": 310_000,
+    ]
+    if let linesAdded { cost["total_lines_added"] = linesAdded }
+    if let linesRemoved { cost["total_lines_removed"] = linesRemoved }
+    var body: [String: Any] = [
         "session_id": sessionID,
         "cwd": "/w/island",
         "transcript_path": "/t/\(sessionID).jsonl",
         "model": ["id": modelID, "display_name": "Opus 5 (1M context)"],
         "context_window": context,
+        "cost": cost,
         "version": "2.1.224",
     ]
+    if let fiveHourUsed {
+        var window: [String: Any] = ["used_percentage": fiveHourUsed]
+        if let resetsAt { window["resets_at"] = resetsAt }
+        body["rate_limits"] = ["five_hour": window, "seven_day": ["used_percentage": 12.0]]
+    }
     return try! JSONSerialization.data(withJSONObject: body)
 }
 
@@ -119,6 +134,97 @@ func registerStatuslineTests() {
             await store.ingest(
                 try await require(try HookEnvelope.decode(statuslinePayload(sessionID: "ghost"))))
             await expectEqual(await store.allSessions().count, 0)
+        }
+
+        test("lines changed and the 5-hour window ride the same payload") {
+            let env = try await require(try HookEnvelope.decode(statuslinePayload()))
+            await expectEqual(env.linesAdded, 412)
+            await expectEqual(env.linesRemoved, 86)
+            let window = try await require(env.rateLimit)
+            await expect(
+                abs(window.usedFraction - 0.435) < 0.0001, "got \(window.usedFraction)")
+            await expectEqual(
+                window.resetsAt,
+                Date(timeIntervalSince1970: 1_786_300_200),
+                "2026-08-09T18:30:00Z")
+        }
+
+        // Claude Code forwards the `anthropic-ratelimit-unified-5h-reset`
+        // header as the epoch integer it arrives as, but converts the same
+        // field to an ISO string when it came from the account-usage fetch —
+        // and that one carries milliseconds only sometimes. Reading a single
+        // shape does not fail loudly; the countdown simply never appears.
+        test("every shape the reset stamp arrives in is understood") {
+            for stamp in [
+                1_786_300_200 as Any,
+                "2026-08-09T18:30:00.000Z",
+                "2026-08-09T18:30:00Z",
+            ] {
+                let env = try await require(
+                    try HookEnvelope.decode(statuslinePayload(resetsAt: stamp)))
+                await expectEqual(
+                    try await require(env.rateLimit).resetsAt,
+                    Date(timeIntervalSince1970: 1_786_300_200),
+                    "\(stamp)")
+            }
+        }
+
+        test("a window with no reset stamp still reports its usage") {
+            let env = try await require(
+                try HookEnvelope.decode(statuslinePayload(resetsAt: nil)))
+            let window = try await require(env.rateLimit)
+            await expect(abs(window.usedFraction - 0.435) < 0.0001, "got \(window.usedFraction)")
+            await expectEqual(window.resetsAt, nil)
+        }
+
+        // Absent, never zero: a 0% bar is a claim that the account has used
+        // nothing, which is the opposite of "nobody told us".
+        test("a payload with no rate limits reports none rather than an empty one") {
+            let env = try await require(
+                try HookEnvelope.decode(statuslinePayload(fiveHourUsed: nil)))
+            await expectEqual(env.rateLimit, nil)
+        }
+
+        test("a percentage past 100 cannot draw a bar longer than its track") {
+            await expectEqual(RateLimitWindow(usedPercentage: 140).usedFraction, 1)
+            await expectEqual(RateLimitWindow(usedPercentage: -3).usedFraction, 0)
+        }
+
+        test("lines changed land on the session the payload names") {
+            let store = SessionStore(scheduler: VirtualScheduler())
+            await store.ingest(HookEnvelope(sessionID: "s1", event: .sessionStart, cwd: "/w/x"))
+            await store.ingest(try await require(try HookEnvelope.decode(statuslinePayload())))
+
+            let s = try await require(await store.session("s1"))
+            await expectEqual(s.linesAdded, 412)
+            await expectEqual(s.linesRemoved, 86)
+            await expect(s.hasLineChanges)
+        }
+
+        // A resumed or cleared session reuses the id, and carrying the previous
+        // run's diff into it would credit this session with work it never did.
+        test("SessionStart clears the line counts with the rest of the totals") {
+            let store = SessionStore(scheduler: VirtualScheduler())
+            await store.ingest(HookEnvelope(sessionID: "s1", event: .sessionStart, cwd: "/w/x"))
+            await store.ingest(try await require(try HookEnvelope.decode(statuslinePayload())))
+            await store.ingest(HookEnvelope(sessionID: "s1", event: .sessionStart, cwd: "/w/x"))
+
+            let s = try await require(await store.session("s1"))
+            await expectEqual(s.linesAdded, 0)
+            await expect(!s.hasLineChanges)
+        }
+
+        // The window is the account's, so it has to survive a session it did
+        // not arrive with — including one that has not started yet.
+        test("the 5-hour window is kept across sessions, not inside one") {
+            let store = SessionStore(scheduler: VirtualScheduler())
+            await store.ingest(
+                try await require(try HookEnvelope.decode(statuslinePayload(sessionID: "ghost"))))
+            await expectEqual(await store.allSessions().count, 0)
+
+            await store.ingest(HookEnvelope(sessionID: "s2", event: .sessionStart, cwd: "/w/x"))
+            let window = try await require(await store.currentSnapshot().rateLimit)
+            await expect(abs(window.usedFraction - 0.435) < 0.0001, "got \(window.usedFraction)")
         }
 
         test("a count past the stated window still floors the bar") {

@@ -74,9 +74,13 @@ extension IslandPalette {
         LinearGradient(colors: [debugFill.opacity(0.95), debugFill], startPoint: .top, endPoint: .bottom)
     }
 
-    /// Context occupancy, coloured by how much room is left. Green while there
-    /// is plenty, amber past two thirds, red when a compaction is imminent.
-    static func contextAccent(_ fraction: Double) -> Accent {
+    /// How much of a budget is gone. Green while there is plenty, amber past
+    /// two thirds, red when the wall is close.
+    ///
+    /// Shared by context occupancy and the account's usage window on purpose:
+    /// both ask "how close am I to a limit", and two colour scales for one
+    /// question would each have to be learned separately.
+    static func usageAccent(_ fraction: Double) -> Accent {
         switch fraction {
         case ..<0.66: doneAccent
         case ..<0.85: turnAccent
@@ -144,6 +148,67 @@ struct StatChip: View {
                     emphasised ? accent.base.opacity(0.35) : Color.white.opacity(0.06),
                     lineWidth: 1)
         )
+    }
+}
+
+/// How much of the working tree this session has rewritten.
+///
+/// What replaced cumulative output tokens. Both are "how much has this session
+/// done", but a line count is bounded by an intuition every reader already has
+/// — you know when 400 lines is a lot — where 37.9k output tokens is a number
+/// with nothing to read it against. It is also the one figure on the card that
+/// is about the repo rather than about the conversation, which makes it the
+/// only one that can tell you a change has grown big enough to go and look at.
+///
+/// Absent, not zero, until a status-line render says otherwise.
+struct LinesChip: View {
+    let session: Session
+    var accent: Accent = IslandPalette.idleAccent
+    var emphasised = false
+
+    var body: some View {
+        if session.hasLineChanges {
+            StatChip(
+                label: "lines",
+                value: Format.lines(added: session.linesAdded, removed: session.linesRemoved),
+                accent: accent, emphasised: emphasised)
+        }
+    }
+}
+
+/// A caption, a headline figure, an optional note, and a bar under all three.
+///
+/// Context occupancy and the account's 5-hour window are the same object asked
+/// about two different budgets. Drawing them from one place is what keeps them
+/// reading as a pair rather than as two things that happen to look similar.
+struct MeterBlock: View {
+    let label: String
+    let value: String
+    var note: String?
+    let fraction: Double
+    let accent: Accent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text(label)
+                    .font(.system(size: 7.5, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(IslandPalette.tertiary)
+                Spacer(minLength: 0)
+                Text(value)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(accent.bright)
+                    .monospacedDigit()
+                if let note {
+                    Text(note)
+                        .font(.system(size: 9, design: .rounded))
+                        .foregroundStyle(IslandPalette.tertiary)
+                        .monospacedDigit()
+                }
+            }
+            MeterBar(fraction: fraction, accent: accent)
+        }
     }
 }
 
