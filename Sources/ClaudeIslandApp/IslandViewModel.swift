@@ -461,25 +461,26 @@ final class IslandViewModel {
         }
     }
 
-    /// Only the bottom corners are drawn; the top edge is flush with the screen.
-    var cornerRadius: CGFloat {
-        switch mode {
-        case .dormant: hasNotch ? 12 : 16
-        case .compact, .alert: 18
-        case .peek: 26
-        case .expanded: 30
-        }
-    }
+    /// The hardware's corner, at every tier. A shape that rounds off further as
+    /// it grows reads as a panel doing a reveal; a cutout that grows keeps the
+    /// curvature it started with.
+    var cornerRadius: CGFloat { IslandCorner.radius }
 
     /// The concave fillet where the shape meets the screen edge. Zero when
-    /// dormant, so the resting shape is exactly the cutout and nothing more.
+    /// dormant, so the resting shape is exactly the cutout and nothing more,
+    /// and zero without a cutout, where there is no bezel to flare into.
     var topFlare: CGFloat {
-        switch mode {
+        guard hasNotch else { return 0 }
+        return switch mode {
         case .dormant: 0
         case .compact, .alert: 11
         case .peek, .expanded: 14
         }
     }
+
+    /// How the shape meets its top edge. The fallback pill floats below the
+    /// menu bar rather than against the bezel, so it rounds instead of flaring.
+    var islandTop: IslandTop { hasNotch ? .flare : .rounded }
 
     /// The drawn shape in screen coordinates, for the hover monitor's hit test.
     ///

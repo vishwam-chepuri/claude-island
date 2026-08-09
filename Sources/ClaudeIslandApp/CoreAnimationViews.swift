@@ -171,6 +171,7 @@ struct PulsingOutline: NSViewRepresentable {
     let pulse: BorderPulse
     var cornerRadius: CGFloat
     var topFlare: CGFloat
+    var top: IslandTop = .flare
 
     /// One yellow cycle. Matches the `PulsingGlyph` breath in `AlertContent` so
     /// the edge and the raised hand do not beat against each other.
@@ -197,6 +198,7 @@ struct PulsingOutline: NSViewRepresentable {
         var pulse: BorderPulse = .attention
         var cornerRadius: CGFloat = 0
         var topFlare: CGFloat = 0
+        var top: IslandTop = .flare
         /// What the sweep's animation was last built for. `apply()` runs from
         /// `layout()`, and SwiftUI calls that on every relayout — a resize, or
         /// the elapsed label ticking once a second through a live prompt —
@@ -269,7 +271,7 @@ struct PulsingOutline: NSViewRepresentable {
             guard bounds.width > 0 else { return }
 
             let outline = PulsingOutline.layerPath(
-                in: bounds, cornerRadius: cornerRadius, topFlare: topFlare)
+                in: bounds, cornerRadius: cornerRadius, topFlare: topFlare, top: top)
             // The halo's geometry is the STROKE, not the silhouette. An explicit
             // shadowPath is *filled* to derive the shadow, so handing it the
             // outline would wash a blurred wedge across the fill and its content
@@ -403,8 +405,10 @@ struct PulsingOutline: NSViewRepresentable {
     /// state that mounted it (or dies before it).
     static let completionWindow: CFTimeInterval = 1.8
 
-    static func layerPath(in rect: CGRect, cornerRadius: CGFloat, topFlare: CGFloat) -> CGPath {
-        let authored = IslandOutline(cornerRadius: cornerRadius, topFlare: topFlare)
+    static func layerPath(
+        in rect: CGRect, cornerRadius: CGFloat, topFlare: CGFloat, top: IslandTop = .flare
+    ) -> CGPath {
+        let authored = IslandOutline(cornerRadius: cornerRadius, topFlare: topFlare, top: top)
             .path(in: rect).cgPath
         let flip = CGAffineTransform(translationX: 0, y: rect.height)
             .scaledBy(x: 1, y: -1)
@@ -425,6 +429,7 @@ struct PulsingOutline: NSViewRepresentable {
         view.pulse = pulse
         view.cornerRadius = cornerRadius
         view.topFlare = topFlare
+        view.top = top
         view.needsLayout = true
     }
 

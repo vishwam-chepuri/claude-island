@@ -64,14 +64,11 @@ extension IslandPalette {
         }
     }
 
-    /// The island's own fill. A few points of lift at the top gives the shape
-    /// some form under a bright wallpaper without breaking the illusion that it
-    /// is the cutout.
-    static var islandFill: LinearGradient {
-        LinearGradient(
-            colors: [Color(white: 0.055), .black],
-            startPoint: .top, endPoint: .bottom)
-    }
+    /// The island's own fill. Pitch black, no gradient and no material: the
+    /// shape has to be the same nothing as the cutout it grows out of, and any
+    /// lift at all — the few points this used to carry at the top included — is
+    /// a seam along the one edge they touch.
+    static let islandFill = Color.black
 
     static var debugFillGradient: LinearGradient {
         LinearGradient(colors: [debugFill.opacity(0.95), debugFill], startPoint: .top, endPoint: .bottom)

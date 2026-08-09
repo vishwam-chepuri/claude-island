@@ -83,13 +83,19 @@ all. That is what lets the whole pipeline run headlessly.
 expanded size permanently with a transparent background; the island shape is
 drawn inside it, so the morph never resizes a window.
 
-The silhouette is `IslandShape`: flush with the top of the screen, rounded
-generously along the bottom, and *concave* where it meets the top edge. Those
-inverted corners are what make it seamless — the shape flares out of the bezel
-instead of sitting on it as a rectangle, so in pure black the camera housing
-disappears into the fill rather than sitting in a visible gap. `IslandOutline`
-is the same path left open at the top, so stroking it never draws a line across
-the screen edge.
+The silhouette is `IslandShape`: flush with the top of the screen, rounded along
+the bottom, and *concave* where it meets the top edge. Those inverted corners
+are what make it seamless — the shape flares out of the bezel instead of sitting
+on it as a rectangle, so in pure black the camera housing disappears into the
+fill rather than sitting in a visible gap. `IslandOutline` is the same path left
+open at the top, so stroking it never draws a line across the screen edge.
+
+Every corner is a superellipse quadrant, not a circular arc, at one radius —
+`IslandCorner.radius`, 12pt — for every tier. Both details are the cutout's:
+curvature that ramps up from zero at the join reads as machined where an arc
+reads as drawn, and a shape that rounds off further as it grows reads as a panel
+doing a reveal rather than a hole opening. On a display with no cutout there is
+no bezel to flare into, so the fallback pill rounds its top corners instead.
 
 ## Things worth knowing
 
