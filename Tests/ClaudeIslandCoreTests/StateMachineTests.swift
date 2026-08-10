@@ -175,6 +175,32 @@ func registerStateMachineTests() {
             await expect(s.state.isAlert, "a late subagent dismissed a pending permission")
         }
 
+        test("An idle nudge does not downgrade a live permission prompt or question") {
+            var s = SessionReducer.apply(env(.permissionRequest, tool: "Bash"), to: nil).session
+            s = SessionReducer.apply(
+                env(.notification, message: "Claude is waiting for your input", at: 1), to: s
+            ).session
+            await expect(s.state.isAlert, "an idle nudge downgraded a live permission prompt")
+
+            s = SessionReducer.apply(env(.preToolUse, tool: "AskUserQuestion", at: 2), to: s).session
+            s = SessionReducer.apply(
+                env(.notification, message: "Claude is waiting for your input", at: 3), to: s
+            ).session
+            guard case .running(let activity) = s.state else {
+                await fail("an idle nudge downgraded a live question, got \(s.state)")
+                return
+            }
+            await expectEqual(activity.kind, .question)
+        }
+
+        test("An idle nudge still applies once nothing is pending") {
+            var s = SessionReducer.apply(env(.preToolUse, tool: "Task"), to: nil).session
+            s = SessionReducer.apply(
+                env(.notification, message: "Claude is waiting for your input", at: 1), to: s
+            ).session
+            await expectEqual(s.state, .idle(waitingOnUser: true))
+        }
+
         test("SessionEnd schedules removal after the fade") {
             let out = SessionReducer.apply(env(.sessionEnd), to: nil)
             await expectEqual(out.session.state, .done)
@@ -196,6 +222,30 @@ func registerStateMachineTests() {
                 s?.recentTools.first?.startedAt,
                 base.addingTimeInterval(TimeInterval(Session.recentToolLimit + 4)),
                 "the cap dropped the newest call instead of the oldest")
+        }
+
+        test("soundCue fires only for done, permission, and the idle nudge") {
+            await expectEqual(SessionState.done.soundCue, .done)
+            await expectEqual(SessionState.idle(waitingOnUser: true).soundCue, .waiting)
+            await expectEqual(SessionState.idle(waitingOnUser: false).soundCue, nil)
+            await expectEqual(SessionState.thinking.soundCue, nil)
+            await expectEqual(SessionState.compacting.soundCue, nil)
+            await expectEqual(SessionState.error("x").soundCue, nil)
+
+            let ask = PermissionAsk(toolName: "Bash", kind: .bash, target: nil, since: base)
+            await expectEqual(SessionState.awaitingPermission(ask).soundCue, .inputRequired)
+        }
+
+        test("AskUserQuestion and ExitPlanMode sound like a permission prompt") {
+            await expectEqual(ToolKind(toolName: "AskUserQuestion"), .question)
+            await expectEqual(ToolKind(toolName: "ExitPlanMode"), .question)
+
+            let question = ToolActivity(
+                kind: .question, toolName: "AskUserQuestion", target: nil, startedAt: base)
+            await expectEqual(SessionState.running(question).soundCue, .inputRequired)
+
+            let bash = ToolActivity(kind: .bash, toolName: "Bash", target: nil, startedAt: base)
+            await expectEqual(SessionState.running(bash).soundCue, nil, "an ordinary tool call rang")
         }
 
         test("Only idle and terminal states stop animating") {

@@ -70,6 +70,29 @@ public enum SessionState: Sendable, Equatable {
         }
     }
 
+    /// The sound-worthy transition this state represents, if any.
+    ///
+    /// `nil` covers every state with no attention-worthy audio cue, including
+    /// the non-nudged half of `idle`. Deduplicating repeats — a second
+    /// permission ask arriving right behind the first, or an idle nudge that
+    /// keeps re-firing while a session sits untouched — is the caller's job:
+    /// it compares cues across snapshots rather than full state values, so a
+    /// change of `PermissionAsk` payload with the same cue does not re-ring.
+    ///
+    /// `running(.question)` gets the same cue as `awaitingPermission`: a
+    /// clarifying question (`AskUserQuestion`) or a plan to approve
+    /// (`ExitPlanMode`) blocks the turn on the user exactly like a permission
+    /// prompt does, just without going through the permission hook.
+    public var soundCue: SoundCue? {
+        switch self {
+        case .done: .done
+        case .awaitingPermission: .inputRequired
+        case .idle(let waitingOnUser): waitingOnUser ? .waiting : nil
+        case .running(let activity): activity.kind == .question ? .inputRequired : nil
+        case .prompting, .thinking, .compacting, .error: nil
+        }
+    }
+
     public var label: String {
         switch self {
         case .idle(let waiting): waiting ? "waiting for you" : "idle"
@@ -96,6 +119,13 @@ public enum SessionState: Sendable, Equatable {
         case .error: "error"
         }
     }
+}
+
+/// A sound-worthy transition into a `SessionState`. See `SessionState.soundCue`.
+public enum SoundCue: Sendable, Equatable {
+    case done
+    case inputRequired
+    case waiting
 }
 
 /// Classification of `Notification` payload text.

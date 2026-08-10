@@ -18,6 +18,17 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var snapshotTask: Task<Void, Never>?
     private var trackedTranscripts = Set<String>()
 
+    // MARK: - Sound cues
+
+    /// Every session id observed in at least one snapshot. A session's first
+    /// appearance must seed `lastSoundCue` silently rather than ring for
+    /// state it was already in before the HUD ever saw it (e.g. the app
+    /// relaunching mid-session).
+    private var seenSessionIDs = Set<String>()
+    /// The cue each session was last observed in, so a repeat of the same cue
+    /// — a second permission ask, another idle nudge — does not re-ring.
+    private var lastSoundCue: [String: SoundCue] = [:]
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement already implies this, but be explicit: the app must never
         // take focus, so it must never become a regular activation-policy app.
@@ -152,6 +163,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func apply(_ snapshot: HUDSnapshot) {
+        playSoundCues(for: snapshot)
         model.apply(snapshot)
         updateStatusItemGlyph()
 
@@ -166,6 +178,38 @@ final class AppController: NSObject, NSApplicationDelegate {
             model.isHovered = false
         }
         syncInteractiveRect()
+    }
+
+    /// Rings a sound on each session's edge into `.done`, `.awaitingPermission`,
+    /// or the idle nudge — not on every snapshot they happen to still be in it.
+    ///
+    /// Tracking updates unconditionally even while the HUD is disabled, so
+    /// re-enabling it never fires a catch-up sound for a transition that
+    /// already happened silently.
+    private func playSoundCues(for snapshot: HUDSnapshot) {
+        let sessions = [snapshot.primary].compactMap { $0 } + snapshot.others
+        var liveIDs = Set<String>()
+
+        for session in sessions {
+            liveIDs.insert(session.id)
+            let cue = session.state.soundCue
+            let firstObservation = seenSessionIDs.insert(session.id).inserted
+            if !firstObservation, model.isEnabled, let cue, lastSoundCue[session.id] != cue {
+                play(cue)
+            }
+            lastSoundCue[session.id] = cue
+        }
+
+        seenSessionIDs.formIntersection(liveIDs)
+        lastSoundCue = lastSoundCue.filter { liveIDs.contains($0.key) }
+    }
+
+    private func play(_ cue: SoundCue) {
+        switch cue {
+        case .done: NSSound(named: "Glass")?.play()
+        case .inputRequired: NSSound(named: "Ping")?.play()
+        case .waiting: NSSound(named: "Pop")?.play()
+        }
     }
 
     private func presentSocketFailure(_ error: Error) {

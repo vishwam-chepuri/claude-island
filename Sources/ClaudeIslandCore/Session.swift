@@ -215,7 +215,16 @@ public enum SessionReducer {
                     PermissionAsk(
                         toolName: name, kind: ToolKind(toolName: name), target: target, since: now))
             case .idleNudge:
-                s.state = .idle(waitingOnUser: true)
+                // A live permission ask or blocking question already says
+                // exactly what the user owes. The terminal sitting quiet
+                // while they take their time to decide is not new
+                // information, so it must not downgrade that to a generic
+                // idle reading — doing so lost which tool needed approval,
+                // observed once the HUD started ringing a sound cue per
+                // state and the same prompt rang twice under two labels.
+                if !isPendingUserDecision(s) {
+                    s.state = .idle(waitingOnUser: true)
+                }
             case .other:
                 break  // Unrecognized prose must not disturb a good state.
             }
@@ -285,5 +294,16 @@ public enum SessionReducer {
     private static func currentTarget(_ s: Session) -> String? {
         if case .running(let t) = s.state { return t.target }
         return s.recentTools.first?.target
+    }
+
+    /// Whether the session is blocked on a specific decision only the user
+    /// can make — a permission ask, or a blocking question/plan — as opposed
+    /// to merely sitting idle for no particular reason.
+    private static func isPendingUserDecision(_ s: Session) -> Bool {
+        switch s.state {
+        case .awaitingPermission: true
+        case .running(let activity): activity.kind == .question
+        default: false
+        }
     }
 }

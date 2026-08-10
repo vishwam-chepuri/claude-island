@@ -14,6 +14,11 @@ public enum ToolKind: String, Sendable, Equatable, CaseIterable {
     case task
     case todo
     case notebook
+    /// Blocks the turn on a decision only the user can make — a multiple-choice
+    /// question, a plan to approve — as opposed to `awaitingPermission`, which
+    /// blocks on a yes/no tool grant. `SessionState.soundCue` treats the two
+    /// alike: both need the same "come look" ring.
+    case question
     case other
 
     public init(toolName: String?) {
@@ -29,6 +34,7 @@ public enum ToolKind: String, Sendable, Equatable, CaseIterable {
         case "task", "agent": self = .task
         case "todowrite", "taskcreate", "taskupdate": self = .todo
         case "notebookedit": self = .notebook
+        case "askuserquestion", "exitplanmode": self = .question
         default: self = .other
         }
     }
@@ -47,6 +53,7 @@ public enum ToolKind: String, Sendable, Equatable, CaseIterable {
         case .task: "person.2"
         case .todo: "checklist"
         case .notebook: "book"
+        case .question: "questionmark.circle"
         case .other: "gearshape"
         }
     }
@@ -122,6 +129,11 @@ public struct ToolActivity: Sendable, Equatable, Identifiable {
         case .task:
             return Redactor.sanitize(input.firstString(["description", "subagent_type", "prompt"]))
         case .todo:
+            return nil
+        case .question:
+            // AskUserQuestion carries an array of questions, ExitPlanMode a
+            // full markdown plan — neither has one field worth clamping to 60
+            // chars, so this shows a glyph and the tool name only, like `.todo`.
             return nil
         case .other:
             // Best-effort across common field names for tools we don't model.
