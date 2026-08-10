@@ -441,123 +441,757 @@ struct PulsingOutline: NSViewRepresentable {
     }
 }
 
-/// The status mark: a ring that spins while working, completes and takes a
-/// checkmark when the turn lands on you, and rests solid when done.
+/// The status trace: one mark per state, all drawn with one pen.
 ///
-/// Modelled on the reference design's three states. Built from CAShapeLayers
-/// with CA animations for the same reason as the other two: a SwiftUI
-/// `repeatForever` re-runs the whole view graph every frame.
+/// What replaced a spinning ring — and then replaced its own first draft. The
+/// ring drew nine states with two glyphs: `running`, `thinking`, `prompting` and
+/// `compacting` all span, and `done`, `error`, `idle` and "your turn" all drew
+/// the same checkmark, so a failed session and a finished one were identical but
+/// for their tint.
+///
+/// The first fix gave every state the same four bars and a different *gait* —
+/// speed, amplitude, phase. That failed on the real pill, for a reason worth
+/// recording: at 16pt in the corner of the eye, you read how many marks there
+/// are and which way they run long before you read how fast they move. Count and
+/// axis are pre-attentive; tempo is a difference of degree. Thinking, working and
+/// "your turn" came out nearly indistinguishable, with colour doing all the work.
+///
+/// So the states differ in silhouette now, and what holds the set together is
+/// the pen rather than the shape. Every figure is built from the same
+/// `penWidth`-wide round-capped module: one module is a dot, a stretched one is a
+/// bar, a full-height one is a caret.
+///
+///     thinking    3 dots at the floor, a brightness wave travelling through
+///     running     3 balls bouncing on a ground line, squashing as they land
+///     compacting  2 bars closing on each other, rising as they meet
+///     sent        3 dots flying in from the left, into the murmur's places
+///     your turn   1 caret, blinking
+///     idle        1 dim dot, still
+///     done/failed a check / a cross, stroked on after the marks fall
+///
+/// `running` is the exception to the pen, and it earned it. It was bars twice —
+/// four of them crackling — and both times it lost to `thinking` at a glance,
+/// because bars can only differ from other bars by count, height or tempo, and
+/// at this size those are all differences of degree. Balls differ in kind: they
+/// move up and down where every other figure holds its line, they carry a ground
+/// to bounce off, and they deform — nothing else here changes shape. It is also
+/// the state you see most, which is the one worth spending a drawing on.
+///
+/// The caret is the one that changes meaning rather than styling. A blink is the
+/// only mark in computing that already means "a machine has stopped and is
+/// waiting for a human", and nobody has to be taught it.
+///
+/// Every hook event kicks a bright swell across whatever is showing, so a session
+/// grinding through a long call looks unmistakably different from one that has
+/// hung. That is the reading a spinner can never give: it turns at the same rate
+/// either way.
+///
+/// Built from CALayers driven by CA animations, like both siblings above and for
+/// the same reason: a SwiftUI `repeatForever` re-runs the whole view graph every
+/// frame.
 struct StatusMark: NSViewRepresentable {
     let state: SessionState
+    /// When this session last heard from Claude Code. A change fires one swell
+    /// across the marks; an unchanged stamp leaves the running figure alone,
+    /// which matters because SwiftUI re-runs this view on every 1 Hz tick.
+    var eventStamp: Date = .distantPast
 
+    /// The slot the pill reserves. `rightClusterWidth` budgets exactly this, so
+    /// the two cannot drift.
     static let size: CGFloat = 16
-    private static let lineWidth: CGFloat = 1.8
 
-    private enum Shape { case spinning, complete, resting }
+    // MARK: The pen
+    //
+    // One module, six figures. Keeping every mark to a single width and cap is
+    // what lets the shapes differ this much and still read as one object's
+    // states rather than as six unrelated icons.
 
-    private var shape: Shape {
+    /// How many modules exist. Figures use the first one, two or three of them and
+    /// hide the rest — the count is part of what distinguishes them.
+    static let penCount = 3
+    static let penWidth: CGFloat = 2.4
+    /// A dot: one module, unstretched. Height equals width, so the round cap
+    /// closes it into a circle.
+    static let dot: CGFloat = penWidth
+    /// A caret: as tall as the slot allows, leaving room for an event swell to
+    /// ride on top without clipping.
+    static let full: CGFloat = 12.5
+
+    static let verdictWidth: CGFloat = 1.8
+
+    /// Idle is the one state with nothing at all to say, so it says it quietly.
+    static let restAlpha: Float = 0.45
+    /// The dark half of the caret's blink — see the note where it is applied.
+    static let caretDim: Float = 0.22
+
+    // MARK: Figures
+
+    /// running: three balls bouncing on a ground line.
+    ///
+    /// Every table here is deliberately mismatched. Equal sizes, equal heights and
+    /// a common period give a chorus line — three marks moving as one, which is
+    /// the failure the bars kept landing in. Three different periods that share no
+    /// factor never come back into step, so the group is always mid-scatter.
+    static let bounceCount = 3
+    static let bounceSize: [CGFloat] = [3.4, 3.8, 3.2]
+    static let bounceX: [CGFloat] = [4.2, 8.0, 11.8]
+    /// A ball's *bottom*, not its centre: at rest all three sit on `bounceFloor`,
+    /// and a shared baseline is what says they are bouncing on the same ground
+    /// even though they are different sizes.
+    static let bounceFloor: CGFloat = 3
+    static let bounceApex: [CGFloat] = [9.4, 10.4, 8.6]
+    static let bounceCycle: [CFTimeInterval] = [0.72, 0.88, 0.62]
+    static let bouncePhase: [Double] = [0, 0.35, 0.7]
+
+    /// How flat a ball goes at contact, and how far it spreads doing it.
+    static let bounceSquashY: CGFloat = 0.62
+    static let bounceSquashX: CGFloat = 1.24
+    /// Where the squash lives in the cycle. Only around contact — spread across
+    /// the whole arc it reads as a ball pulsing rather than one landing.
+    static let bounceSquashTimes: [NSNumber] = [0, 0.1, 0.5, 0.9, 1]
+
+    /// The ground. Without it three balls at three heights are three dots that
+    /// happen to be moving; with it they are obviously bouncing off something.
+    /// Quiet on purpose — it is the stage, not the act.
+    static let groundWidth: CGFloat = 13
+    static let groundThickness: CGFloat = 0.9
+    static let groundAlpha: Float = 0.28
+
+    /// thinking: three dots that stay on the floor while brightness travels
+    /// through them. The tiny swell is there so it reads as alive rather than as
+    /// three static pixels — it never leaves the floor, which is the whole point.
+    static let murmurCycle: CFTimeInterval = 1.5
+    static let murmurPhases: [Double] = [0, 0.20, 0.40]
+    /// The crest. Enough that the wave is a change of size and not only of
+    /// brightness, and still low enough that the group reads as sitting on the
+    /// floor — which is the entire distinction from `work`.
+    static let murmurSwell: CGFloat = 4.6
+    /// How far the wave's trough dims. Not to nothing: at 0.26 the two dots
+    /// behind the crest all but disappeared, and a mark that comes and goes in a
+    /// 16pt slot reads as three dots one moment and one dot the next.
+    static let murmurDim: Float = 0.34
+
+    /// compacting: two bars sliding together and rising as they meet, like a pile
+    /// being pressed. Motion across rather than up, which is what keeps it clear
+    /// of `running` at a glance.
+    static let squeezeCycle: CFTimeInterval = 1.5
+    private static let squeezeOpenGap: CGFloat = 8
+    private static let squeezeShutGap: CGFloat = 1.2
+    static let squeezeLow: CGFloat = 8.5
+    static let squeezeHigh: CGFloat = 11
+
+    /// sent: the murmur's three dots flying in from off-slot left, one after
+    /// another, and stopping exactly where `.thinking` will hold them — so the
+    /// flash hands over without anything jumping.
+    ///
+    /// A single dot was the first attempt and it was the wrong mark twice over: a
+    /// lone dot at the floor is the same silhouette as `idle`, and one small dot
+    /// arriving is too little event for the only state that means "your prompt
+    /// went out". Three dots streaming in read as departure.
+    static let launchTravel: CFTimeInterval = 0.55
+    static let launchStagger: CFTimeInterval = 0.1
+
+    /// How much taller one event makes a murmur dot, how long the swell takes to
+    /// reach the next one, and how long it lasts. The bounce answers an event
+    /// differently — see `kick`.
+    private static let kickSwell: CGFloat = 1.2
+    private static let kickStagger: CFTimeInterval = 0.05
+    private static let kickDuration: CFTimeInterval = 0.42
+
+    /// What the pen is drawing. Distinct silhouettes on purpose — the whole
+    /// complaint against both earlier passes was states that looked alike.
+    enum Figure: Equatable {
+        /// thinking. Three dots, a brightness wave travelling through them.
+        case murmur
+        /// running. Three balls bouncing on a ground line.
+        case bounce
+        /// compacting. Two bars closing on each other.
+        case squeeze
+        /// prompting. One dot arriving.
+        case launch
+        /// A permission prompt, or the idle nudge. One caret, blinking.
+        case caret
+        case check
+        case cross
+        /// idle. One dim dot, dead still.
+        case rest
+    }
+
+    var figure: Figure {
         switch state {
-        case .running, .thinking, .prompting, .compacting: .spinning
-        case .awaitingPermission, .idle(waitingOnUser: true): .complete
-        case .done, .error, .idle: .resting
+        case .thinking: .murmur
+        case .running: .bounce
+        case .compacting: .squeeze
+        case .prompting: .launch
+        case .awaitingPermission, .idle(waitingOnUser: true): .caret
+        case .done: .check
+        case .error: .cross
+        case .idle: .rest
         }
     }
 
-    private var tint: NSColor { NSColor(IslandPalette.accent(for: state)) }
+    /// The same pair the status word beside it is drawn in. The flat palette the
+    /// ring used disagreed with that word — thinking was violet in one and grey
+    /// in the other.
+    private var tint: NSColor { NSColor(IslandPalette.accentPair(for: state).bright) }
 
-    func makeNSView(context: NSViewRepresentableContext<Self>) -> NSView {
-        let view = NSView(frame: CGRect(x: 0, y: 0, width: Self.size, height: Self.size))
-        view.wantsLayer = true
-        let ring = CAShapeLayer()
-        ring.fillColor = nil
-        ring.lineCap = .round
-        let mark = CAShapeLayer()
-        mark.fillColor = nil
-        mark.lineCap = .round
-        mark.lineJoin = .round
-        view.layer?.addSublayer(ring)
-        view.layer?.addSublayer(mark)
-        return view
+    // MARK: Geometry
+
+    /// Centres for `count` marks separated by `gap`, as a group centred in the
+    /// slot. Every figure's layout comes from here, so they share a midpoint.
+    static func centres(_ count: Int, gap: CGFloat) -> [CGFloat] {
+        let span = CGFloat(count) * penWidth + CGFloat(count - 1) * gap
+        let first = (size - span) / 2 + penWidth / 2
+        return (0..<count).map { first + CGFloat($0) * (penWidth + gap) }
     }
 
-    func updateNSView(_ view: NSView, context: NSViewRepresentableContext<Self>) {
-        guard let layers = view.layer?.sublayers, layers.count == 2,
-            let ring = layers[0] as? CAShapeLayer, let mark = layers[1] as? CAShapeLayer
-        else { return }
+    static var murmurCentres: [CGFloat] { centres(3, gap: 3) }
+    static var squeezeOpen: [CGFloat] { centres(2, gap: squeezeOpenGap) }
+    static var squeezeShut: [CGFloat] { centres(2, gap: squeezeShutGap) }
 
-        let box = CGRect(x: 0, y: 0, width: Self.size, height: Self.size)
-        let inset = Self.lineWidth
-        let circle = CGPath(
-            ellipseIn: box.insetBy(dx: inset, dy: inset), transform: nil)
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    /// The two halves of a fall, in closed form — so the Reduce Motion still and
+    /// the offscreen filmstrip land on the curve the render server draws rather
+    /// than a straight line through it.
+    static func easedOut(_ t: Double) -> Double { 1 - pow(1 - t, 2) }
+    static func easedIn(_ t: Double) -> Double { t * t }
 
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        ring.frame = box
-        mark.frame = box
-        ring.path = circle
-        ring.lineWidth = Self.lineWidth
-        ring.strokeColor = tint.cgColor
-        mark.lineWidth = Self.lineWidth
-        mark.strokeColor = tint.cgColor
-
-        switch shape {
-        case .spinning:
-            // A gap in the stroke, rotated — reads as motion without redrawing.
-            ring.strokeStart = 0
-            ring.strokeEnd = 0.3
-            mark.path = nil
-        case .complete, .resting:
-            ring.strokeStart = 0
-            ring.strokeEnd = 1
-            mark.path = checkmark(in: box)
+    /// Where ball `index` has its bottom at `phase` of its own cycle: up on a
+    /// decelerating curve, down on an accelerating one. That asymmetry is the
+    /// whole difference between a bounce and a float — it puts the ball near the
+    /// top for most of the cycle and snaps it through contact.
+    static func bounceBottom(_ index: Int, at phase: Double) -> CGFloat {
+        let apex = bounceApex[index]
+        if phase < 0.5 {
+            return bounceFloor + (apex - bounceFloor) * CGFloat(easedOut(phase * 2))
         }
-        ring.opacity = 1
-        CATransaction.commit()
-
-        let spinKey = "island.spin"
-        let breatheKey = "island.breathe"
-        ring.removeAnimation(forKey: spinKey)
-        ring.removeAnimation(forKey: breatheKey)
-        mark.removeAnimation(forKey: breatheKey)
-        guard !reduceMotion else { return }
-
-        switch shape {
-        case .spinning:
-            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-            spin.fromValue = 0
-            spin.toValue = -2 * Double.pi
-            spin.duration = 1.4
-            spin.repeatCount = .infinity
-            ring.add(spin, forKey: spinKey)
-        case .complete:
-            // Your turn: a slow breath, so it reads as waiting rather than busy.
-            let breathe = CABasicAnimation(keyPath: "opacity")
-            breathe.fromValue = 1.0
-            breathe.toValue = 0.45
-            breathe.duration = 0.95
-            breathe.autoreverses = true
-            breathe.repeatCount = .infinity
-            breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            ring.add(breathe, forKey: breatheKey)
-            mark.add(breathe, forKey: breatheKey)
-        case .resting:
-            break
-        }
+        return apex + (bounceFloor - apex) * CGFloat(easedIn(phase * 2 - 1))
     }
 
-    private func checkmark(in box: CGRect) -> CGPath {
+    /// Where a mark at `phase` sits with the motion taken away — a frozen frame
+    /// of the same wave, so Reduce Motion still tells the figures apart instead
+    /// of flattening them all to one silhouette.
+    static func frozen(_ phase: Double) -> CGFloat {
+        CGFloat(0.5 - 0.5 * cos(2 * .pi * phase))
+    }
+
+    /// Coordinates from the reference's 20pt viewBox. y-up, because a CALayer
+    /// inside an unflipped `NSView` is — see the note in `SelfTest`.
+    static func checkPath() -> CGPath {
         let p = CGMutablePath()
-        let w = box.width
-        // Coordinates scaled from the reference's 20pt viewBox.
-        p.move(to: CGPoint(x: w * 0.31, y: w * 0.51))
-        p.addLine(to: CGPoint(x: w * 0.44, y: w * 0.36))
-        p.addLine(to: CGPoint(x: w * 0.70, y: w * 0.64))
+        let w = size
+        p.move(to: CGPoint(x: w * 0.28, y: w * 0.50))
+        p.addLine(to: CGPoint(x: w * 0.43, y: w * 0.34))
+        p.addLine(to: CGPoint(x: w * 0.72, y: w * 0.66))
         return p
     }
 
+    /// Two strokes rather than a symbol, so `strokeEnd` draws it on the same way
+    /// the checkmark is drawn on.
+    static func crossPath() -> CGPath {
+        let p = CGMutablePath()
+        let w = size
+        p.move(to: CGPoint(x: w * 0.32, y: w * 0.32))
+        p.addLine(to: CGPoint(x: w * 0.68, y: w * 0.68))
+        p.move(to: CGPoint(x: w * 0.68, y: w * 0.32))
+        p.addLine(to: CGPoint(x: w * 0.32, y: w * 0.68))
+        return p
+    }
+
+    // MARK: View
+
+    /// Holds the pen strokes in a group of their own, so one opacity animation
+    /// can retire all of them at once, and keeps the state the guard below needs
+    /// — SwiftUI hands us a fresh `StatusMark` value on every update.
+    final class TraceView: NSView {
+        let strokes: CALayer = {
+            let group = CALayer()
+            group.frame = CGRect(x: 0, y: 0, width: StatusMark.size, height: StatusMark.size)
+            return group
+        }()
+        /// The check or the cross, and never anything else.
+        let verdict = CAShapeLayer()
+        /// The ground the balls bounce on. Only `bounce` shows it.
+        let ground = CALayer()
+        /// The seven reusable modules. Hidden rather than destroyed when a figure
+        /// wants fewer: rebuilding them on every state change would throw away
+        /// the running animation on the ones that survive.
+        private(set) var pen: [CALayer] = []
+
+        /// What the animations currently on the layers were built for. Rebuilt
+        /// only when this changes: `updateNSView` runs on every relayout — the
+        /// elapsed label ticking once a second is enough — and restarting a
+        /// figure every second would freeze it on its first frame.
+        var applied: Applied?
+        struct Applied: Equatable {
+            let figure: Figure
+            let reduceMotion: Bool
+        }
+        /// The stamp the last kick was fired for. Nil until the first update, so
+        /// mounting a view mid-session does not fire one for history.
+        var kickedAt: Date?
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            // Added first, so a squashing ball spreads over the line rather
+            // than under it.
+            ground.bounds = CGRect(
+                x: 0, y: 0, width: StatusMark.groundWidth,
+                height: StatusMark.groundThickness)
+            ground.cornerRadius = StatusMark.groundThickness / 2
+            ground.position = CGPoint(
+                x: StatusMark.size / 2,
+                y: StatusMark.bounceFloor - StatusMark.groundThickness / 2)
+            ground.opacity = StatusMark.groundAlpha
+            ground.isHidden = true
+            strokes.addSublayer(ground)
+
+            for _ in 0..<StatusMark.penCount {
+                let layer = CALayer()
+                layer.bounds = CGRect(
+                    x: 0, y: 0, width: StatusMark.penWidth, height: StatusMark.dot)
+                layer.position = CGPoint(x: StatusMark.size / 2, y: StatusMark.size / 2)
+                // Half the width, so the ends stay capped at every height and a
+                // mark is a circle when it bottoms out. Core Animation clamps the
+                // radius against the shorter side for us.
+                layer.cornerRadius = StatusMark.penWidth / 2
+                pen.append(layer)
+                strokes.addSublayer(layer)
+            }
+            verdict.frame = CGRect(x: 0, y: 0, width: StatusMark.size, height: StatusMark.size)
+            verdict.fillColor = nil
+            verdict.lineWidth = StatusMark.verdictWidth
+            verdict.lineCap = .round
+            verdict.lineJoin = .round
+            verdict.isHidden = true
+            layer?.addSublayer(strokes)
+            layer?.addSublayer(verdict)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("not used") }
+
+        /// Decoration. Without this it swallows the click that pins the card
+        /// open, exactly as `PulsingOutline` documents.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    func makeNSView(context: NSViewRepresentableContext<Self>) -> TraceView {
+        TraceView(frame: CGRect(x: 0, y: 0, width: Self.size, height: Self.size))
+    }
+
+    func updateNSView(_ view: TraceView, context: NSViewRepresentableContext<Self>) {
+        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+
+        // Colour is cheap to redo every pass; the animations are not.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for layer in view.pen { layer.backgroundColor = tint.cgColor }
+        view.ground.backgroundColor = tint.cgColor
+        view.verdict.strokeColor = tint.cgColor
+        CATransaction.commit()
+
+        let wanted = TraceView.Applied(figure: figure, reduceMotion: still)
+        if wanted != view.applied {
+            let previous = view.applied?.figure
+            view.applied = wanted
+            apply(wanted, from: previous, to: view)
+        }
+
+        // One swell per event, and only for the two figures a tool call can
+        // actually arrive during: the settled figures have no marks on screen to
+        // swell, and a prompt or a compaction is not what the tick is reporting.
+        let isFirst = view.kickedAt == nil
+        if view.kickedAt != eventStamp {
+            view.kickedAt = eventStamp
+            if !isFirst, !still, figure == .bounce || figure == .murmur { kick(view, figure) }
+        }
+    }
+
+    /// Puts the figure on the layers, animations included. Every path out of here
+    /// leaves them fully described — nothing is inherited from what was there.
+    private func apply(
+        _ applied: TraceView.Applied, from previous: Figure?, to view: TraceView
+    ) {
+        let still = applied.reduceMotion
+        for layer in view.pen { layer.removeAllAnimations() }
+        view.ground.removeAllAnimations()
+        view.strokes.removeAllAnimations()
+        view.verdict.removeAllAnimations()
+
+        let settling = applied.figure == .check || applied.figure == .cross
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // Every figure gets the pen back to its default: a bar-width module at the
+        // floor, unscaled, fully lit. Without this a figure inherits whatever the
+        // last one left behind, and `work` leaves circles three points across,
+        // shrunk by transform and half faded out.
+        for layer in view.pen {
+            layer.bounds = CGRect(x: 0, y: 0, width: Self.penWidth, height: Self.dot)
+            layer.cornerRadius = Self.penWidth / 2
+            layer.transform = CATransform3DIdentity
+            layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            layer.opacity = 1
+        }
+        view.ground.isHidden = true
+        // The marks retire on a settle, so the group's resting opacity is zero
+        // and the fade below is what holds them visible while they fall.
+        view.strokes.opacity = settling ? 0 : 1
+        view.verdict.path =
+            settling ? (applied.figure == .check ? Self.checkPath() : Self.crossPath()) : nil
+        view.verdict.isHidden = !settling
+        view.verdict.strokeEnd = 1
+        CATransaction.commit()
+
+        switch applied.figure {
+        case .murmur:
+            show(view, 3, at: Self.murmurCentres)
+            for (index, layer) in view.pen.prefix(3).enumerated() {
+                let phase = Self.murmurPhases[index]
+                guard !still else {
+                    let at = Self.frozen(phase)
+                    set(layer, height: Self.dot + (Self.murmurSwell - Self.dot) * at)
+                    set(layer, alpha: Self.murmurDim + (1 - Self.murmurDim) * Float(at))
+                    continue
+                }
+                set(layer, height: Self.dot)
+                set(layer, alpha: Self.murmurDim)
+                // Brightness carries the wave and the swell only seasons it: the
+                // marks must not climb, or this becomes a shorter `work`.
+                wave(
+                    layer, keyPath: "bounds.size.height",
+                    from: Self.dot, to: Self.murmurSwell,
+                    cycle: Self.murmurCycle, phase: phase)
+                wave(
+                    layer, keyPath: "opacity",
+                    from: CGFloat(Self.murmurDim), to: 1,
+                    cycle: Self.murmurCycle, phase: phase, key: Self.waveKey)
+            }
+
+        case .bounce:
+            reveal(view, Self.bounceCount)
+            view.ground.isHidden = false
+            for (index, layer) in view.pen.enumerated() {
+                let cycle = Self.bounceCycle[index]
+                let phase = Self.bouncePhase[index]
+                set(layer, size: Self.bounceSize[index])
+                // Anchored at the bottom, so the squash flattens the ball ONTO
+                // the ground instead of shrinking it about its middle — which
+                // lifts it off the line at the exact frame it is meant to land.
+                // Position therefore means the ball's bottom, not its centre.
+                set(layer, anchoredAtBottom: true)
+
+                guard !still else {
+                    // Parked where its own phase would have had it, easings
+                    // included, so the three are at three heights with the motion
+                    // taken away rather than collapsing into a row.
+                    set(
+                        layer,
+                        at: CGPoint(
+                            x: Self.bounceX[index],
+                            y: Self.bounceBottom(index, at: phase)))
+                    continue
+                }
+
+                set(layer, at: CGPoint(x: Self.bounceX[index], y: Self.bounceFloor))
+
+                let hop = CAKeyframeAnimation(keyPath: "position.y")
+                hop.values = [Self.bounceFloor, Self.bounceApex[index], Self.bounceFloor]
+                hop.keyTimes = [0, 0.5, 1]
+                // Decelerating up, accelerating down. An easeInEaseOut here — the
+                // curve every other figure in this file uses — floats.
+                hop.timingFunctions = [
+                    CAMediaTimingFunction(name: .easeOut),
+                    CAMediaTimingFunction(name: .easeIn),
+                ]
+                hop.duration = cycle
+                hop.repeatCount = .infinity
+                hop.timeOffset = phase * cycle
+                layer.add(hop, forKey: Self.penKey)
+
+                // The whole transform rather than `transform.scale.x` and
+                // `.scale.y` as two animations: those write two components of one
+                // property, and which of them lands is not worth relying on.
+                let contact = NSValue(
+                    caTransform3D: CATransform3DMakeScale(
+                        Self.bounceSquashX, Self.bounceSquashY, 1))
+                let round = NSValue(caTransform3D: CATransform3DIdentity)
+                let squash = CAKeyframeAnimation(keyPath: "transform")
+                squash.values = [contact, round, round, round, contact]
+                squash.keyTimes = Self.bounceSquashTimes
+                squash.duration = cycle
+                squash.repeatCount = .infinity
+                squash.timeOffset = phase * cycle
+                squash.timingFunctions = [
+                    CAMediaTimingFunction(name: .easeOut),
+                    CAMediaTimingFunction(name: .linear),
+                    CAMediaTimingFunction(name: .linear),
+                    CAMediaTimingFunction(name: .easeIn),
+                ]
+                layer.add(squash, forKey: Self.waveKey)
+            }
+
+        case .squeeze:
+            let open = Self.squeezeOpen
+            let shut = Self.squeezeShut
+            show(view, 2, at: open)
+            for (index, layer) in view.pen.prefix(2).enumerated() {
+                set(layer, alpha: 1)
+                set(layer, height: Self.squeezeLow)
+                guard !still else { continue }
+                // Across, not up. The rise as they meet is what makes it read as
+                // material being pressed rather than two bars merely sliding.
+                wave(
+                    layer, keyPath: "position.x", from: open[index], to: shut[index],
+                    cycle: Self.squeezeCycle, phase: 0)
+                wave(
+                    layer, keyPath: "bounds.size.height",
+                    from: Self.squeezeLow, to: Self.squeezeHigh,
+                    cycle: Self.squeezeCycle, phase: 0, key: Self.waveKey)
+            }
+
+        case .launch:
+            let centres = Self.murmurCentres
+            show(view, 3, at: centres)
+            for (index, layer) in view.pen.prefix(3).enumerated() {
+                set(layer, height: Self.dot)
+                set(layer, alpha: 1)
+                guard !still else { continue }
+                let arrive = CABasicAnimation(keyPath: "position.x")
+                arrive.fromValue = -Self.penWidth
+                arrive.toValue = centres[index]
+                arrive.duration = Self.launchTravel
+                arrive.beginTime =
+                    CACurrentMediaTime() + Double(index) * Self.launchStagger
+                arrive.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                // `.backwards` so the dots still waiting their turn hold off-slot
+                // instead of sitting at their destinations until they animate.
+                arrive.fillMode = .backwards
+                layer.add(arrive, forKey: Self.penKey)
+            }
+
+        case .caret:
+            show(view, 1, at: [Self.size / 2])
+            set(view.pen[0], height: Self.full)
+            set(view.pen[0], alpha: 1)
+            guard !still else { return }
+            // Discrete, not a breath. A breath says "alive and busy"; a blink
+            // says "stopped, waiting for you", which is the whole message. The
+            // period is half `PulsingOutline.attentionCycle`, so two blinks fit
+            // one pass of the edge and the two lock instead of beating.
+            //
+            // It blinks to `caretDim`, not to nothing. The discontinuity is what
+            // makes a blink a blink; the depth is not. Going to zero left the
+            // slot empty half the time, and a HUD you glance at cannot afford a
+            // mark that is missing on even odds when you look.
+            let blink = CAKeyframeAnimation(keyPath: "opacity")
+            blink.values = [1.0, Self.caretDim]
+            blink.keyTimes = [0, 0.5, 1]
+            blink.calculationMode = .discrete
+            blink.duration = PulsingOutline.attentionCycle / 2
+            blink.repeatCount = .infinity
+            view.pen[0].add(blink, forKey: Self.penKey)
+
+        case .rest:
+            show(view, 1, at: [Self.size / 2])
+            set(view.pen[0], height: Self.dot)
+            set(view.pen[0], alpha: Self.restAlpha)
+
+        case .check, .cross:
+            let visible = view.pen.filter { !$0.isHidden }
+            // Coming off the bounce there is nothing to collapse: a ball is a
+            // circle, and shrinking its height on the way out would flatten it
+            // into an oval. It just fades.
+            let collapses = previous != .bounce
+            guard !still else {
+                if collapses { for layer in visible { set(layer, height: Self.dot) } }
+                return
+            }
+            // Two beats: the marks fall flat and retire, then the verdict is
+            // drawn on the space they left. The fall starts from wherever each
+            // mark happens to be — read off the presentation layer — so a
+            // session that finishes mid-swing does not snap to full height first.
+            let now = CACurrentMediaTime()
+            if collapses {
+                for (index, layer) in visible.enumerated() {
+                    let from = layer.presentation()?.bounds.height ?? layer.bounds.height
+                    set(layer, height: Self.dot)
+                    let fall = CABasicAnimation(keyPath: "bounds.size.height")
+                    fall.fromValue = from
+                    fall.toValue = Self.dot
+                    fall.duration = 0.22
+                    // Right to left: the newest end of the trace settles last.
+                    fall.beginTime = now + Double(visible.count - 1 - index) * 0.035
+                    fall.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                    fall.fillMode = .backwards
+                    layer.add(fall, forKey: Self.penKey)
+                }
+            }
+
+            let retire = CABasicAnimation(keyPath: "opacity")
+            retire.fromValue = 1
+            retire.toValue = 0
+            retire.duration = 0.16
+            retire.beginTime = now + 0.24
+            retire.fillMode = .backwards
+            view.strokes.add(retire, forKey: Self.retireKey)
+
+            let draw = CABasicAnimation(keyPath: "strokeEnd")
+            draw.fromValue = 0
+            draw.toValue = 1
+            draw.duration = 0.30
+            draw.beginTime = now + 0.26
+            draw.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            draw.fillMode = .backwards
+            view.verdict.add(draw, forKey: Self.drawKey)
+        }
+    }
+
+    /// Which modules this figure uses, and where they sit across the slot's waist.
+    private func show(_ view: TraceView, _ count: Int, at centres: [CGFloat]) {
+        reveal(view, count)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, layer) in view.pen.prefix(count).enumerated() {
+            layer.position = CGPoint(x: centres[index], y: Self.size / 2)
+        }
+        CATransaction.commit()
+    }
+
+    /// Which modules this figure uses. Separate from `show` because the balls
+    /// place their own in two dimensions rather than along one line.
+    private func reveal(_ view: TraceView, _ count: Int) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, layer) in view.pen.enumerated() { layer.isHidden = index >= count }
+        CATransaction.commit()
+    }
+
+    /// `from -> to -> from` forever, eased both ways, offset into the cycle
+    /// rather than delayed before it — so every mark is already mid-swing on the
+    /// first frame instead of the group starting out in unison.
+    private func wave(
+        _ layer: CALayer, keyPath: String, from: CGFloat, to: CGFloat,
+        cycle: CFTimeInterval, phase: Double, key: String? = nil
+    ) {
+        let swing = CAKeyframeAnimation(keyPath: keyPath)
+        swing.values = [from, to, from]
+        swing.keyTimes = [0, 0.5, 1]
+        swing.duration = cycle
+        swing.repeatCount = .infinity
+        swing.timeOffset = phase * cycle
+        swing.timingFunctions = [
+            CAMediaTimingFunction(name: .easeInEaseOut),
+            CAMediaTimingFunction(name: .easeInEaseOut),
+        ]
+        layer.add(swing, forKey: key ?? Self.penKey)
+    }
+
+    private func set(_ layer: CALayer, height: CGFloat) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.bounds.size.height = height
+        CATransaction.commit()
+    }
+
+    private func set(_ layer: CALayer, alpha: Float) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.opacity = alpha
+        CATransaction.commit()
+    }
+
+    /// A module as a circle `size` across, for the one figure that is not bars.
+    private func set(_ layer: CALayer, size: CGFloat) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.bounds = CGRect(x: 0, y: 0, width: size, height: size)
+        layer.cornerRadius = size / 2
+        CATransaction.commit()
+    }
+
+    private func set(_ layer: CALayer, at point: CGPoint) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.position = point
+        CATransaction.commit()
+    }
+
+    /// Moves the layer's anchor to its bottom edge, so a scale deforms it against
+    /// the ground rather than about its own middle. `position` then addresses the
+    /// bottom of the mark instead of its centre.
+    private func set(_ layer: CALayer, anchoredAtBottom: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.anchorPoint = CGPoint(x: 0.5, y: anchoredAtBottom ? 0 : 0.5)
+        CATransaction.commit()
+    }
+
+    /// One event, one swell travelling left to right, riding additively on top of
+    /// whatever the figure is doing — so the trace visibly ticks each time Claude
+    /// gets something done, and a wedged session does not.
+    private func kick(_ view: TraceView, _ figure: Figure) {
+        let now = CACurrentMediaTime()
+        guard figure != .bounce else {
+            // The balls flash and the ground lights with them. Nothing touches
+            // the arcs: a ball that suddenly jumped or bounced higher would read
+            // as a bug in the physics rather than as news, which is the same
+            // reason the swell below is only for the murmur.
+            // Plain `spark`: the ground is dimmed by its layer opacity, not by a
+            // faded colour, so it takes the same flash as the balls and stays as
+            // quiet as it was.
+            view.ground.add(spark(at: now), forKey: Self.kickColorKey)
+            for (index, layer) in view.pen.enumerated() where !layer.isHidden {
+                layer.add(
+                    spark(at: now + Double(index) * Self.kickStagger),
+                    forKey: Self.kickColorKey)
+            }
+            return
+        }
+
+        for (index, layer) in view.pen.enumerated() where !layer.isHidden {
+            let at = now + Double(index) * Self.kickStagger
+
+            let rise = CAKeyframeAnimation(keyPath: "bounds.size.height")
+            rise.values = [CGFloat(0), Self.kickSwell, CGFloat(0)]
+            rise.keyTimes = [0, 0.3, 1]
+            rise.duration = Self.kickDuration
+            rise.beginTime = at
+            rise.isAdditive = true
+            rise.timingFunctions = [
+                CAMediaTimingFunction(name: .easeOut),
+                CAMediaTimingFunction(name: .easeInEaseOut),
+            ]
+            layer.add(rise, forKey: Self.kickHeightKey)
+            layer.add(spark(at: at), forKey: Self.kickColorKey)
+        }
+    }
+
+    /// A mark flashing hot and cooling back to its tint. Between the accent and
+    /// white rather than white: a flat white spark on a black pill outshines
+    /// everything else on the row for a fifth of a second.
+    private func spark(at time: CFTimeInterval) -> CABasicAnimation {
+        let hot = tint.blended(withFraction: 0.55, of: .white) ?? tint
+        let animation = CABasicAnimation(keyPath: "backgroundColor")
+        animation.fromValue = hot.cgColor
+        animation.toValue = tint.cgColor
+        animation.duration = Self.kickDuration
+        animation.beginTime = time
+        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        animation.fillMode = .backwards
+        return animation
+    }
+
+    private static let penKey = "island.trace.pen"
+    private static let waveKey = "island.trace.wave"
+    private static let retireKey = "island.trace.retire"
+    private static let drawKey = "island.trace.draw"
+    private static let kickHeightKey = "island.trace.kick.height"
+    private static let kickColorKey = "island.trace.kick.color"
+
     func sizeThatFits(
-        _ proposal: ProposedViewSize, nsView: NSView, context: NSViewRepresentableContext<Self>
+        _ proposal: ProposedViewSize, nsView: TraceView,
+        context: NSViewRepresentableContext<Self>
     ) -> CGSize? {
         CGSize(width: Self.size, height: Self.size)
     }

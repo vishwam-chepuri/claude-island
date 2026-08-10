@@ -8,7 +8,7 @@ CLI with Command Line Tools (no Xcode required).
 
 ```
 ┌─────────────────────────────────────────────┐
-│  ⌘ Bash  swift build           0:12   ● ● ● │   compact
+│  ⌘ Bash  swift build           0:12     o°o │   compact
 └─────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────┐
 │  ✋ Allow Write? · claude-island   0:07   ②  │   alert

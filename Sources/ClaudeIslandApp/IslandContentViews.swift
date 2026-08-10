@@ -33,7 +33,7 @@ struct CompactContent: View {
                 if model.attentionCount > 0 {
                     CountBadge(count: model.attentionCount, tint: IslandPalette.alert)
                 }
-                StatusMark(state: session.state)
+                StatusMark(state: session.state, eventStamp: session.lastEventAt)
             }
         }
     }
@@ -74,7 +74,7 @@ struct AlertContent: View {
                 if model.attentionCount > 0 {
                     CountBadge(count: model.attentionCount, tint: IslandPalette.alert)
                 }
-                StatusMark(state: session.state)
+                StatusMark(state: session.state, eventStamp: session.lastEventAt)
             }
         }
     }
@@ -262,7 +262,7 @@ struct PeekHeader: View {
                 Text(session.state.statusWord)
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundStyle(IslandPalette.accentPair(for: session.state).gradient)
-                StatusMark(state: session.state)
+                StatusMark(state: session.state, eventStamp: session.lastEventAt)
             }
         }
         .frame(height: model.bodyTopInset)
