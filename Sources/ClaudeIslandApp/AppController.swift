@@ -28,6 +28,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// The cue each session was last observed in, so a repeat of the same cue
     /// — a second permission ask, another idle nudge — does not re-ring.
     private var lastSoundCue: [String: SoundCue] = [:]
+    /// Mutes sound cues alone; the HUD keeps running. Persisted via
+    /// IslandPaths.dndFlag so it survives a relaunch.
+    private var doNotDisturb = FileManager.default.fileExists(atPath: IslandPaths.dndFlag.path)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement already implies this, but be explicit: the app must never
@@ -194,7 +197,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             liveIDs.insert(session.id)
             let cue = session.state.soundCue
             let firstObservation = seenSessionIDs.insert(session.id).inserted
-            if !firstObservation, model.isEnabled, let cue, lastSoundCue[session.id] != cue {
+            if !firstObservation, model.isEnabled, !doNotDisturb, let cue,
+                lastSoundCue[session.id] != cue
+            {
                 play(cue)
             }
             lastSoundCue[session.id] = cue
@@ -262,6 +267,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             action: #selector(toggleEnabled), keyEquivalent: "")
         toggle.target = self
         menu.addItem(toggle)
+
+        let dnd = NSMenuItem(
+            title: doNotDisturb ? "Disable Do Not Disturb" : "Enable Do Not Disturb",
+            action: #selector(toggleDoNotDisturb), keyEquivalent: "")
+        dnd.target = self
+        menu.addItem(dnd)
 
         let installed = HookInstaller.isInstalled()
         let install = NSMenuItem(
@@ -333,6 +344,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         syncInteractiveRect()
         updateStatusItemGlyph()
+        rebuildMenu()
+    }
+
+    @objc private func toggleDoNotDisturb() {
+        doNotDisturb.toggle()
+        IslandPaths.ensureRoot()
+        if doNotDisturb {
+            FileManager.default.createFile(atPath: IslandPaths.dndFlag.path, contents: nil)
+        } else {
+            try? FileManager.default.removeItem(at: IslandPaths.dndFlag)
+        }
         rebuildMenu()
     }
 

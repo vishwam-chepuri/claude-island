@@ -19,6 +19,9 @@ public enum IslandPaths {
     /// tier. Hover and click cannot be synthesised without Accessibility
     /// permission, so without this the open tiers cannot be inspected.
     public static var forceModeFlag: URL { root.appendingPathComponent("force-mode") }
+    /// Presence of this file mutes the sound cues without touching the HUD
+    /// itself.
+    public static var dndFlag: URL { root.appendingPathComponent("dnd") }
 
     public static var claudeHome: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
