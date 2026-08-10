@@ -3,4 +3,5 @@
 *.xcodeproj
 ClaudeIsland.app/
 dist/
+tmp/
 .DS_Store
