@@ -94,6 +94,16 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// disturbing the per-cue switches below — one thing to hit when a meeting
     /// starts, that leaves the configuration to come back to afterwards.
     public var doNotDisturb: Bool = false
+    /// Drops sound cues — and only sounds — while a terminal or editor is the
+    /// frontmost app, on the theory that a chime tells you nothing you cannot
+    /// already see on screen.
+    ///
+    /// Off by default: it changes what an existing install does, and it is a
+    /// guess. `TerminalApps` spells out why "a terminal is in front" is not "you
+    /// are watching this session" — we can see which app has focus, never which
+    /// app a session belongs to. Nothing visual is gated on it, so a wrong guess
+    /// costs a chime rather than an alert.
+    public var muteWhileTerminalFrontmost: Bool = false
     /// One field per cue rather than a dictionary keyed by `SoundCue`: each
     /// decodes on its own, so a file naming only one of them keeps the defaults
     /// for the other two, and a cue added later cannot silently un-key the
@@ -141,6 +151,7 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// and gains the new keys the next time anything is saved.
     private enum CodingKeys: String, CodingKey {
         case hudEnabled, doNotDisturb, logging, debugTint, forcedMode
+        case muteWhileTerminalFrontmost
         case doneSound, inputRequiredSound, waitingSound
     }
 
@@ -151,6 +162,11 @@ public struct IslandSettings: Codable, Equatable, Sendable {
         logging = try c.decodeIfPresent(Bool.self, forKey: .logging) ?? false
         debugTint = try c.decodeIfPresent(Bool.self, forKey: .debugTint) ?? false
         forcedMode = try c.decodeIfPresent(String.self, forKey: .forcedMode)
+        // Absent means off, which is also the default — so every settings.json
+        // written before this option existed keeps ringing exactly as it did.
+        // Opting in is the only way to get the quieter behaviour.
+        muteWhileTerminalFrontmost =
+            try c.decodeIfPresent(Bool.self, forKey: .muteWhileTerminalFrontmost) ?? false
 
         // The upgrade path that matters: every settings.json written before
         // these keys existed has none of them, and must come back ringing

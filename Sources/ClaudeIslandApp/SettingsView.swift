@@ -236,7 +236,12 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    /// One mute at the top, then a row per cue.
+    /// The two global gates at the top, then a row per cue.
+    ///
+    /// Both gates sit above the rows because both outrank them: the mute stops
+    /// everything, and the frontmost-app switch stops everything while a terminal
+    /// has focus. Reading downwards, the pane answers "can anything ring", then
+    /// "can anything ring right now", then "what rings for what".
     ///
     /// The whole pane is still dimmed while the HUD is off, exactly as the lone
     /// switch was: no HUD means no cues, because `playSoundCues` will not ring
@@ -261,25 +266,63 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
             Section {
+                Toggle(
+                    "Stay quiet while a terminal is frontmost",
+                    isOn: $store.muteWhileTerminalFrontmost)
+            } footer: {
+                // Says what it does, not what it is for. "Don't interrupt while
+                // I'm watching the session" is the reason to want this and would
+                // be the friendlier label, but it promises something this cannot
+                // know: it sees which app has focus, never which app a session is
+                // running in. The second sentence is the honest half — someone
+                // hitting the false positive should be able to recognise it here
+                // rather than file it as sounds having randomly stopped.
+                Text(
+                    "Skips the sound — never the alert on the island — while Terminal, iTerm2, "
+                        + "Ghostty, VS Code, Xcode or another terminal or editor is the app in "
+                        + "front. It can only tell which app you are in, not which one a session "
+                        + "is running in, so a session in a window you cannot see goes quiet too."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
                 ForEach(SoundCue.allCases, id: \.self) { cue in
                     soundRow(cue)
                 }
             } header: {
                 Text("Cues")
             } footer: {
-                Text(
-                    store.doNotDisturb
-                        ? "None of these will ring while Play sounds is off. Play previews the "
-                            + "chosen sound anyway."
-                        : "Play previews the chosen sound, whatever these switches say."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                Text(cuesFooter)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .formStyle(.grouped)
         .disabled(!store.hudEnabled)
+    }
+
+    /// The cue rows' footer, which exists mostly to promise that Play still works.
+    ///
+    /// A row can be silent for a reason the row itself does not show, so the
+    /// footer names whichever global gate is currently holding it down — the mute
+    /// first, since it outranks the other. The promise is the constant part: the
+    /// button rings whatever any of this says, because a preview answering with
+    /// silence is indistinguishable from a broken button, and auditioning a sound
+    /// with your terminal in front is precisely when it gets pressed.
+    private var cuesFooter: String {
+        switch (store.doNotDisturb, store.muteWhileTerminalFrontmost) {
+        case (true, _):
+            "None of these will ring while Play sounds is off. Play previews the chosen sound "
+                + "anyway."
+        case (false, true):
+            "None of these will ring while a terminal is frontmost. Play previews the chosen "
+                + "sound anyway."
+        case (false, false):
+            "Play previews the chosen sound, whatever these switches say."
+        }
     }
 
     /// One cue: what it means in this app's terms, whether it rings, what it

@@ -24,6 +24,7 @@ final class SettingsStore {
     var logging: Bool { didSet { persist() } }
     var debugTint: Bool { didSet { persist() } }
     var forcedMode: String? { didSet { persist() } }
+    var muteWhileTerminalFrontmost: Bool { didSet { persist() } }
     var doneSound: CueSound { didSet { persist() } }
     var inputRequiredSound: CueSound { didSet { persist() } }
     var waitingSound: CueSound { didSet { persist() } }
@@ -66,6 +67,7 @@ final class SettingsStore {
         logging = settings.logging
         debugTint = settings.debugTint
         forcedMode = settings.forcedMode
+        muteWhileTerminalFrontmost = settings.muteWhileTerminalFrontmost
         doneSound = settings.doneSound
         inputRequiredSound = settings.inputRequiredSound
         waitingSound = settings.waitingSound
@@ -78,6 +80,7 @@ final class SettingsStore {
         s.logging = logging
         s.debugTint = debugTint
         s.forcedMode = forcedMode
+        s.muteWhileTerminalFrontmost = muteWhileTerminalFrontmost
         s.doneSound = doneSound
         s.inputRequiredSound = inputRequiredSound
         s.waitingSound = waitingSound

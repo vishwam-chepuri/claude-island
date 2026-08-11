@@ -64,7 +64,7 @@ The window is a sidebar with one pane per concern:
 
 ```
 General   Status · Show the HUD · Launch at login
-Sounds    Play sounds
+Sounds    Play sounds · Stay quiet while a terminal is frontmost · a sound per cue
 Hooks     Install / update / remove, Copy Hook JSON
 Advanced  Debug log · Debug tint · Pin the HUD to · Reveal Support Folder
 ```

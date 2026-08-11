@@ -29,6 +29,9 @@ func registerSettingsTests() {
             await expect(!s.debugTint, "tint off by default")
             await expect(s.forcedMode == nil, "not pinned by default")
             await expect(
+                !s.muteWhileTerminalFrontmost,
+                "the frontmost-terminal gate is opt-in — it changes what an install already does")
+            await expect(
                 s[.done] == CueSound(enabled: true, name: "Glass")
                     && s[.inputRequired] == CueSound(enabled: true, name: "Ping")
                     && s[.waiting] == CueSound(enabled: true, name: "Pop"),
@@ -43,6 +46,7 @@ func registerSettingsTests() {
             s.logging = true
             s.debugTint = true
             s.forcedMode = "peek"
+            s.muteWhileTerminalFrontmost = true
             s.doneSound = CueSound(enabled: false, name: "Hero")
             s.inputRequiredSound = CueSound(enabled: true, name: "Sosumi")
             s.waitingSound = CueSound(enabled: false, name: "Tink")
@@ -165,6 +169,44 @@ func registerSettingsTests() {
                     SystemSound.all.contains(cue.defaultSoundName),
                     "\(cue) defaults to \(cue.defaultSoundName), which is not offered")
             }
+        }
+
+        // MARK: - Staying quiet while a terminal is frontmost
+
+        test("The frontmost-terminal gate round-trips on its own") {
+            let root = try tempRoot()
+            var s = IslandSettings()
+            s.muteWhileTerminalFrontmost = true
+            try s.save(root: root)
+
+            let loaded = IslandSettings.load(root: root)
+            await expect(loaded.muteWhileTerminalFrontmost, "the switch came back off")
+            await expect(
+                loaded == s, "and nothing else moved when it was written")
+        }
+
+        // The upgrade has to be inaudible in the other direction too: an install
+        // that was ringing before this option existed must go on ringing exactly
+        // as it did, wherever the user happens to be looking. A default of *on*
+        // would silence cues on update with nothing in the window to explain it,
+        // which is why absence has to decode as off rather than as "no preference
+        // yet, pick the nice one".
+        test("A settings file written before this option loads with it off") {
+            let root = try tempRoot()
+            try write(
+                """
+                {
+                  "debugTint" : false,
+                  "doNotDisturb" : false,
+                  "doneSound" : { "enabled" : true, "name" : "Hero" },
+                  "hudEnabled" : true,
+                  "logging" : false
+                }
+                """, "settings.json", in: root)
+
+            let s = IslandSettings.load(root: root)
+            await expect(!s.muteWhileTerminalFrontmost, "an absent key turned the gate on")
+            await expectEqual(s[.done].name, "Hero", "and the rest of the file still loaded")
         }
 
         // MARK: - Migration off the sentinel files

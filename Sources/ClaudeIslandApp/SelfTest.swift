@@ -432,6 +432,7 @@ enum SelfTest {
         await switcherChecks(&checks, model: model)
         settingsChecks(&checks)
         soundChecks(&checks)
+        frontmostMuteChecks(&checks)
         await healthChecks(&checks)
         previewIsolationChecks(&checks, live: model)
     }
@@ -720,6 +721,68 @@ enum SelfTest {
                     passed: Self.resolve("Submarine", for: cue) == "Submarine",
                     detail: "resolved to \(Self.resolve("Submarine", for: cue) ?? "silence")"))
         }
+    }
+
+    /// The gate that decides whether a cue is allowed to ring at all.
+    ///
+    /// Deterministic because `AppController.rings(_:under:frontmost:)` is handed
+    /// the frontmost bundle id rather than reading `NSWorkspace` itself — the app
+    /// in front while --selftest runs is whatever the user left there, so a check
+    /// that consulted the real workspace would pass or fail by accident. What
+    /// stays uncovered is that one line: that the live path asks the workspace and
+    /// asks it for the *bundle identifier*. No automated check can pin that down
+    /// without dictating which app is frontmost.
+    ///
+    /// Nothing here plays anything; `rings` returns a decision, `play` is what
+    /// makes noise.
+    private static func frontmostMuteChecks(_ checks: inout [Check]) {
+        var off = IslandSettings()  // The default: ring wherever you are looking.
+        off.muteWhileTerminalFrontmost = false
+        var on = IslandSettings()
+        on.muteWhileTerminalFrontmost = true
+
+        checks.append(
+            Check(
+                name: "with the gate off, a terminal in front still rings",
+                passed: AppController.rings(.done, under: off, frontmost: "com.apple.Terminal")
+                    && AppController.rings(.inputRequired, under: off, frontmost: "dev.zed.Zed"),
+                detail: "off.muteWhileTerminalFrontmost=\(off.muteWhileTerminalFrontmost)"))
+
+        let terminals: [String] = [
+            "com.apple.Terminal", "com.microsoft.VSCode", "com.jetbrains.pycharm",
+        ]
+        let silenced = terminals.filter { !AppController.rings(.done, under: on, frontmost: $0) }
+        checks.append(
+            Check(
+                name: "with the gate on, a terminal in front silences the cue",
+                passed: silenced.count == 3,
+                detail: "silenced \(silenced.count) of 3: \(silenced.joined(separator: ", "))"))
+
+        // The safe direction: anything we cannot identify has to ring. A gate that
+        // fell silent for unknown apps would be a HUD that quietly stopped making
+        // noise, with nothing on screen to connect it to this switch.
+        checks.append(
+            Check(
+                name: "with the gate on, a non-terminal or unknown app still rings",
+                passed: AppController.rings(.done, under: on, frontmost: "com.apple.Safari")
+                    && AppController.rings(.done, under: on, frontmost: nil)
+                    && AppController.rings(.done, under: on, frontmost: "com.example.mystery"),
+                detail: "safari=\(AppController.rings(.done, under: on, frontmost: "com.apple.Safari")) "
+                    + "nil=\(AppController.rings(.done, under: on, frontmost: nil))"))
+
+        // The gate only ever subtracts. It cannot un-mute a cue that the switches
+        // above it already turned off, in either order.
+        var mutedToo = on
+        mutedToo.doNotDisturb = true
+        var cueOff = on
+        cueOff[.waiting] = CueSound(enabled: false, name: "Pop")
+        checks.append(
+            Check(
+                name: "the frontmost gate never overrides the mute or a cue's own switch",
+                passed: !AppController.rings(.done, under: mutedToo, frontmost: "com.apple.Safari")
+                    && !AppController.rings(.waiting, under: cueOff, frontmost: "com.apple.Safari"),
+                detail: "muted=\(AppController.rings(.done, under: mutedToo, frontmost: nil)) "
+                    + "cueOff=\(AppController.rings(.waiting, under: cueOff, frontmost: nil))"))
     }
 
     /// What `AppController` would ring for this name, by name — never played.
