@@ -411,7 +411,7 @@ state.
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 206 tests
+swift build && swift run ClaudeIslandTests      # 252 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
@@ -428,7 +428,7 @@ byte-stable. Fixtures in `Fixtures/` cover a normal session, permissions and
 failures, two concurrent sessions, subagents, and deliberately hostile input
 (malformed lines, unknown future events, embedded secrets).
 
-`--selftest` is a 94-check harness for what unit tests cannot exercise: that
+`--selftest` is a 135-check harness for what unit tests cannot exercise: that
 the panel never takes focus, that clicks land where they should, that a settings
 change reaches both disk and the running HUD, and dozens of on-screen layout and
 geometry checks besides. Click-through is verified
@@ -463,7 +463,7 @@ the suites port back with a mechanical find-and-replace if Xcode is installed.
 
 Pure `#000` is deliberate — it makes the island read as the physical cutout —
 but it also makes the shape's edges invisible while iterating on layout.
-Settings has **Show debug tint** under Developer, which fills it indigo with a
+Settings has **Show debug tint** under Advanced, which fills it indigo with a
 cyan edge so the outline, the corner radii and the notch punch-out are all
 visible. **Pin the HUD to** in the same section holds it at one tier; that
 exists because hover and click cannot be synthesised without Accessibility
@@ -477,17 +477,24 @@ checks.
 Settings live in `~/.claude-island/settings.json` — one readable file, safe to
 hand-edit or delete (deleting it restores every default). Changes made in the
 window apply immediately; changes made in the file are picked up at next launch.
+`preferredDisplay` and `forcedMode` are absent until set — the encoder omits
+them rather than writing null.
 
 ```json
 {
   "debugTint": false,
   "doNotDisturb": false,
+  "doneSound": { "enabled": true, "name": "Glass" },
+  "hoverOpenDelayMilliseconds": 150,
   "hudEnabled": true,
-  "logging": false
+  "inputRequiredSound": { "enabled": true, "name": "Ping" },
+  "logging": false,
+  "muteWhileTerminalFrontmost": false,
+  "waitingSound": { "enabled": true, "name": "Pop" }
 }
 ```
 
-Logging is **off by default**. Turn it on under Developer, or:
+Logging is **off by default**. Turn it on under Advanced, or:
 
 ```bash
 touch ~/.claude-island/debug      # folded into settings.json at next launch
