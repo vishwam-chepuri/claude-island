@@ -134,9 +134,15 @@ fi
 case "$answer" in
     [Yy]*)
         say "Installing hooks"
-        run "$BIN" --install-hooks || say "Hook install failed — run '$BIN --install-hooks' by hand."
+        if run "$BIN" --install-hooks; then
+            HOOKS_STATUS=installed
+        else
+            HOOKS_STATUS=failed
+            say "Hook install failed — run '$BIN --install-hooks' by hand."
+        fi
         ;;
     *)
+        HOOKS_STATUS=skipped
         say "Skipped. Run '$BIN --install-hooks' when you're ready."
         ;;
 esac
@@ -151,6 +157,13 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "Dry run complete: nothing was installed."
 else
     echo "Installed $APP"
-    echo "Restart any running Claude Code sessions to pick up the hooks."
+    # Say what actually happened to the hooks, not what was hoped for — a
+    # user told to "restart sessions to pick up the hooks" after a failed or
+    # declined install would be looking for hooks that don't exist.
+    case "$HOOKS_STATUS" in
+        installed) echo "Restart any running Claude Code sessions to pick up the hooks." ;;
+        failed)    echo "Hooks were not installed — run '$BIN --install-hooks' by hand." ;;
+        skipped)   echo "Hooks were not installed. Run '$BIN --install-hooks' when you're ready." ;;
+    esac
     echo "Enable 'Launch at Login' from the menu bar extra to keep it across reboots."
 fi
