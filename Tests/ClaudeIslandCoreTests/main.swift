@@ -37,6 +37,7 @@ registerTaskProgressTests()
 registerHookInstallerTests()
 registerPermissionDecisionTests()
 registerSocketPipelineTests()
+registerPipelineHealthTests()
 registerReplayTests()
 
 exit(await runAllTests())

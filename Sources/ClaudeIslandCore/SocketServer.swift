@@ -24,7 +24,10 @@ public final class SocketServer: @unchecked Sendable {
         }
     }
 
-    private let path: String
+    /// Where it listens. Public so the settings window's health strip can report
+    /// the path this server actually took rather than re-deriving the default —
+    /// two answers to "where is the socket" is how a diagnostic starts lying.
+    public let path: String
     private let log: IslandLog
     private let queue = DispatchQueue(label: "island.socket", qos: .userInitiated)
     private let connectionQueue = DispatchQueue(

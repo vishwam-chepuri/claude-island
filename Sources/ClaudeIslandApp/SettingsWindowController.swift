@@ -15,6 +15,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let makeContent: () -> AnyView
 
+    /// Fired with true when the window comes on screen and false when it leaves,
+    /// so state that is only worth maintaining while someone is looking can be
+    /// switched off with it. Set once, by `AppController`.
+    ///
+    /// This has to live here rather than in the view: the window is kept alive
+    /// across open/close cycles, so closing it orders it out without removing
+    /// the hosted view from the hierarchy — SwiftUI's `onDisappear` never fires,
+    /// and anything anchored to it would run forever.
+    var onVisibilityChange: ((Bool) -> Void)?
+
     init(content: @escaping () -> AnyView) {
         self.makeContent = content
         super.init()
@@ -50,6 +60,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // a background app that the user did not visibly launch — the window
         // must at least be on screen rather than silently not open at all.
         window.orderFrontRegardless()
+        // Sent unconditionally, including on a `show()` for a window that was
+        // already up: the observers of this are idempotent, and the alternative
+        // is guessing at AppKit's state from here.
+        onVisibilityChange?(true)
     }
 
     private func build() -> NSWindow {
@@ -88,6 +102,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// with no windows left to receive them.
     func windowWillClose(_ notification: Notification) {
         NSApp.deactivate()
+        onVisibilityChange?(false)
+    }
+
+    /// Miniaturising is the other way a window stops being visible without being
+    /// closed, and `NSWindow.isVisible` already agrees: it reports false for a
+    /// window in the Dock. Without these two the ticker would keep running
+    /// against a window nobody can read.
+    func windowDidMiniaturize(_ notification: Notification) {
+        onVisibilityChange?(false)
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        onVisibilityChange?(true)
     }
 
     // MARK: - Main menu

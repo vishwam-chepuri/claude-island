@@ -431,7 +431,121 @@ enum SelfTest {
         outlineGeometryChecks(&checks)
         await switcherChecks(&checks, model: model)
         settingsChecks(&checks)
+        await healthChecks(&checks)
         previewIsolationChecks(&checks, live: model)
+    }
+
+    /// The health strip's holder, and the timer that must not outlive the window.
+    ///
+    /// `PipelineHealth` itself is covered headlessly; what that cannot reach is
+    /// the ticker, and the ticker is the part with a failure mode nobody would
+    /// ever see — a 1 Hz timer left scheduled against a closed window, on an app
+    /// whose whole claim is that it costs nothing while idle. So this asserts on
+    /// whether a timer is *scheduled*, not on whether the label stopped moving,
+    /// and then confirms the label follows.
+    ///
+    /// The interval is shortened so each timing wait costs a fifth of a second
+    /// rather than a second; everything else about the timer — real `Timer`, real
+    /// main runloop, `.common` mode — is what ships.
+    private static func healthChecks(_ checks: inout [Check]) async {
+        let health = PipelineHealthStore(tickInterval: 0.05)
+
+        checks.append(
+            Check(
+                name: "a health holder schedules nothing before the window opens",
+                passed: !health.isTicking,
+                detail: "ticking=\(health.isTicking)"))
+
+        health.socketListening(at: "/tmp/island-selftest.sock")
+        checks.append(
+            Check(
+                name: "a bound socket with no events reports idle, not broken",
+                passed: health.current.level == .idle,
+                detail: "level=\(health.current.level) \(health.current.socketLabel())"))
+
+        health.socketFailed(at: "/tmp/island-selftest.sock", reason: "bind() failed: in use")
+        checks.append(
+            Check(
+                name: "a socket that failed to bind reports degraded, with the reason",
+                passed: health.current.level == .degraded
+                    && health.current.socketLabel().contains("in use"),
+                detail: "level=\(health.current.level) \(health.current.socketLabel())"))
+
+        health.socketListening(at: "/tmp/island-selftest.sock")
+        health.noteEvent()
+        health.noteSessions(3)
+        checks.append(
+            Check(
+                name: "an arriving envelope and its sessions reach the settings window",
+                passed: health.current.level == .healthy && health.current.sessionCount == 3
+                    && health.current.lastEventLabel(now: Date()) != "never since launch",
+                detail: "level=\(health.current.level) sessions=\(health.current.sessionCount) "
+                    + "last=\(health.current.lastEventLabel(now: Date()))"))
+
+        health.windowBecameVisible()
+        let openedAt = health.now
+        await tick(0.2)
+        checks.append(
+            Check(
+                name: "the health ticker runs while the settings window is open",
+                passed: health.isTicking && health.now > openedAt,
+                detail: "ticking=\(health.isTicking) advanced="
+                    + "\(health.now.timeIntervalSince(openedAt))s"))
+
+        health.windowWentAway()
+        let closedAt = health.now
+        await tick(0.2)
+        checks.append(
+            Check(
+                name: "closing the settings window leaves no timer behind",
+                passed: !health.isTicking && health.now == closedAt,
+                detail: "ticking=\(health.isTicking) advanced="
+                    + "\(health.now.timeIntervalSince(closedAt))s"))
+
+        // Reopening has to bring it back. Called twice because `show()` fires the
+        // visibility callback unconditionally, including for a window that was
+        // already up.
+        health.windowBecameVisible()
+        health.windowBecameVisible()
+        let reopenedAt = health.now
+        await tick(0.2)
+        checks.append(
+            Check(
+                name: "reopening the settings window starts the ticker again",
+                passed: health.isTicking && health.now > reopenedAt,
+                detail: "ticking=\(health.isTicking)"))
+
+        // And one close stops all of it. Without the `guard ticker == nil` the
+        // second open would overwrite the reference and orphan the first timer,
+        // which `isTicking` cannot see — but the orphan would go on setting
+        // `now` after the close, so the frozen clock is what catches it.
+        health.windowWentAway()
+        let stoppedAt = health.now
+        await tick(0.2)
+        checks.append(
+            Check(
+                name: "a second open leaves no orphan timer still moving the clock",
+                passed: !health.isTicking && health.now == stoppedAt,
+                detail: "ticking=\(health.isTicking) advanced="
+                    + "\(health.now.timeIntervalSince(stoppedAt))s"))
+
+        // Laying the pane out is the only automated evidence that the strip
+        // renders at all: everything above is state, and a `LabeledContent` that
+        // silently produces nothing would pass every one of those checks. It is
+        // a smoke test and says so — it cannot see *what* was drawn, only that
+        // SwiftUI resolved the pane to a real size in both the degraded and the
+        // healthy case.
+        health.socketFailed(at: "/tmp/island-selftest.sock", reason: "bind() failed: in use")
+        let degradedSize = settingsPaneSize(health: health)
+        health.socketListening(at: "/tmp/island-selftest.sock")
+        health.noteEvent()
+        let healthySize = settingsPaneSize(health: health)
+        checks.append(
+            Check(
+                name: "the general pane lays out with the health strip in it",
+                passed: degradedSize.width > 0 && degradedSize.height > 0
+                    && healthySize.width > 0 && healthySize.height > 0,
+                detail: "degraded=\(degradedSize) healthy=\(healthySize)"))
     }
 
     /// The Appearance pane's preview draws with the same view model class the
@@ -476,6 +590,37 @@ enum SelfTest {
         live.apply(HUDSnapshot())
     }
 
+    /// Hosts the real settings view at the window's default size and returns what
+    /// it laid out to. The settings store writes to a temporary directory: this
+    /// only mounts the view, but `onAppear` installs a write-failure handler and
+    /// a self-test must not be able to touch the real settings file.
+    private static func settingsPaneSize(health: PipelineHealthStore) -> CGSize {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("island-selftest-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let view = SettingsView(
+            store: SettingsStore(IslandSettings(), root: root),
+            health: health,
+            model: IslandViewModel(),
+            actions: SettingsActions(
+                quit: {}, revealSupportFolder: {},
+                notifyBinaryPath: { "/tmp/claude-island-notify" },
+                // A no-op, not the real player: mounting a pane must not be
+                // able to make a noise, and nothing here presses the button.
+                ))
+        let host = NSHostingView(rootView: view)
+        host.frame = CGRect(x: 0, y: 0, width: 820, height: 580)
+        host.layoutSubtreeIfNeeded()
+        return host.fittingSize
+    }
+
+    /// The settings window's plumbing: store → disk → live effect.
+    ///
+    /// `IslandSettings` itself is covered by the headless suite. What that
+    /// cannot reach is the app-side store, and the store is where a settings
+    /// window fails quietly — a toggle that moves on screen, does nothing, and
+    /// forgets itself by the next launch looks exactly like one that works.
     private static func settingsChecks(_ checks: inout [Check]) {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("island-selftest-\(UUID().uuidString)", isDirectory: true)

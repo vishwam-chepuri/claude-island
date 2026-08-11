@@ -16,6 +16,7 @@ struct SettingsActions {
 
 struct SettingsView: View {
     @Bindable var store: SettingsStore
+    var health: PipelineHealthStore
     var model: IslandViewModel
     let actions: SettingsActions
 
@@ -119,6 +120,7 @@ struct SettingsView: View {
 
     private var generalPane: some View {
         Form {
+            healthStrip
             Section {
                 LabeledContent("Status", value: statusLine)
                 Toggle("Show the HUD", isOn: $store.hudEnabled)
@@ -134,6 +136,74 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Whether anything is reaching the HUD at all.
+    ///
+    /// On General, above the switches, rather than in a Diagnostics pane of its
+    /// own. The question it answers — "why is nothing showing up" — is asked by
+    /// someone who has no reason to believe anything is broken yet, so a pane
+    /// they would have to suspect the pipeline to click on is exactly the wrong
+    /// place: it is found only by people who already know. General is the pane
+    /// this window opens on, including on the fresh install where the window
+    /// opens itself, and when all is well the strip is a tick and four plain
+    /// rows — quiet enough to sit above the switches without shouting.
+    ///
+    /// The failure it exists for is invisible by construction — an island with
+    /// nothing on it is also the resting state — so the rows under the headline
+    /// trace the chain in order: the socket is up, something arrived, sessions
+    /// are tracked. A dead socket breaks it at the first link and says so in
+    /// red; a quiet afternoon breaks it at the second and must not.
+    private var healthStrip: some View {
+        Section("Event pipeline") {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: healthSymbol)
+                    .foregroundStyle(healthTint)
+                    .imageScale(.large)
+                    // The colour is a repetition of the headline, not the only
+                    // carrier of it, so the icon has nothing of its own to say.
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(pipeline.headline)
+                    if let explanation = pipeline.explanation {
+                        Text(explanation)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            LabeledContent("Socket") {
+                Text(pipeline.socketLabel())
+                    .multilineTextAlignment(.trailing)
+                    // A bind failure's reason is a whole sentence from strerror,
+                    // and truncating the one line that names the cause would
+                    // leave the strip saying only that something is wrong.
+                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(pipeline.level == .degraded ? Color.red : Color.secondary)
+            }
+            LabeledContent("Last hook event", value: pipeline.lastEventLabel(now: health.now))
+            // Overlaps the Status line below by a count, deliberately: this row
+            // is the end of the pipeline's chain ("did anything become a
+            // session"), where Status is what the island is currently drawing.
+            // They agree in the healthy case and are read for different reasons.
+            LabeledContent("Sessions tracked", value: "\(pipeline.sessionCount)")
+            LabeledContent("Status line") {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(pipeline.statuslineForwarding ? "Forwarding" : "Not installed")
+                        .foregroundStyle(.secondary)
+                    // Never red, and never phrased as a fault. Without it the
+                    // context window is inferred and everything else on the card
+                    // is unaffected, so a strip that flagged it would send people
+                    // to fix the one thing here that is not broken.
+                    if !pipeline.statuslineForwarding {
+                        Text("Optional — the context window is inferred without it.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
     }
 
     /// Second in the sidebar rather than last: it is the one pane that answers a
@@ -272,6 +342,33 @@ struct SettingsView: View {
 
     // MARK: - Derived state
 
+    /// Recomputed on read, which is what makes the strip live: `health.now`
+    /// moves once a second while this window is open, so the elapsed label
+    /// re-renders with it and everything else re-renders when it changes.
+    private var pipeline: PipelineHealth { health.current }
+
+    /// Three states, three shapes, so the strip is not read by colour alone: an
+    /// aerial for listening, a tick for working, a warning triangle for a socket
+    /// that never bound.
+    private var healthSymbol: String {
+        switch pipeline.level {
+        case .degraded: "exclamationmark.triangle.fill"
+        case .idle: "antenna.radiowaves.left.and.right"
+        case .healthy: "checkmark.circle.fill"
+        }
+    }
+
+    /// Idle is deliberately unaccented. Amber for "nothing has arrived yet"
+    /// would make the ordinary state — a machine with no session running — look
+    /// like a problem, which is the mirror image of the bug this strip fixes.
+    private var healthTint: Color {
+        switch pipeline.level {
+        case .degraded: .red
+        case .idle: .secondary
+        case .healthy: .green
+        }
+    }
+
     private var statusLine: String {
         guard store.hudEnabled else { return "Hidden" }
         switch model.snapshot.sessionCount {
@@ -401,6 +498,11 @@ struct SettingsView: View {
         hookMessage = message
         hookMessageIsError = isError
         hookRevision += 1
+        // Installing hooks wires the status line up too, and removing them takes
+        // it out again — so the one figure on the strip that is read from disk
+        // has to be re-read here, or General keeps reporting what was true
+        // before the button on this pane was pressed.
+        health.refreshStatusline()
     }
 
     private func showApprovalNeeded() {

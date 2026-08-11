@@ -13,6 +13,10 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var hoverMonitor: HoverMonitor!
     private let model = IslandViewModel()
     private let settings: SettingsStore
+    /// What the settings window's health strip reads. Written from the three
+    /// places the pipeline's state is actually known — the socket start, every
+    /// arriving envelope, every snapshot — and read nowhere else.
+    private let health = PipelineHealthStore()
     private var settingsWindow: SettingsWindowController!
     /// Whether to open the settings window as soon as the app is up — true on a
     /// fresh install, and for `--settings`. With no menu bar extra there is
@@ -170,6 +174,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         do {
             let stream = try server.start()
+            health.socketListening(at: server.path)
             socketTask = Task { [weak self] in
                 for await envelope in stream {
                     await self?.handle(envelope)
@@ -177,6 +182,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
         } catch {
             log.debug("socket failed to start: \(error)")
+            // Recorded as well as alerted. The alert is modal, fires once at
+            // launch, and is gone the moment it is dismissed — which happens
+            // before there is anything to connect it to, since the island looks
+            // the same either way. The strip is what is still there to read an
+            // hour later, when the emptiness is what prompts the question.
+            health.socketFailed(at: server.path, reason: "\(error)")
             presentSocketFailure(error)
         }
 
@@ -203,6 +214,12 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func handle(_ envelope: HookEnvelope) async {
+        // Noted before anything can go wrong with this particular envelope: the
+        // question the strip answers is whether the path from a hook to this
+        // process works at all, and an envelope that arrived and was then
+        // discarded still proves that it does.
+        health.noteEvent()
+
         // A prompt whose client is already gone must not arrive answerable. The
         // withdrawal for it has, by then, already been delivered against a
         // session that was not yet waiting on anything, so it cleared nothing —
@@ -231,6 +248,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func apply(_ snapshot: HUDSnapshot) {
         playSoundCues(for: snapshot)
         model.apply(snapshot)
+        health.noteSessions(snapshot.sessionCount)
 
         // The hover monitor exists only while there is something to hover.
         // With no sessions it is torn down completely, which is what keeps idle
@@ -297,8 +315,15 @@ final class AppController: NSObject, NSApplicationDelegate {
             quit: { [weak self] in self?.quit() },
             revealSupportFolder: { [weak self] in self?.revealSupportFolder() },
             notifyBinaryPath: { Self.notifyBinaryPath() })
-        settingsWindow = SettingsWindowController { [settings, model] in
-            AnyView(SettingsView(store: settings, model: model, actions: actions))
+        settingsWindow = SettingsWindowController { [settings, model, health] in
+            AnyView(SettingsView(store: settings, health: health, model: model, actions: actions))
+        }
+        // The health strip's elapsed label needs a clock, and this app promises
+        // there is none when nothing is on screen to read it. The window is the
+        // only thing that knows when that is true, so it owns the switch — see
+        // `PipelineHealthStore.windowBecameVisible()` for why the view cannot.
+        settingsWindow.onVisibilityChange = { [health] visible in
+            visible ? health.windowBecameVisible() : health.windowWentAway()
         }
         // Seed the live state from what was loaded, so a HUD that was switched
         // off in a previous run comes back off rather than flashing on.
@@ -358,6 +383,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         watcher?.stop()
         hoverMonitor?.stop()
         model.shutdown()
+        // Belt and braces against the window's own teardown: quitting with the
+        // settings window open must not leave its 1 Hz ticker scheduled.
+        health.windowWentAway()
     }
 
     /// Where the hook client lives, for the settings.json command.
