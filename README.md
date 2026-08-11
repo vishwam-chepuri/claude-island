@@ -3,9 +3,6 @@
 A Dynamic Island-style HUD pinned to the notch that shows, in real time, what
 your running Claude Code sessions are doing.
 
-Swift 6 · SwiftUI · macOS 14+ · no third-party dependencies · builds from the
-CLI with Command Line Tools (no Xcode required).
-
 ```
 ┌─────────────────────────────────────────────┐
 │  ⌘ Bash  swift build           0:12     o°o │   compact
@@ -15,6 +12,30 @@ CLI with Command Line Tools (no Xcode required).
 │     ~/notch/Sources/IslandPanel.swift        │
 └─────────────────────────────────────────────┘
 ```
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vishwam-chepuri/claude-island/main/Scripts/install.sh | bash
+```
+
+Clones, builds, installs to `/Applications`, and offers to wire up the hooks.
+Pass `--dry-run` to see exactly what it would do first, or read it — it is
+[one file](Scripts/install.sh).
+
+It builds from source rather than downloading a binary, and that is deliberate:
+this project has no Developer ID to sign with, so a downloaded `.app` would
+arrive quarantined and macOS would tell you it could not be verified. Code
+compiled on your own machine never is. Building also means you get a binary for
+your own architecture with no universal-binary machinery.
+
+**Requirements:** macOS 14+, and Command Line Tools (the script offers to
+install them). No Xcode. No dependencies. Roughly a minute to build.
+
+Restart any running Claude Code sessions afterwards, and turn on **Launch at
+Login** from the menu bar extra so it survives a reboot.
+
+Everything is local — the app makes no network calls, ever.
 
 ## Build
 
