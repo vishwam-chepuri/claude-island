@@ -295,11 +295,23 @@ enum SelfTest {
                             detail: "status \(LoginItem.status.rawValue)"))
                 }
             } catch {
-                checks.append(
-                    Check(
-                        name: "launch at login registers",
-                        passed: false,
-                        detail: "\(error)"))
+                // `register()` itself throws once approval was revoked, not
+                // just the status after a successful call — re-check status
+                // rather than count every throw as a hard failure, so this
+                // reportedly-common case still reports the skip it is meant
+                // to, not a FAIL that has nothing to do with this branch.
+                if LoginItem.status == .requiresApproval {
+                    checks.append(
+                        Check(
+                            name: "launch at login registers",
+                            skipped: "approval was revoked in System Settings"))
+                } else {
+                    checks.append(
+                        Check(
+                            name: "launch at login registers",
+                            passed: false,
+                            detail: "\(error)"))
+                }
             }
             try? LoginItem.setEnabled(wasEnabled)
         }

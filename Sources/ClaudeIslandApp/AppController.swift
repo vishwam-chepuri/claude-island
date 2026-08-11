@@ -474,14 +474,19 @@ final class AppController: NSObject, NSApplicationDelegate {
             // Approval lives in System Settings and cannot be granted from here,
             // so say where it is rather than leaving the menu title lying.
             if LoginItem.status == .requiresApproval {
-                let alert = NSAlert()
-                alert.messageText = "Approval needed"
-                alert.informativeText =
-                    "Enable ClaudeIsland under System Settings → General → Login Items."
-                alert.runModal()
+                presentApprovalNeeded()
             }
         } catch {
-            presentError("Could not change the login item", error)
+            // `register()` itself throws once the user has switched the item
+            // off in System Settings, not just the status after it succeeds —
+            // re-check status rather than assume every throw is opaque, so
+            // that reportedly-common case still gets the actionable message
+            // instead of a generic error dialog.
+            if LoginItem.status == .requiresApproval {
+                presentApprovalNeeded()
+            } else {
+                presentError("Could not change the login item", error)
+            }
         }
         rebuildMenu()
     }
@@ -501,6 +506,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         alert.messageText = title
         alert.informativeText = "\(error)"
         alert.alertStyle = .warning
+        alert.runModal()
+    }
+
+    private func presentApprovalNeeded() {
+        let alert = NSAlert()
+        alert.messageText = "Approval needed"
+        alert.informativeText =
+            "Enable ClaudeIsland under System Settings → General → Login Items."
         alert.runModal()
     }
 
