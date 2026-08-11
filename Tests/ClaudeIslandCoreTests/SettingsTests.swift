@@ -34,6 +34,9 @@ func registerSettingsTests() {
             await expect(
                 !s.muteWhileTerminalFrontmost,
                 "the frontmost-terminal gate is opt-in — it changes what an install already does")
+            await expectEqual(
+                s.hoverOpenDelayMilliseconds, 150,
+                "a fresh install waits out a pointer passing across the notch")
             await expect(
                 s[.done] == CueSound(enabled: true, name: "Glass")
                     && s[.inputRequired] == CueSound(enabled: true, name: "Ping")
@@ -51,6 +54,7 @@ func registerSettingsTests() {
             s.forcedMode = "peek"
             s.muteWhileTerminalFrontmost = true
             s.preferredDisplay = "DELL P3223QE"
+            s.hoverOpenDelayMilliseconds = 300
             s.doneSound = CueSound(enabled: false, name: "Hero")
             s.inputRequiredSound = CueSound(enabled: true, name: "Sosumi")
             s.waitingSound = CueSound(enabled: false, name: "Tink")
@@ -264,6 +268,102 @@ func registerSettingsTests() {
             let root = try tempRoot()
             try write(#"{"preferredDisplay": "  DELL P3223QE\n"}"#, "settings.json", in: root)
             await expectEqual(IslandSettings.load(root: root).preferredDisplay, "DELL P3223QE")
+        }
+
+        // MARK: - The hover delay
+
+        test("The hover delay round-trips on its own") {
+            let root = try tempRoot()
+            var s = IslandSettings()
+            s.hoverOpenDelayMilliseconds = 275
+            try s.save(root: root)
+
+            let loaded = IslandSettings.load(root: root)
+            await expectEqual(loaded.hoverOpenDelayMilliseconds, 275, "the delay came back wrong")
+            await expect(loaded == s, "and nothing else moved when it was written")
+        }
+
+        // Instant is a setting, not an absence, and it is exactly what every
+        // build before this one did. It has to survive a save/load cycle rather
+        // than reading as "unset" and coming back as the default — otherwise the
+        // one person who deliberately wants the old hair-trigger cannot keep it.
+        test("A delay of zero is stored, not read as no preference") {
+            let root = try tempRoot()
+            var s = IslandSettings()
+            s.hoverOpenDelayMilliseconds = 0
+            try s.save(root: root)
+            await expectEqual(IslandSettings.load(root: root).hoverOpenDelayMilliseconds, 0)
+        }
+
+        // The upgrade path. An absent key means the new default rather than 0:
+        // the hair-trigger open is the behaviour this setting exists to fix, so
+        // an existing install should get the fix and can opt back out with the
+        // slider. Nothing else about the file may shift on the way in.
+        test("A settings file written before the hover delay loads with the default") {
+            let root = try tempRoot()
+            try write(
+                """
+                {
+                  "debugTint" : false,
+                  "doNotDisturb" : false,
+                  "doneSound" : { "enabled" : true, "name" : "Hero" },
+                  "hudEnabled" : true,
+                  "logging" : false,
+                  "muteWhileTerminalFrontmost" : true,
+                  "preferredDisplay" : "DELL P3223QE"
+                }
+                """, "settings.json", in: root)
+
+            let s = IslandSettings.load(root: root)
+            await expectEqual(
+                s.hoverOpenDelayMilliseconds, HoverDelay.default,
+                "an absent key did not fall back to the default dwell")
+            await expectEqual(s[.done].name, "Hero", "and the rest of the file still loaded")
+            await expectEqual(s.preferredDisplay, "DELL P3223QE", "including the key next to it")
+        }
+
+        // Hand-editing is a documented way to use this file, and the failure it
+        // can cause here is uniquely bad: a card that takes thirty seconds to
+        // open is indistinguishable from a HUD that has stopped noticing hover,
+        // and the pane that would explain it is the one you would never suspect.
+        test("An out-of-range hover delay is clamped rather than honoured") {
+            let root = try tempRoot()
+            for (stored, wanted) in [(30000, 500), (501, 500), (-1, 0), (-30000, 0)] {
+                try write(
+                    #"{"hoverOpenDelayMilliseconds": \#(stored)}"#, "settings.json", in: root)
+                await expectEqual(
+                    IslandSettings.load(root: root).hoverOpenDelayMilliseconds, wanted,
+                    "a stored \(stored) was not clamped")
+            }
+        }
+
+        test("A hover delay inside the range is kept exactly") {
+            let root = try tempRoot()
+            for stored in [0, 1, 150, 499, 500] {
+                try write(
+                    #"{"hoverOpenDelayMilliseconds": \#(stored)}"#, "settings.json", in: root)
+                await expectEqual(
+                    IslandSettings.load(root: root).hoverOpenDelayMilliseconds, stored,
+                    "a legal \(stored) was altered")
+            }
+        }
+
+        // The monitor schedules a `Timer` with whatever this returns, so the
+        // clamp has to hold on this path too — not only on the way off disk.
+        test("The delay in seconds is clamped and in the unit a timer wants") {
+            await expectEqual(HoverDelay.seconds(150), 0.15)
+            await expectEqual(HoverDelay.seconds(0), 0, "instant must be exactly zero")
+            await expectEqual(HoverDelay.seconds(30000), 0.5, "an absurd delay reached a timer")
+            await expectEqual(HoverDelay.seconds(-5), 0)
+        }
+
+        test("The default delay is inside the range the pane offers") {
+            await expect(
+                HoverDelay.range.contains(HoverDelay.default),
+                "the slider would open with its thumb off the end of its own track")
+            await expect(
+                HoverDelay.minimum == 0,
+                "instant has to remain reachable — it is what every earlier build did")
         }
 
         // MARK: - Migration off the sentinel files

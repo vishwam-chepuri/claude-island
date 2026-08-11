@@ -103,7 +103,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         host.autoresizingMask = [.width, .height]
         panel.contentView = host
 
-        hoverMonitor = HoverMonitor(panel: panel)
+        hoverMonitor = HoverMonitor(
+            panel: panel,
+            openDelay: HoverDelay.seconds(settings.hoverOpenDelayMilliseconds))
         hoverMonitor.onHoverChange = { [weak self] inside in
             guard let self else { return }
             self.model.isHovered = inside
@@ -457,6 +459,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         log.setEnabled(new.logging || forcedByEnvironment)
         model.debugTint = new.debugTint
         model.forcedMode = IslandMode(forcedName: new.forcedMode)
+        // Above the `hudEnabled` guard, like the display below it, and for the
+        // same reason: that guard returns early on every change but the HUD
+        // switch itself. The monitor object outlives every start/stop cycle, so
+        // this one line is what makes the slider live — it governs the next
+        // hover, with no relaunch and without disturbing a dwell already
+        // counting down under the pointer.
+        hoverMonitor.openDelay = HoverDelay.seconds(new.hoverOpenDelayMilliseconds)
 
         // Above the `hudEnabled` guard, which returns early on every change that
         // is not the HUD switch itself — a display picked while the HUD is

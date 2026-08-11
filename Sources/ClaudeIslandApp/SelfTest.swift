@@ -210,7 +210,11 @@ enum SelfTest {
 
         // --- Hover monitor ---
 
-        let monitor = HoverMonitor(panel: panel)
+        // No open delay, which is what keeps every check below able to assert in
+        // the same turn it moves the cursor. The dwell has a block of its own —
+        // see `hoverDelayChecks` — and giving this monitor one would only make
+        // these checks wait for a property they are not about.
+        let monitor = HoverMonitor(panel: panel, openDelay: 0)
         monitor.start()
         checks.append(
             Check(
@@ -252,6 +256,11 @@ enum SelfTest {
                 name: "stopping the monitor restores full click-through",
                 passed: panel.ignoresMouseEvents && !monitor.isRunning,
                 detail: "running=\(monitor.isRunning)"))
+
+        // --- The hover open delay ---
+
+        await hoverDelayChecks(
+            &checks, panel: panel, shape: shape, inside: overShape, outside: overTransparent)
 
         // --- Pinning ---
 
@@ -346,6 +355,131 @@ enum SelfTest {
         }
         print("\(failures) of \(checks.count) checks FAILED (\(passed) passed, \(skipped) skipped)")
         return 1
+    }
+
+    /// The dwell before peek opens, and the promise that nothing survives it.
+    ///
+    /// Driven with a real `Timer` on the real main run loop — the delay is a
+    /// timer, and a check that swapped it for a mock would not be checking this
+    /// feature. What is shortened is the interval: 120ms is far longer than the
+    /// run loop turn these checks have to tell it apart from, and short enough
+    /// that the whole block costs under a second. Nothing here sleeps
+    /// generously and hopes; each wait is three times the delay it is waiting
+    /// out, and every assertion is on state that is settled by then.
+    ///
+    /// None of these monitors is *started*, apart from the teardown one.
+    /// `setInteractiveRectForTesting` drives exactly the evaluation a real move
+    /// drives, and an installed global monitor would let a twitch of the user's
+    /// actual mouse cancel a countdown mid-check — a check that fails when
+    /// somebody leans on the desk is worse than no check at all.
+    private static func hoverDelayChecks(
+        _ checks: inout [Check], panel: IslandPanel, shape: CGRect,
+        inside: CGPoint, outside: CGPoint
+    ) async {
+        let delay: TimeInterval = 0.12
+
+        // --- Instant means instant ---
+        //
+        // Asserted with no `await` between the move and the check, which is the
+        // whole claim: at zero there is no timer and no hop through the run
+        // loop, so the card is open by the time the event handler returns.
+        let instant = HoverMonitor(panel: panel, openDelay: 0)
+        var instantReports: [Bool] = []
+        instant.onHoverChange = { instantReports.append($0) }
+        instant.setInteractiveRectForTesting(shape, cursorAt: inside)
+        checks.append(
+            Check(
+                name: "a delay of zero opens the card on the same event, with no timer",
+                passed: instantReports == [true] && instant.isReportedInside
+                    && !instant.hasPendingOpen,
+                detail: "reported=\(instantReports) pending=\(instant.hasPendingOpen)"))
+        instant.stop()
+
+        // --- A pointer passing through ---
+        //
+        // The gesture the whole setting exists for: across the top of the screen
+        // and away again before the dwell is up. The pending open has to be
+        // cancelled, not deferred — so this waits out three times the delay and
+        // asserts the card never opened at all, rather than asserting it had not
+        // opened yet.
+        let sweeping = HoverMonitor(panel: panel, openDelay: delay)
+        var sweepReports: [Bool] = []
+        sweeping.onHoverChange = { sweepReports.append($0) }
+        sweeping.setInteractiveRectForTesting(shape, cursorAt: inside)
+        let countingDown = sweeping.hasPendingOpen
+        let openedOnArrival = sweepReports
+        // Clicks follow the pointer with no delay of any kind. If this flag were
+        // deferred alongside the card, a click on the resting pill within the
+        // dwell would fall through to whatever is behind the notch.
+        let acceptsClicksWhileCountingDown = !panel.ignoresMouseEvents
+        sweeping.setInteractiveRectForTesting(shape, cursorAt: outside)
+        let stillCountingDown = sweeping.hasPendingOpen
+        await tick(delay * 3)
+        checks.append(
+            Check(
+                name: "a pointer that enters and leaves before the delay never opens the card",
+                passed: countingDown && openedOnArrival.isEmpty && !stillCountingDown
+                    && sweepReports.isEmpty && !sweeping.isReportedInside,
+                detail: "pendingOnArrival=\(countingDown) afterLeaving=\(stillCountingDown) "
+                    + "reported=\(sweepReports)"))
+        checks.append(
+            Check(
+                name: "clicks are routed to where the pointer is, not to where the card is",
+                passed: acceptsClicksWhileCountingDown && panel.ignoresMouseEvents,
+                detail: "acceptedWhileCountingDown=\(acceptsClicksWhileCountingDown) "
+                    + "ignoresNow=\(panel.ignoresMouseEvents)"))
+        sweeping.stop()
+
+        // --- A pointer that means it ---
+        let dwelling = HoverMonitor(panel: panel, openDelay: delay)
+        var dwellReports: [Bool] = []
+        dwelling.onHoverChange = { dwellReports.append($0) }
+        dwelling.setInteractiveRectForTesting(shape, cursorAt: inside)
+        let openedBeforeWaiting = !dwellReports.isEmpty
+        await tick(delay * 3)
+        checks.append(
+            Check(
+                name: "a pointer that rests through the delay opens the card exactly once",
+                passed: !openedBeforeWaiting && dwellReports == [true]
+                    && dwelling.isReportedInside && !dwelling.hasPendingOpen,
+                detail: "openedEarly=\(openedBeforeWaiting) reported=\(dwellReports) "
+                    + "pending=\(dwelling.hasPendingOpen)"))
+
+        // Leaving, checked with no wait at all: the asymmetry is the point. A
+        // card that lingered over the window you have just moved to would be in
+        // the way with no way to dismiss it but to wait.
+        dwelling.setInteractiveRectForTesting(shape, cursorAt: outside)
+        checks.append(
+            Check(
+                name: "leaving closes the card at once, with no delay of its own",
+                passed: dwellReports == [true, false] && !dwelling.isReportedInside
+                    && !dwelling.hasPendingOpen,
+                detail: "reported=\(dwellReports)"))
+        dwelling.stop()
+
+        // --- Teardown ---
+        //
+        // `AppController.apply` stops the monitor the moment the last session
+        // ends, on the promise that an idle HUD schedules nothing whatsoever. A
+        // one-shot open that outlived that would fire against a dormant HUD, and
+        // it is invisible in every other way — which is why this asserts on the
+        // timer existing rather than on how the card looks.
+        let torn = HoverMonitor(panel: panel, openDelay: delay)
+        var tornReports: [Bool] = []
+        torn.onHoverChange = { tornReports.append($0) }
+        torn.start()
+        torn.setInteractiveRectForTesting(shape, cursorAt: inside)
+        let scheduledBeforeStop = torn.hasPendingOpen
+        torn.stop()
+        let scheduledAfterStop = torn.hasPendingOpen
+        await tick(delay * 3)
+        checks.append(
+            Check(
+                name: "stopping the monitor cancels a pending open rather than deferring it",
+                passed: scheduledBeforeStop && !scheduledAfterStop && !torn.isRunning
+                    && tornReports.isEmpty && panel.ignoresMouseEvents,
+                detail: "before=\(scheduledBeforeStop) after=\(scheduledAfterStop) "
+                    + "running=\(torn.isRunning) reported=\(tornReports)"))
     }
 
     /// Click-to-pin, checked at the model level. Delivering a synthetic click
@@ -691,6 +825,28 @@ enum SelfTest {
                 passed: IslandSettings.load(root: root).preferredDisplay == nil,
                 detail: "on disk: "
                     + "\(IslandSettings.load(root: root).preferredDisplay ?? "none")"))
+
+        // The hover delay is the one setting with a range, so it is the one
+        // that can be written out of it. The store clamps on the way to both
+        // disk and the app, because what is downstream of `onChange` is a
+        // `Timer` interval — a value nobody should have to re-validate.
+        store.hoverOpenDelayMilliseconds = 275
+        checks.append(
+            Check(
+                name: "the hover delay persists through the store",
+                passed: IslandSettings.load(root: root).hoverOpenDelayMilliseconds == 275,
+                detail: "on disk: \(IslandSettings.load(root: root).hoverOpenDelayMilliseconds)"))
+
+        store.hoverOpenDelayMilliseconds = 30_000
+        checks.append(
+            Check(
+                name: "a hover delay out of range reaches neither the file nor the app",
+                passed: IslandSettings.load(root: root).hoverOpenDelayMilliseconds
+                    == HoverDelay.maximum
+                    && applied.last?.hoverOpenDelayMilliseconds == HoverDelay.maximum,
+                detail: "on disk: \(IslandSettings.load(root: root).hoverOpenDelayMilliseconds) "
+                    + "applied: \(applied.last?.hoverOpenDelayMilliseconds ?? -1)"))
+        store.hoverOpenDelayMilliseconds = HoverDelay.default
 
         // The window writes a string; the HUD needs a tier. A typo must leave
         // the HUD unpinned rather than pin it to something arbitrary.

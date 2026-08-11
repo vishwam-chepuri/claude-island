@@ -28,6 +28,10 @@ final class SettingsStore {
     /// The display's `localizedName`, or nil for the menu bar's. Held even while
     /// that display is unplugged — see `IslandSettings.preferredDisplay`.
     var preferredDisplay: String? { didSet { persist() } }
+    /// The hover dwell, in milliseconds. Held unclamped and clamped on the way
+    /// out through `current`, so the pane always shows back whatever it was
+    /// handed rather than silently correcting a slider under the pointer.
+    var hoverOpenDelayMilliseconds: Int { didSet { persist() } }
     var doneSound: CueSound { didSet { persist() } }
     var inputRequiredSound: CueSound { didSet { persist() } }
     var waitingSound: CueSound { didSet { persist() } }
@@ -72,6 +76,7 @@ final class SettingsStore {
         forcedMode = settings.forcedMode
         muteWhileTerminalFrontmost = settings.muteWhileTerminalFrontmost
         preferredDisplay = settings.preferredDisplay
+        hoverOpenDelayMilliseconds = settings.hoverOpenDelayMilliseconds
         doneSound = settings.doneSound
         inputRequiredSound = settings.inputRequiredSound
         waitingSound = settings.waitingSound
@@ -86,6 +91,10 @@ final class SettingsStore {
         s.forcedMode = forcedMode
         s.muteWhileTerminalFrontmost = muteWhileTerminalFrontmost
         s.preferredDisplay = preferredDisplay
+        // The one setting with a range, so the one place a value can leave here
+        // out of it. Clamped on the way to both disk and `onChange`, so nothing
+        // downstream — least of all a `Timer` interval — has to re-check it.
+        s.hoverOpenDelayMilliseconds = HoverDelay.clamped(hoverOpenDelayMilliseconds)
         s.doneSound = doneSound
         s.inputRequiredSound = inputRequiredSound
         s.waitingSound = waitingSound

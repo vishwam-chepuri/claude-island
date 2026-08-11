@@ -63,7 +63,8 @@ would say the app had started.
 The window is a sidebar with one pane per concern:
 
 ```
-General     Status · Show the HUD · Show it on … · Launch at login
+General     Status · Show the HUD · Show it on … · Open on hover after …
+            · Launch at login
 Appearance  A live preview of the island, posed at each tier
 Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per cue
 Hooks       Install / update / remove, Copy Hook JSON
@@ -76,6 +77,13 @@ The choice is stored by display name and kept even while that display is
 unplugged — the HUD falls back to the menu bar's display for as long as it is
 gone and moves back on its own when it returns. Two identical monitors report
 identical names and cannot be told apart.
+
+**Open on hover after** is how long the pointer has to rest on the island
+before peek opens — 0 to 500ms, 150ms by default. Without it, a pointer
+crossing the top of the screen on its way to the menu bar pops the card open in
+passing. Only opening waits: moving away closes it at once, because a card that
+lingered over the window you have just moved to would be in the way with no way
+to dismiss it. Set it to Instant for what earlier builds did.
 
 **Quit ClaudeIsland** sits in the footer, always visible. With no menu bar icon
 it is the only way to quit short of Activity Monitor, so it must never be
@@ -377,7 +385,8 @@ The status vocabulary and mark follow the reference design: `Thinking` with a
 spinning ring, `Your turn` with a completed ring that breathes, `Done` with a
 solid ring and a check.
 
-**Peek** (hover) — adds the identity line (branch, model, effort, elapsed),
+**Peek** (hover, after the dwell set on General) — adds the identity line
+(branch, model, effort, elapsed),
 context and output tokens, and plan progress with the task currently in flight.
 
 **Expanded** (click) — a switcher. Every active session is listed and

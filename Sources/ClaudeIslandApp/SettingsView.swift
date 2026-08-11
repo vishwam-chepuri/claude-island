@@ -149,6 +149,7 @@ struct SettingsView: View {
                 LabeledContent("Status", value: statusLine)
                 Toggle("Show the HUD", isOn: $store.hudEnabled)
                 displayRow
+                hoverDelayRow
                 if LoginItem.isAvailable {
                     Toggle("Launch at login", isOn: launchAtLoginBinding)
                 }
@@ -206,6 +207,68 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// How long the pointer must rest on the island before the card opens.
+    ///
+    /// On General with the other two, because it answers the same question they
+    /// do — the island is showing, it is over there, and it takes this long to
+    /// notice you. It is also the row someone comes looking for after the HUD
+    /// popped open while they were reaching for the menu bar, which is not a
+    /// complaint about how it looks.
+    ///
+    /// A slider rather than a Short/Medium/Long picker: the range is narrow,
+    /// every value in it is usable, and what is being chosen is a feel — judged
+    /// by dragging it and then hovering the real island, not by reading three
+    /// words and guessing what they mean in milliseconds.
+    ///
+    /// The caption is always present, unlike the display row's. Both ends of
+    /// this slider are legitimate settings that behave visibly differently, and
+    /// the asymmetry it promises — only opening waits — is the one thing about
+    /// this control that cannot be inferred from the control.
+    private var hoverDelayRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Writes on every step it crosses, so one drag can persist twenty
+            // times. Deliberate: each is a small atomic write to a file every
+            // other control here already rewrites on each click, and committing
+            // only on release is how a setting ends up lost when the window is
+            // closed with the thumb still held.
+            Slider(
+                value: hoverDelayBinding,
+                in: Double(HoverDelay.minimum)...Double(HoverDelay.maximum),
+                step: 25
+            ) {
+                Text("Open on hover after")
+            } minimumValueLabel: {
+                Text("Instant")
+            } maximumValueLabel: {
+                Text("0.5s")
+            }
+            // The slider reads as a bare number otherwise, and "150" is not an
+            // answer to "after what".
+            .accessibilityValue(hoverDelayValueLabel)
+            Text(hoverDelayCaption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Milliseconds, spelled the way the settings file spells them, so the
+    /// caption and a hand-edit are talking about the same number.
+    private var hoverDelayValueLabel: String {
+        store.hoverOpenDelayMilliseconds == 0
+            ? "Instant" : "\(store.hoverOpenDelayMilliseconds) ms"
+    }
+
+    private var hoverDelayCaption: String {
+        guard store.hoverOpenDelayMilliseconds > 0 else {
+            return "The card opens the instant the pointer touches the island — including "
+                + "when it is only crossing the top of the screen on its way somewhere else."
+        }
+        return "The pointer has to rest on the island for \(hoverDelayValueLabel) before the "
+            + "card opens, so a pointer merely crossing the top of the screen leaves it "
+            + "closed. Moving away always closes it at once — only opening waits."
     }
 
     /// Whether anything is reaching the HUD at all.
@@ -666,6 +729,16 @@ struct SettingsView: View {
         Binding(
             get: { canonicalDisplayName(store.preferredDisplay) ?? "" },
             set: { store.preferredDisplay = DisplaySelection.normalized($0) })
+    }
+
+    /// The slider works in `Double`; the setting is a whole number of
+    /// milliseconds. Rounded rather than truncated so a step lands on the value
+    /// under the thumb, and clamped because nothing downstream should have to
+    /// wonder whether a slider was bounded the way it looks.
+    private var hoverDelayBinding: Binding<Double> {
+        Binding(
+            get: { Double(store.hoverOpenDelayMilliseconds) },
+            set: { store.hoverOpenDelayMilliseconds = HoverDelay.clamped(Int($0.rounded())) })
     }
 
     /// The stored name spelled the way this picker's tags spell it.

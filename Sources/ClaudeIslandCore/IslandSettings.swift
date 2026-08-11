@@ -73,6 +73,58 @@ extension SoundCue {
     public var defaultSound: CueSound { CueSound(enabled: true, name: defaultSoundName) }
 }
 
+/// How long the cursor must rest on the island before the card opens, as a
+/// stored millisecond count plus the rules that keep it sane.
+///
+/// Plain Swift in Core, and a named type rather than three literals scattered
+/// through the app, because the clamp is the part worth testing: `settings.json`
+/// is documented as hand-editable and the one edit that must never be honoured
+/// verbatim is a delay long enough to read as a HUD that stopped responding to
+/// hover at all.
+public enum HoverDelay {
+    /// No wait: peek opens the instant the cursor crosses the shape, which is
+    /// what every build before this setting did. Kept reachable, and kept
+    /// meaning *exactly* that — no timer, no deferred hop through the run loop.
+    public static let minimum = 0
+    /// Half a second. Beyond this the card stops feeling deliberate and starts
+    /// feeling missed: a pointer genuinely aiming at the island has come to rest
+    /// long before, so the extra wait buys no further discrimination and only
+    /// makes a working HUD look broken.
+    public static let maximum = 500
+    /// 150ms. The delay exists for one gesture — a pointer sweeping across the
+    /// top of the screen on its way to the menu bar or another window — and a
+    /// sweep clears the island's few hundred points of width in well under this,
+    /// so the card stays shut for the whole of it. A hover that means it still
+    /// reads as immediate: 150ms is inside the time the hand takes to stop
+    /// moving and the eye takes to land, so the card is open by the time anyone
+    /// is looking at it.
+    ///
+    /// Erring short on purpose. Too short costs a card that opened when you did
+    /// not mean it — annoying, visible, and obviously this setting's fault. Too
+    /// long costs a card that does not open, which is indistinguishable from a
+    /// broken HUD and sends people looking anywhere but here.
+    public static let `default` = 150
+
+    /// What the settings pane offers, and what a stored value is held to.
+    public static let range = minimum...maximum
+
+    /// Clamped rather than rejected: a hand-edited `30000` is fifteen seconds of
+    /// a card that never opens, and refusing to load the file over it would
+    /// throw away every other setting in there too. Snapping to the nearest end
+    /// of the range keeps the HUD usable and leaves the odd number visible in
+    /// the pane, where it can be corrected.
+    public static func clamped(_ milliseconds: Int) -> Int {
+        min(max(milliseconds, minimum), maximum)
+    }
+
+    /// The stored figure as the `Timer` interval the hover monitor schedules.
+    /// Clamps on the way past, so no caller can hand a timer a wild value by
+    /// skipping the setting's own validation.
+    public static func seconds(_ milliseconds: Int) -> TimeInterval {
+        TimeInterval(clamped(milliseconds)) / 1000
+    }
+}
+
 /// Everything the settings window can change, in one file.
 ///
 /// This replaced a set of one-off sentinel files (`dnd`, `debug`, `tint`,
@@ -106,6 +158,19 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// away, so unplugging a monitor falls back for as long as it is gone and the
     /// choice comes back with the cable.
     public var preferredDisplay: String?
+    /// How long the cursor must rest on the island before peek opens, in
+    /// milliseconds. Next to the two above because it belongs to the same
+    /// question they do — whether the island is showing, where, and how eagerly
+    /// it answers the pointer.
+    ///
+    /// Hover-in only. There is deliberately no matching close delay; see
+    /// `HoverMonitor.openDelay` for why the asymmetry is the point rather than
+    /// an omission.
+    ///
+    /// Stored as an integer count of milliseconds rather than a `TimeInterval`:
+    /// this file is meant to be read and hand-edited, and `0.15` invites the
+    /// question of what unit it is in where `150` does not.
+    public var hoverOpenDelayMilliseconds: Int = HoverDelay.default
     /// Mutes every sound cue without touching the HUD itself, and without
     /// disturbing the per-cue switches below — one thing to hit when a meeting
     /// starts, that leaves the configuration to come back to afterwards.
@@ -167,7 +232,7 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// and gains the new keys the next time anything is saved.
     private enum CodingKeys: String, CodingKey {
         case hudEnabled, doNotDisturb, logging, debugTint, forcedMode
-        case muteWhileTerminalFrontmost, preferredDisplay
+        case muteWhileTerminalFrontmost, preferredDisplay, hoverOpenDelayMilliseconds
         case doneSound, inputRequiredSound, waitingSound
     }
 
@@ -190,6 +255,16 @@ public struct IslandSettings: Codable, Equatable, Sendable {
         // found and will report itself missing forever.
         preferredDisplay = DisplaySelection.normalized(
             try c.decodeIfPresent(String.self, forKey: .preferredDisplay))
+        // Absent means the default dwell rather than 0, so an install that
+        // predates this key gains the delay instead of keeping the old
+        // hair-trigger — the old behaviour is the bug this setting fixes, and it
+        // stays reachable by dragging the slider to Instant.
+        //
+        // Clamped, never trusted: the range is the only thing standing between a
+        // hand-edited 30000 and a card that appears never to open.
+        hoverOpenDelayMilliseconds = HoverDelay.clamped(
+            try c.decodeIfPresent(Int.self, forKey: .hoverOpenDelayMilliseconds)
+                ?? HoverDelay.default)
 
         // The upgrade path that matters: every settings.json written before
         // these keys existed has none of them, and must come back ringing
