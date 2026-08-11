@@ -19,9 +19,21 @@ your running Claude Code sessions are doing.
 curl -fsSL https://raw.githubusercontent.com/vishwam-chepuri/claude-island/main/Scripts/install.sh | bash
 ```
 
-Clones, builds, installs to `/Applications`, and offers to wire up the hooks.
-Pass `--dry-run` to see exactly what it would do first, or read it — it is
-[one file](Scripts/install.sh).
+Clones, builds, installs to `/Applications` (falling back to `~/Applications`
+if that isn't writable — hooks bake in whichever absolute path it lands at),
+and offers to wire up the hooks. That offer covers two files, not one: if
+`~/.claude/settings.json` already points `statusLine` at a script, it appends
+one forwarding line to that script too, so the prompt names both. Both are
+backed up first, and it declines whichever one it isn't sure about.
+
+Pass `-s -- --dry-run` to see exactly what it would do first — piped into
+`bash`, options have to go after `-s --`, since plain `| bash --dry-run` hands
+`--dry-run` to `bash` itself rather than to the script and fails outright — or
+read it, it is [one file](Scripts/install.sh):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vishwam-chepuri/claude-island/main/Scripts/install.sh | bash -s -- --dry-run
+```
 
 It builds from source rather than downloading a binary, and that is deliberate:
 this project has no Developer ID to sign with, so a downloaded `.app` would
@@ -29,13 +41,33 @@ arrive quarantined and macOS would tell you it could not be verified. Code
 compiled on your own machine never is. Building also means you get a binary for
 your own architecture with no universal-binary machinery.
 
-**Requirements:** macOS 14+, and Command Line Tools (the script offers to
-install them). No Xcode. No dependencies. Roughly a minute to build.
+**Requirements:** macOS 14+, and Command Line Tools — if they're missing, the
+script fires Apple's installer and exits so you can finish it and re-run. No
+Xcode. No dependencies. About 40 seconds to build on Apple Silicon; several
+minutes, silently, on Intel — the script suppresses build output.
 
 Restart any running Claude Code sessions afterwards, and turn on **Launch at
 Login** from the menu bar extra so it survives a reboot.
 
 Everything is local — the app makes no network calls, ever.
+
+## Uninstall
+
+There's no receipt system, so remove things in this order — reversing it (drag
+to the Trash first) leaves every hook command in `~/.claude/settings.json`
+pointing at a binary that no longer exists, so every subsequent Claude Code
+hook event runs a missing command:
+
+```bash
+/Applications/ClaudeIsland.app/Contents/MacOS/ClaudeIsland --uninstall-hooks
+```
+
+or **Remove Hooks** from the menu bar extra — either strips ClaudeIsland's
+entries from `settings.json` and the forwarding line from your status-line
+script, if one was added, rather than touching anything else in those files.
+Then turn off **Launch at Login** from the same menu, and only then delete
+`ClaudeIsland.app` (from `/Applications` or `~/Applications`, wherever it
+landed).
 
 ## Build
 
@@ -266,7 +298,7 @@ animations moved.
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
 | Tests | 98 passing |
-| Self-test | 44 checks passing |
+| Self-test | 90 checks passing |
 
 ## Visual language
 
