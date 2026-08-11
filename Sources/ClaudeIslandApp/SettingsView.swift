@@ -70,13 +70,14 @@ struct SettingsView: View {
     /// hook controls and the debug pins sat one scroll apart from the setting
     /// most people came to change.
     private enum Pane: String, CaseIterable, Identifiable {
-        case general, sounds, hooks, advanced
+        case general, appearance, sounds, hooks, advanced
 
         var id: Self { self }
 
         var title: String {
             switch self {
             case .general: "General"
+            case .appearance: "Appearance"
             case .sounds: "Sounds"
             case .hooks: "Hooks"
             case .advanced: "Advanced"
@@ -86,6 +87,7 @@ struct SettingsView: View {
         var symbol: String {
             switch self {
             case .general: "gearshape"
+            case .appearance: "paintpalette"
             case .sounds: "speaker.wave.2"
             case .hooks: "link"
             case .advanced: "wrench.and.screwdriver"
@@ -97,7 +99,7 @@ struct SettingsView: View {
         List(Pane.allCases, selection: $pane) { item in
             Label(item.title, systemImage: item.symbol)
         }
-        // A floor rather than a fixed width: "Advanced" is the longest label
+        // A floor rather than a fixed width: "Appearance" is the longest label
         // today, but the column still has to survive a larger text size.
         .navigationSplitViewColumnWidth(min: 150, ideal: 168, max: 220)
     }
@@ -106,6 +108,7 @@ struct SettingsView: View {
     private var detail: some View {
         switch pane ?? .general {
         case .general: generalPane
+        case .appearance: appearancePane
         case .sounds: soundsPane
         case .hooks: hooksPane
         case .advanced: advancedPane
@@ -133,6 +136,40 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
+    /// Second in the sidebar rather than last: it is the one pane that answers a
+    /// question — "what is this thing going to look like on my screen" — instead
+    /// of asking one, and behind the hook plumbing it would only be found by
+    /// people who were already looking for it.
+    ///
+    /// The preview is fed made-up sessions and driven by a view model of its own;
+    /// see `IslandPreviewSource` for why that second model is not an optimisation
+    /// but the whole safety property. Nothing on this pane writes a setting.
+    private var appearancePane: some View {
+        Form {
+            Section {
+                IslandPreview(store: store)
+            } footer: {
+                Text(
+                    "These sessions are invented — the HUD draws them with the same "
+                        + "code it draws yours with. The tier buttons pose this preview "
+                        + "only; to pin the real HUD, use Advanced."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// Still dimmed while the HUD is off, exactly as it was when the two
+    /// switches sat together. The reason for the dimming now lives a pane away
+    /// — a real cost of the split, accepted rather than papered over with a
+    /// caption that would only restate the General pane.
+    /// Still dimmed while the HUD is off, exactly as it was when the two
+    /// switches sat together. The reason for the dimming now lives a pane away
+    /// — a real cost of the split, accepted rather than papered over with a
+    /// caption that would only restate the General pane.
     private var soundsPane: some View {
         Form {
             Toggle("Play sounds", isOn: soundsBinding)

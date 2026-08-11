@@ -64,7 +64,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // the preview scales to whatever it is given, and `minWidth` is
         // unchanged, so nothing here is load-bearing.
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 580),
             // Still resizable: the panes scroll, and a fixed height would clip
             // whichever pane happens to be longest today on a short display.
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -76,7 +76,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = NSHostingView(rootView: makeContent())
-        window.setContentSize(NSSize(width: 720, height: 560))
+        window.setContentSize(NSSize(width: 820, height: 580))
         window.center()
         return window
     }

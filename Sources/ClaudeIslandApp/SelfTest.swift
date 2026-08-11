@@ -431,6 +431,49 @@ enum SelfTest {
         outlineGeometryChecks(&checks)
         await switcherChecks(&checks, model: model)
         settingsChecks(&checks)
+        previewIsolationChecks(&checks, live: model)
+    }
+
+    /// The Appearance pane's preview draws with the same view model class the
+    /// HUD does, which is exactly what makes it worth a check.
+    ///
+    /// `forcedMode` is a pin on the real island on the real screen. A preview
+    /// that posed the live model would pin the user's HUD as a side effect of
+    /// opening a settings pane and leave it pinned, because nothing else ever
+    /// clears it — and the pane would look completely correct while doing it.
+    /// The seam is `IslandPreviewSource`, so this drives the same call the
+    /// segmented control drives and then asks the live model whether anything
+    /// moved.
+    private static func previewIsolationChecks(_ checks: inout [Check], live: IslandViewModel) {
+        live.forcedMode = nil
+        live.unpin()
+        live.isHovered = false
+        live.apply(activeSnapshot())
+
+        let preview = IslandPreviewSource()
+        preview.show(.expanded)
+
+        checks.append(
+            Check(
+                name: "the appearance preview poses a model of its own",
+                passed: preview.model !== live && preview.model.mode == .expanded
+                    && live.forcedMode == nil && live.mode == .compact,
+                detail: "preview=\(preview.model.mode) live=\(live.mode) "
+                    + "forced=\(String(describing: live.forcedMode))"))
+
+        checks.append(
+            Check(
+                name: "the preview's invented sessions never reach the HUD",
+                passed: live.snapshot.primary?.id == "selftest"
+                    && preview.model.snapshot.primary?.id != "selftest"
+                    && preview.model.allSessions.count == 3,
+                detail: "live=\(live.snapshot.primary?.id ?? "nil") "
+                    + "preview=\(preview.model.allSessions.map(\.id))"))
+
+        // Leaves nothing ticking: every fixture holds a live session, so the
+        // preview scheduled a 1 Hz timer the moment it was posed.
+        preview.shutdown()
+        live.apply(HUDSnapshot())
     }
 
     private static func settingsChecks(_ checks: inout [Check]) {
