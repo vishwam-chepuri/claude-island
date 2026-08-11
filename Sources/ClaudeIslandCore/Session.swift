@@ -200,7 +200,11 @@ public enum SessionReducer {
                     toolName: name,
                     kind: ToolKind(toolName: name),
                     target: ToolActivity.extractTarget(toolName: name, input: envelope.toolInput),
-                    since: now))
+                    since: now,
+                    decisionToken: envelope.decisionToken,
+                    detail: ToolActivity.extractDetail(
+                        toolName: name, input: envelope.toolInput),
+                    siblingCount: envelope.siblingPromptCount))
 
         case .notification:
             switch NotificationKind(message: envelope.message) {

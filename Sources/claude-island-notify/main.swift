@@ -4,6 +4,13 @@
 // read stdin, connect with a 50 ms budget, write, exit 0. Every failure path is
 // a silent exit 0. A dead HUD must never break or slow a Claude session.
 //
+// `--await-decision` is the one exception, used only for PermissionRequest. There
+// the hook is *supposed* to block: Claude Code paints its permission dialog and
+// waits on the hook at the same time, so waiting here buys the HUD a window to
+// answer in without taking the prompt away from the terminal. Exiting silently
+// remains the fallback for every failure — the dialog is still on screen, so a
+// prompt this binary never answers is just an ordinary prompt.
+//
 // Deliberately imports Darwin and nothing else — no Foundation, no
 // ClaudeIslandCore. Foundation alone adds milliseconds of dyld work per
 // invocation, and this runs on every tool call.
@@ -12,6 +19,9 @@ import Darwin
 
 private let connectTimeoutMillis: Int32 = 50
 private let maxPayloadBytes = 16 << 20
+/// Matches the hook timeout the installer writes. Waiting longer than Claude
+/// Code will wait buys nothing; waiting less throws away answerable time.
+private let defaultDecisionTimeoutMillis: Int32 = 600_000
 
 /// Read all of stdin. Bounded by the pipe Claude Code hands us.
 private func readStdin() -> [UInt8] {
@@ -33,16 +43,70 @@ private func readStdin() -> [UInt8] {
     }
 }
 
+private func flagValue(_ name: String) -> String? {
+    let args = CommandLine.arguments
+    guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
+    return args[i + 1]
+}
+
 private func socketPath() -> [UInt8]? {
     // --socket <path> exists so tests can point at a temp socket.
-    let args = CommandLine.arguments
-    if let i = args.firstIndex(of: "--socket"), i + 1 < args.count {
-        return Array(args[i + 1].utf8)
-    }
+    if let override = flagValue("--socket") { return Array(override.utf8) }
     guard let home = getenv("HOME") else { return nil }
     var path = Array(String(cString: home).utf8)
     path.append(contentsOf: Array("/.claude-island/island.sock".utf8))
     return path
+}
+
+private func decisionTimeoutMillis() -> Int32 {
+    guard let raw = flagValue("--decision-timeout"), let parsed = Int32(raw), parsed > 0 else {
+        return defaultDecisionTimeoutMillis
+    }
+    return parsed
+}
+
+/// Reads exactly `count` bytes, or nil if the connection ends or stalls first.
+private func readExactly(_ fd: Int32, _ count: Int) -> [UInt8]? {
+    var buffer = [UInt8](repeating: 0, count: count)
+    var offset = 0
+    while offset < count {
+        let n = buffer[offset...].withUnsafeMutableBytes { raw -> Int in
+            read(fd, raw.baseAddress, count - offset)
+        }
+        if n > 0 {
+            offset += n
+        } else if n < 0 && errno == EINTR {
+            continue
+        } else {
+            return nil
+        }
+    }
+    return buffer
+}
+
+/// Waits for the HUD to answer, and forwards its answer to stdout verbatim —
+/// which is where Claude Code reads a hook's decision from.
+///
+/// Every giving-up path writes nothing at all, because partial or malformed
+/// stdout would be worse than silence: silence leaves the dialog exactly as it
+/// is, still answerable by hand.
+private func awaitDecision(_ fd: Int32, timeoutMillis: Int32) {
+    var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+    guard poll(&pfd, 1, timeoutMillis) > 0, pfd.revents & Int16(POLLIN) != 0 else { return }
+
+    // Readable now means the answer is arriving (or the HUD hung up). Whichever
+    // it is, it resolves in microseconds, so a short backstop is enough to stop
+    // a half-written frame from parking us until Claude Code's own timeout.
+    var tv = timeval(tv_sec: 5, tv_usec: 0)
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
+    guard let prefix = readExactly(fd, 4) else { return }
+    let length =
+        UInt32(prefix[0]) | UInt32(prefix[1]) << 8 | UInt32(prefix[2]) << 16
+        | UInt32(prefix[3]) << 24
+    guard length > 0, Int(length) <= maxPayloadBytes else { return }
+    guard let body = readExactly(fd, Int(length)) else { return }
+    _ = writeAll(1, body)
 }
 
 /// Connect with a hard millisecond budget. Non-blocking connect plus poll, so a
@@ -130,6 +194,8 @@ frame.append(UInt8(truncatingIfNeeded: length >> 16))
 frame.append(UInt8(truncatingIfNeeded: length >> 24))
 frame.append(contentsOf: payload)
 
-_ = writeAll(fd, frame)
+if writeAll(fd, frame), CommandLine.arguments.contains("--await-decision") {
+    awaitDecision(fd, timeoutMillis: decisionTimeoutMillis())
+}
 close(fd)
 exit(0)

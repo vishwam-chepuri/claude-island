@@ -6,13 +6,48 @@ public struct PermissionAsk: Sendable, Equatable {
     public let kind: ToolKind
     public let target: String?
     public let since: Date
+    /// Handle for answering this prompt from the HUD, or nil when it cannot be
+    /// answered here — because it was inferred from notification prose rather
+    /// than a held connection, because it was replayed from a trace, or because
+    /// the terminal already settled it.
+    ///
+    /// Claude Code keeps its own dialog up either way, so nil is never a dead
+    /// end: it only means this particular prompt has to be answered there.
+    public var decisionToken: UInt64?
+    /// The whole command or path the prompt is about, redacted but not clamped to
+    /// the 60 characters `target` allows itself.
+    ///
+    /// `target` exists to fit on a pill and will happily cut a command in half.
+    /// Anything that offers to approve one has to show all of it instead —
+    /// approving a truncated `rm -rf ./build && …` from a glance is strictly
+    /// worse than walking back to the terminal, which shows everything.
+    public let detail: String?
+    /// How many *other* prompts are waiting in this same session.
+    ///
+    /// Claude Code runs tool calls in parallel and fires a `PermissionRequest`
+    /// hook for each, while showing one dialog at a time. The state machine keeps
+    /// one ask per session, so with siblings present the card is showing the
+    /// newest prompt while the terminal may be asking about an older one — and a
+    /// press would approve the tool call the human is not reading. There is no
+    /// signal available to pair them up, so the honest move is to answer neither
+    /// and say why.
+    public var siblingCount: Int
 
-    public init(toolName: String, kind: ToolKind, target: String?, since: Date) {
+    public init(
+        toolName: String, kind: ToolKind, target: String?, since: Date,
+        decisionToken: UInt64? = nil, detail: String? = nil, siblingCount: Int = 0
+    ) {
         self.toolName = toolName
         self.kind = kind
         self.target = target
         self.since = since
+        self.decisionToken = decisionToken
+        self.detail = detail
+        self.siblingCount = siblingCount
     }
+
+    /// Whether the HUD can settle this prompt itself.
+    public var isAnswerable: Bool { decisionToken != nil && siblingCount == 0 }
 }
 
 /// Derived display state for one Claude Code session.
