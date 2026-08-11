@@ -12,6 +12,10 @@ struct SettingsActions {
     var quit: () -> Void
     var revealSupportFolder: () -> Void
     var notifyBinaryPath: () -> String
+    /// Rings a cue's chosen sound now. Passed in rather than played here so the
+    /// view keeps its promise of owning no side effects, and so mounting the
+    /// pane in a test can hand it a no-op and make no noise.
+    var previewSound: (SoundCue) -> Void
 }
 
 struct SettingsView: View {
@@ -66,10 +70,10 @@ struct SettingsView: View {
 
     // MARK: - Navigation
 
-    /// The panes are deliberately uneven — Sounds holds one switch — because
-    /// the even alternative is the single long form this replaced, where the
-    /// hook controls and the debug pins sat one scroll apart from the setting
-    /// most people came to change.
+    /// The panes are deliberately uneven — General holds three rows, Sounds
+    /// holds a mute and three cues — because the even alternative is the single
+    /// long form this replaced, where the hook controls and the debug pins sat
+    /// one scroll apart from the setting most people came to change.
     private enum Pane: String, CaseIterable, Identifiable {
         case general, appearance, sounds, hooks, advanced
 
@@ -232,20 +236,102 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    /// Still dimmed while the HUD is off, exactly as it was when the two
-    /// switches sat together. The reason for the dimming now lives a pane away
-    /// — a real cost of the split, accepted rather than papered over with a
+    /// One mute at the top, then a row per cue.
+    ///
+    /// The whole pane is still dimmed while the HUD is off, exactly as the lone
+    /// switch was: no HUD means no cues, because `playSoundCues` will not ring
+    /// for a HUD nobody can see. The reason for the dimming lives a pane away —
+    /// a real cost of the split, accepted rather than papered over with a
     /// caption that would only restate the General pane.
-    /// Still dimmed while the HUD is off, exactly as it was when the two
-    /// switches sat together. The reason for the dimming now lives a pane away
-    /// — a real cost of the split, accepted rather than papered over with a
-    /// caption that would only restate the General pane.
+    ///
+    /// The cue rows are *not* dimmed by the mute above them. Muted is a state
+    /// you configure through, and the play button has to keep working while it
+    /// is on or it reads as broken; the footer says so instead.
     private var soundsPane: some View {
         Form {
-            Toggle("Play sounds", isOn: soundsBinding)
-                .disabled(!store.hudEnabled)
+            Section {
+                Toggle("Play sounds", isOn: soundsBinding)
+            } footer: {
+                Text(
+                    "Silences every cue at once, without disturbing the switches below — "
+                        + "turning it back on restores what you had."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
+                ForEach(SoundCue.allCases, id: \.self) { cue in
+                    soundRow(cue)
+                }
+            } header: {
+                Text("Cues")
+            } footer: {
+                Text(
+                    store.doNotDisturb
+                        ? "None of these will ring while Play sounds is off. Play previews the "
+                            + "chosen sound anyway."
+                        : "Play previews the chosen sound, whatever these switches say."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .formStyle(.grouped)
+        .disabled(!store.hudEnabled)
+    }
+
+    /// One cue: what it means in this app's terms, whether it rings, what it
+    /// rings, and a way to hear that without waiting for a session to do it.
+    ///
+    /// The picker and the play button stay live under an *off* switch on
+    /// purpose. The switch says whether the cue rings, not whether it can be
+    /// set up — auditioning three sounds before deciding to turn a cue on is the
+    /// normal way to use this pane, and a row that goes dead the moment you
+    /// switch it off makes that a two-step dance.
+    private func soundRow(_ cue: SoundCue) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(cue.settingsTitle, isOn: soundEnabledBinding(cue))
+            Text(cue.settingsCaption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Picker("Sound", selection: soundNameBinding(cue)) {
+                    ForEach(soundOptions(for: cue), id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 180)
+                Button {
+                    actions.previewSound(cue)
+                } label: {
+                    Label("Play", systemImage: "play.fill")
+                }
+                // The label reads "Play" for every row, which is fine to look at
+                // and useless to hear: VoiceOver reads the rows one after
+                // another and three identical buttons name nothing.
+                .accessibilityLabel("Play the sound for \(cue.settingsTitle)")
+                Spacer()
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// The offered sounds, plus whatever this cue is set to if that is not one
+    /// of them.
+    ///
+    /// This file is documented as hand-editable, and `SystemSound.all` is a
+    /// fixed list rather than whatever the machine has — so a name that works
+    /// perfectly well can be absent from it. A `Picker` whose selection matches
+    /// no tag draws an empty row, which reads as a setting that was lost rather
+    /// than one this build simply does not offer.
+    private func soundOptions(for cue: SoundCue) -> [String] {
+        let chosen = store[cue].name
+        guard !SystemSound.all.contains(chosen) else { return SystemSound.all }
+        return [chosen] + SystemSound.all
     }
 
     private var hooksPane: some View {
@@ -410,6 +496,17 @@ struct SettingsView: View {
     /// that is *on* when sounds are *off* has to be read twice every time.
     private var soundsBinding: Binding<Bool> {
         Binding(get: { !store.doNotDisturb }, set: { store.doNotDisturb = !$0 })
+    }
+
+    /// Both halves of a cue write through `SettingsStore`'s subscript, which
+    /// lands on a stored property and persists on the way past — so a switch or
+    /// a picker is on disk before the sound it describes can next fire.
+    private func soundEnabledBinding(_ cue: SoundCue) -> Binding<Bool> {
+        Binding(get: { store[cue].enabled }, set: { store[cue].enabled = $0 })
+    }
+
+    private func soundNameBinding(_ cue: SoundCue) -> Binding<String> {
+        Binding(get: { store[cue].name }, set: { store[cue].name = $0 })
     }
 
     /// Not backed by `settings.json` — the real state lives in `SMAppService`,

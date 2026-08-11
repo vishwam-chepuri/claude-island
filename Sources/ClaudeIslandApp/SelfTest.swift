@@ -431,6 +431,7 @@ enum SelfTest {
         outlineGeometryChecks(&checks)
         await switcherChecks(&checks, model: model)
         settingsChecks(&checks)
+        soundChecks(&checks)
         await healthChecks(&checks)
         previewIsolationChecks(&checks, live: model)
     }
@@ -608,7 +609,7 @@ enum SelfTest {
                 notifyBinaryPath: { "/tmp/claude-island-notify" },
                 // A no-op, not the real player: mounting a pane must not be
                 // able to make a noise, and nothing here presses the button.
-                ))
+                previewSound: { _ in }))
         let host = NSHostingView(rootView: view)
         host.frame = CGRect(x: 0, y: 0, width: 820, height: 580)
         host.layoutSubtreeIfNeeded()
@@ -657,6 +658,18 @@ enum SelfTest {
                     && reloaded.forcedMode == "peek",
                 detail: "\(reloaded)"))
 
+        // The pane writes a cue's settings through a subscript rather than to a
+        // named property. A subscript setter that assigned to a copy would still
+        // move the switch on screen and still lose it by the next launch.
+        store[.waiting] = CueSound(enabled: false, name: "Tink")
+        let sounds = IslandSettings.load(root: root)
+        checks.append(
+            Check(
+                name: "a per-cue sound change persists through the store's subscript",
+                passed: sounds[.waiting] == CueSound(enabled: false, name: "Tink")
+                    && sounds[.done] == SoundCue.done.defaultSound,
+                detail: "waiting=\(sounds[.waiting]) done=\(sounds[.done])"))
+
         // The window writes a string; the HUD needs a tier. A typo must leave
         // the HUD unpinned rather than pin it to something arbitrary.
         checks.append(
@@ -668,6 +681,50 @@ enum SelfTest {
                     && IslandMode(forcedName: nil) == nil,
                 detail: "expanded=\(String(describing: IslandMode(forcedName: "expanded"))) "
                     + "nonsense=\(String(describing: IslandMode(forcedName: "nonsense")))"))
+    }
+
+    /// The sound settings' app-side half: a stored name has to become a sound.
+    ///
+    /// Nothing here plays anything. `NSSound(named:)` loads a sound and this
+    /// inspects what it loaded — a self-test that made a dozen noises is one
+    /// nobody would run twice, and the check would still not prove anything the
+    /// resolved name does not.
+    ///
+    /// The headless suite covers the settings themselves; what it cannot reach
+    /// is whether the names in `SystemSound.all` mean anything to AppKit on this
+    /// machine, which is the whole point of offering a fixed list.
+    private static func soundChecks(_ checks: inout [Check]) {
+        let missing = SystemSound.all.filter { NSSound(named: $0) == nil }
+        checks.append(
+            Check(
+                name: "every sound the picker offers exists on this Mac",
+                passed: missing.isEmpty,
+                detail: missing.isEmpty
+                    ? "\(SystemSound.all.count) sounds load"
+                    : "missing: \(missing.joined(separator: ", "))"))
+
+        for cue in SoundCue.allCases {
+            // A name macOS dropped, or a typo in a hand-edited settings.json.
+            // Either way the cue must still be audible: silence here would be
+            // read as the HUD having stopped noticing sessions at all.
+            let fallback = Self.resolve("Klink-no-such-sound", for: cue)
+            checks.append(
+                Check(
+                    name: "an unknown sound name for \(cue) falls back to its default",
+                    passed: fallback == cue.defaultSoundName,
+                    detail: "resolved to \(fallback ?? "silence"), wanted \(cue.defaultSoundName)"))
+
+            checks.append(
+                Check(
+                    name: "a chosen sound name for \(cue) is the one that would ring",
+                    passed: Self.resolve("Submarine", for: cue) == "Submarine",
+                    detail: "resolved to \(Self.resolve("Submarine", for: cue) ?? "silence")"))
+        }
+    }
+
+    /// What `AppController` would ring for this name, by name — never played.
+    private static func resolve(_ name: String, for cue: SoundCue) -> String? {
+        AppController.sound(for: cue, named: name)?.name
     }
 
     /// The edge belongs to a permission prompt, and only a permission prompt.

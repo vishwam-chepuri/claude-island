@@ -277,7 +277,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             liveIDs.insert(session.id)
             let cue = session.state.soundCue
             let firstObservation = seenSessionIDs.insert(session.id).inserted
-            if !firstObservation, model.isEnabled, !doNotDisturb, let cue,
+            if !firstObservation, model.isEnabled, let cue, rings(cue),
                 lastSoundCue[session.id] != cue
             {
                 play(cue)
@@ -289,12 +289,50 @@ final class AppController: NSObject, NSApplicationDelegate {
         lastSoundCue = lastSoundCue.filter { liveIDs.contains($0.key) }
     }
 
+    /// Whether a cue is allowed to ring right now.
+    ///
+    /// The global mute outranks the per-cue switch, so one click silences
+    /// everything without editing three switches that then have to be put back.
+    /// Both checks live here rather than inside `play` so the preview button can
+    /// ignore them — see `previewSound`.
+    private func rings(_ cue: SoundCue) -> Bool { !doNotDisturb && settings[cue].enabled }
+
+    /// Rings a cue with whatever sound it is set to.
+    ///
+    /// Reads the store at ring time rather than through `applySettings`: there
+    /// is no live state to keep in step, so a change to a picker takes effect on
+    /// the next cue with nothing to apply in between.
     private func play(_ cue: SoundCue) {
-        switch cue {
-        case .done: NSSound(named: "Glass")?.play()
-        case .inputRequired: NSSound(named: "Ping")?.play()
-        case .waiting: NSSound(named: "Pop")?.play()
-        }
+        Self.sound(for: cue, named: settings[cue].name)?.play()
+    }
+
+    /// Resolves a stored sound name to something that will actually make a
+    /// noise, falling back to what this cue rang before it was configurable.
+    ///
+    /// `NSSound(named:)` answers nil for anything this Mac does not have — a
+    /// name a future macOS drops, or a typo in a hand-edited settings.json.
+    /// Falling silent there is the wrong failure: a cue that does not ring is
+    /// indistinguishable from a cue that never fired, so a bad name would be
+    /// read as "the HUD stopped noticing my sessions" rather than "that sound is
+    /// gone", and there is nothing on screen at that moment to correct the
+    /// impression. Ringing the default is wrong in a way you can hear, trace to
+    /// this pane, and fix.
+    ///
+    /// Static, and separate from `play`, so --selftest can check the fallback
+    /// resolved to the right sound without playing it.
+    static func sound(for cue: SoundCue, named name: String) -> NSSound? {
+        NSSound(named: name) ?? NSSound(named: cue.defaultSoundName)
+    }
+
+    /// Rings a cue on demand, from the settings window's play button.
+    ///
+    /// Deliberately ignores both the global mute and the cue's own switch: the
+    /// button was just pressed, and a preview that answers with silence because
+    /// of a switch elsewhere on the pane is indistinguishable from a broken
+    /// button. It is also the only way to audition a sound for a cue you have
+    /// not turned on yet.
+    private func previewSound(_ cue: SoundCue) {
+        play(cue)
     }
 
     private func presentSocketFailure(_ error: Error) {
@@ -314,7 +352,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         let actions = SettingsActions(
             quit: { [weak self] in self?.quit() },
             revealSupportFolder: { [weak self] in self?.revealSupportFolder() },
-            notifyBinaryPath: { Self.notifyBinaryPath() })
+            notifyBinaryPath: { Self.notifyBinaryPath() },
+            previewSound: { [weak self] cue in self?.previewSound(cue) })
         settingsWindow = SettingsWindowController { [settings, model, health] in
             AnyView(SettingsView(store: settings, health: health, model: model, actions: actions))
         }
@@ -341,6 +380,10 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// Called for every change rather than only for the interesting ones: it is
     /// cheap, and it means there is exactly one path from a stored setting to
     /// its effect, so a setting cannot be honoured on relaunch but ignored live.
+    ///
+    /// The sound settings are the one deliberate exception, and they are an
+    /// exception in the safe direction: `rings` and `play` read the store at the
+    /// moment a cue fires, so there is no copy of them here that could go stale.
     private func applySettings(_ new: IslandSettings) {
         // The environment override outranks the stored setting, in both
         // directions: seeding settings at launch must not switch off logging

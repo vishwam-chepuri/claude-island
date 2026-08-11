@@ -157,7 +157,11 @@ public enum SessionState: Sendable, Equatable {
 }
 
 /// A sound-worthy transition into a `SessionState`. See `SessionState.soundCue`.
-public enum SoundCue: Sendable, Equatable {
+///
+/// `CaseIterable` because each cue carries its own settings — see `CueSound` —
+/// and the settings pane draws one row per case rather than three hand-written
+/// ones that could fall out of step with this enum.
+public enum SoundCue: Sendable, Hashable, CaseIterable {
     case done
     case inputRequired
     case waiting

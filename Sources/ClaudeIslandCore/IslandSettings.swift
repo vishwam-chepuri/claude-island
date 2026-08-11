@@ -1,5 +1,78 @@
 import Foundation
 
+/// The alert sounds macOS ships in `/System/Library/Sounds`, which is what the
+/// settings picker offers.
+///
+/// Hardcoded rather than read off the disk. Scanning that directory would pick
+/// up whatever a future macOS adds — and anything the user dropped into
+/// `~/Library/Sounds` — but the offered list would then differ between machines,
+/// which is exactly the kind of thing a test cannot pin down and a bug report
+/// cannot describe. This set has gone unchanged for many macOS releases; the
+/// price of fixing it here is that a genuinely new system sound needs a code
+/// change before it can be picked.
+///
+/// Names, not sounds: `NSSound` lives in AppKit and Core does not import it, so
+/// nothing here can tell whether a name still resolves. That check belongs to
+/// whoever rings it — see `AppController.sound(for:named:)`.
+public enum SystemSound {
+    /// Alphabetical, because a picker is scanned for a name. The three defaults
+    /// are left scattered through it rather than promoted to the top: this is a
+    /// list, not a ranking, and a familiar order beats a helpful one.
+    public static let all = [
+        "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse",
+        "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink",
+    ]
+}
+
+/// One cue's audio settings: whether it rings at all, and with what.
+///
+/// The two travel together because they are read together, and because keeping
+/// the name while the switch is off is the point — muting a cue must not lose
+/// the sound that was picked for it.
+public struct CueSound: Codable, Equatable, Sendable {
+    public var enabled: Bool
+    /// A name from `SystemSound.all`. Free-form on purpose: the file is meant to
+    /// be hand-editable, and a name this build does not list may still resolve
+    /// on the machine that wrote it.
+    public var name: String
+
+    public init(enabled: Bool = true, name: String) {
+        self.enabled = enabled
+        self.name = name
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, name
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        // No default for the name here: this type does not know which cue it
+        // belongs to, and every cue has a different one. `IslandSettings` fills
+        // the blank in, since it is the only place that knows.
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+    }
+}
+
+extension SoundCue {
+    /// The sound this cue rang back when all three were hardcoded.
+    ///
+    /// Also the fallback for a stored name that no longer resolves, which is
+    /// why it lives on the cue rather than only in `IslandSettings()`.
+    public var defaultSoundName: String {
+        switch self {
+        case .done: "Glass"
+        case .inputRequired: "Ping"
+        case .waiting: "Pop"
+        }
+    }
+
+    /// On, with the default sound: the behaviour of every build before these
+    /// were settings at all.
+    public var defaultSound: CueSound { CueSound(enabled: true, name: defaultSoundName) }
+}
+
 /// Everything the settings window can change, in one file.
 ///
 /// This replaced a set of one-off sentinel files (`dnd`, `debug`, `tint`,
@@ -17,8 +90,17 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// replaces — a switch that silently resets on every relaunch reads as a
     /// bug once it lives in a window rather than a menu.
     public var hudEnabled: Bool = true
-    /// Mutes the sound cues without touching the HUD itself.
+    /// Mutes every sound cue without touching the HUD itself, and without
+    /// disturbing the per-cue switches below — one thing to hit when a meeting
+    /// starts, that leaves the configuration to come back to afterwards.
     public var doNotDisturb: Bool = false
+    /// One field per cue rather than a dictionary keyed by `SoundCue`: each
+    /// decodes on its own, so a file naming only one of them keeps the defaults
+    /// for the other two, and a cue added later cannot silently un-key the
+    /// stored ones. Read them through `subscript(cue:)`.
+    public var doneSound: CueSound = SoundCue.done.defaultSound
+    public var inputRequiredSound: CueSound = SoundCue.inputRequired.defaultSound
+    public var waitingSound: CueSound = SoundCue.waiting.defaultSound
     /// Off by default: a HUD has no business writing to disk on every tool call.
     public var logging: Bool = false
     /// Fills the island with a visible colour so its edges can be seen against
@@ -33,11 +115,33 @@ public struct IslandSettings: Codable, Equatable, Sendable {
 
     public static var path: URL { IslandPaths.settingsFile }
 
+    /// Indexed access to the three sound fields, so the settings pane can loop
+    /// over `SoundCue.allCases` instead of repeating one row against three
+    /// field names — and so a fourth cue is a compile error here rather than a
+    /// row nobody remembered to add.
+    public subscript(cue: SoundCue) -> CueSound {
+        get {
+            switch cue {
+            case .done: doneSound
+            case .inputRequired: inputRequiredSound
+            case .waiting: waitingSound
+            }
+        }
+        set {
+            switch cue {
+            case .done: doneSound = newValue
+            case .inputRequired: inputRequiredSound = newValue
+            case .waiting: waitingSound = newValue
+            }
+        }
+    }
+
     /// Every decoding key is optional with a default, so a settings file written
     /// by an older build — or hand-edited down to a single key — still loads,
     /// and gains the new keys the next time anything is saved.
     private enum CodingKeys: String, CodingKey {
         case hudEnabled, doNotDisturb, logging, debugTint, forcedMode
+        case doneSound, inputRequiredSound, waitingSound
     }
 
     public init(from decoder: Decoder) throws {
@@ -47,6 +151,24 @@ public struct IslandSettings: Codable, Equatable, Sendable {
         logging = try c.decodeIfPresent(Bool.self, forKey: .logging) ?? false
         debugTint = try c.decodeIfPresent(Bool.self, forKey: .debugTint) ?? false
         forcedMode = try c.decodeIfPresent(String.self, forKey: .forcedMode)
+
+        // The upgrade path that matters: every settings.json written before
+        // these keys existed has none of them, and must come back ringing
+        // exactly what that build rang. A missing key here is not "no sound".
+        func sound(_ key: CodingKeys, _ cue: SoundCue) throws -> CueSound {
+            guard var stored = try c.decodeIfPresent(CueSound.self, forKey: key) else {
+                return cue.defaultSound
+            }
+            // An object present but with no name in it — `{"enabled": false}`
+            // from a hand-edit — takes the cue's default too. It would ring the
+            // default anyway once resolved, and leaving the name empty would
+            // draw an empty row in the picker that reads as a lost setting.
+            if stored.name.isEmpty { stored.name = cue.defaultSoundName }
+            return stored
+        }
+        doneSound = try sound(.doneSound, .done)
+        inputRequiredSound = try sound(.inputRequiredSound, .inputRequired)
+        waitingSound = try sound(.waitingSound, .waiting)
     }
 
     // MARK: - Persistence

@@ -24,6 +24,33 @@ final class SettingsStore {
     var logging: Bool { didSet { persist() } }
     var debugTint: Bool { didSet { persist() } }
     var forcedMode: String? { didSet { persist() } }
+    var doneSound: CueSound { didSet { persist() } }
+    var inputRequiredSound: CueSound { didSet { persist() } }
+    var waitingSound: CueSound { didSet { persist() } }
+
+    /// The same indexing `IslandSettings` offers, so the pane can draw a row per
+    /// `SoundCue` and bind straight to it.
+    ///
+    /// The setter assigns to the stored property rather than to a copy, so the
+    /// `didSet` above still fires — a subscript that skipped it would move the
+    /// switch on screen and forget it by the next launch, which is the one
+    /// failure mode this whole store exists to prevent.
+    subscript(cue: SoundCue) -> CueSound {
+        get {
+            switch cue {
+            case .done: doneSound
+            case .inputRequired: inputRequiredSound
+            case .waiting: waitingSound
+            }
+        }
+        set {
+            switch cue {
+            case .done: doneSound = newValue
+            case .inputRequired: inputRequiredSound = newValue
+            case .waiting: waitingSound = newValue
+            }
+        }
+    }
 
     /// Where `persist()` writes. Overridden by the self-test so it can exercise
     /// the whole store-to-disk path against a temporary directory rather than
@@ -39,6 +66,9 @@ final class SettingsStore {
         logging = settings.logging
         debugTint = settings.debugTint
         forcedMode = settings.forcedMode
+        doneSound = settings.doneSound
+        inputRequiredSound = settings.inputRequiredSound
+        waitingSound = settings.waitingSound
     }
 
     var current: IslandSettings {
@@ -48,6 +78,9 @@ final class SettingsStore {
         s.logging = logging
         s.debugTint = debugTint
         s.forcedMode = forcedMode
+        s.doneSound = doneSound
+        s.inputRequiredSound = inputRequiredSound
+        s.waitingSound = waitingSound
         return s
     }
 
