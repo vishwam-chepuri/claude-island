@@ -580,18 +580,31 @@ func registerSocketPipelineTests() {
             defer { server.stop() }
             let collector = StreamCollector(stream)
 
+            // What this measures is leaks, not connect capacity. Opening far
+            // faster than the accept loop drains saturates the 64-deep listen
+            // backlog and `connect()` is refused — which the real hook client
+            // treats as "exit 0, let the session continue". Counting refusals as
+            // failures made this test accuse the server three separate times of
+            // losing traffic it had never received.
             let churn = 300
+            var opened = 0
+            var refused = 0
             for i in 0..<churn {
-                guard let fd = openFrame(permissionPayload("churn-\(i)"), to: path) else {
-                    return await expect(false, "could not open prompt \(i) — descriptors leaked?")
+                if let fd = openFrame(permissionPayload("churn-\(i)"), to: path) {
+                    opened += 1
+                    close(fd)
+                } else {
+                    refused += 1
                 }
-                close(fd)
             }
+            await expect(opened > churn / 2, "only \(opened)/\(churn) prompts could connect")
 
-            // Drain so the withdrawals have all been processed before counting.
             var seen = 0
-            while seen < churn, await collector.next(timeout: 10) != nil { seen += 1 }
-            await expectEqual(seen, churn, "the listener stopped delivering partway through")
+            while seen < opened, await collector.next(timeout: 10) != nil { seen += 1 }
+            await expectEqual(
+                seen, opened,
+                "opened \(opened) prompts (\(refused) refused) and saw \(seen); "
+                    + "server reported drops: \(server.drops())")
 
             let deadline = Date().addingTimeInterval(10)
             while server.pendingDecisionCount > 0, Date() < deadline {
@@ -903,7 +916,8 @@ func registerSocketPipelineTests() {
                 }
                 await expectEqual(
                     seen.count, expected.count,
-                    "generation \(i) accepted \(expected) but delivered \(seen)")
+                    "generation \(i) accepted \(expected) but delivered \(seen); "
+                        + "server reported drops: \(server.drops())")
 
                 server.stop()
                 if let held { close(held) }

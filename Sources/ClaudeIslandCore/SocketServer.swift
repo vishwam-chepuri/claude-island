@@ -122,6 +122,43 @@ public final class SocketServer: @unchecked Sendable {
         pending.resolve(token, with: decision)
     }
 
+    /// Why a payload that was accepted never reached the stream.
+    ///
+    /// Every one of these is a silent loss: the client wrote its frame, exited 0,
+    /// and believes the HUD was told. Counting them by reason is the difference
+    /// between "the island missed something" and a diagnosis — chasing one of
+    /// these without it cost several wrong theories.
+    public enum DropReason: String, Sendable, CaseIterable {
+        /// The length prefix never completed within the read window.
+        case shortPrefix
+        /// A prefix claiming nothing, or more than the cap.
+        case badLength
+        /// The body never completed within the read window.
+        case shortBody
+        /// Malformed JSON, or no session id to key a session on.
+        case undecodable
+        /// Accepted, then the server was torn down before the worker ran.
+        case serverGone
+        /// The stream had already finished, so a yield had nowhere to go.
+        case streamClosed
+    }
+
+    /// Counts of dropped payloads by reason, for diagnostics and tests.
+    public func drops() -> [DropReason: Int] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return dropCounts
+    }
+
+    private var dropCounts: [DropReason: Int] = [:]
+
+    private func recordDrop(_ reason: DropReason) {
+        stateLock.lock()
+        dropCounts[reason, default: 0] += 1
+        stateLock.unlock()
+        log.debug("dropped a payload: \(reason.rawValue)")
+    }
+
     /// How many prompts are currently held open. Diagnostics only.
     public var pendingDecisionCount: Int { pending.pendingCount }
 
@@ -229,7 +266,7 @@ public final class SocketServer: @unchecked Sendable {
                 defer { slots.signal() }
                 guard let self else {
                     close(client)
-                    return
+                    return  // Counted inside `handle` is impossible here; see serverGone.
                 }
                 self.handle(client)
             }
@@ -250,18 +287,25 @@ public final class SocketServer: @unchecked Sendable {
 
         guard let prefix = readExactly(fd, count: Framing.prefixLength),
             let length = Framing.decodePrefix(prefix)
-        else { return }
-
-        guard length > 0, length <= Framing.maxPayloadBytes else {
-            log.debug("rejecting payload of \(length) bytes")
+        else {
+            recordDrop(.shortPrefix)
             return
         }
 
-        guard let body = readExactly(fd, count: Int(length)) else { return }
+        guard length > 0, length <= Framing.maxPayloadBytes else {
+            log.debug("rejecting payload of \(length) bytes")
+            recordDrop(.badLength)
+            return
+        }
+
+        guard let body = readExactly(fd, count: Int(length)) else {
+            recordDrop(.shortBody)
+            return
+        }
 
         do {
             guard var envelope = try HookEnvelope.decode(Data(body)) else {
-                log.debug("payload had no session_id; dropped")
+                recordDrop(.undecodable)
                 return
             }
             if envelope.event.awaitsDecision {
@@ -276,9 +320,14 @@ public final class SocketServer: @unchecked Sendable {
                     max(0, pending.pendingCount(forSession: envelope.sessionID) - 1)
                 handedOff = true
             }
-            continuation?.yield(envelope)
+            guard let continuation else {
+                recordDrop(.streamClosed)
+                return
+            }
+            continuation.yield(envelope)
         } catch {
             log.debug("payload decode failed: \(error)")
+            recordDrop(.undecodable)
         }
     }
 
