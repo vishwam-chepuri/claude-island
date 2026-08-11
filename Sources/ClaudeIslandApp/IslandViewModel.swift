@@ -15,6 +15,19 @@ enum IslandMode: Equatable {
     case peek
     /// Click. A switcher across every active session, plus that session's detail.
     case expanded
+
+    /// Maps the stored `forcedMode` string onto a tier. Unknown and absent both
+    /// mean "not pinned" — a typo in the settings file must not pin the HUD to
+    /// something arbitrary.
+    init?(forcedName: String?) {
+        switch forcedName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "compact": self = .compact
+        case "alert": self = .alert
+        case "peek": self = .peek
+        case "expanded": self = .expanded
+        default: return nil
+        }
+    }
 }
 
 /// What the island's edge should be doing.
@@ -44,27 +57,20 @@ final class IslandViewModel {
     /// Set by clicking the island. Keeps the card open after the cursor leaves,
     /// so it can actually be read; hover alone collapses the moment you move.
     private(set) var isPinnedOpen = false
-    /// Set false by the menu bar extra; the HUD hides and all timers stop.
+    /// Set false from the settings window; the HUD hides and all timers stop.
+    /// Seeded from `IslandSettings.hudEnabled` by `AppController`.
     var isEnabled = true
     /// Answers a permission prompt. Set by `AppController`, which owns the socket
     /// the waiting hook client is on.
     var onAnswerPermission: ((UInt64, PermissionDecision) -> Void)?
-    /// Development aid, off by default. See IslandPaths.tintFlag.
-    var debugTint = FileManager.default.fileExists(atPath: IslandPaths.tintFlag.path)
+    /// Development aid, off by default. See `IslandSettings.debugTint`.
+    var debugTint = false
     /// Development aid: pins the HUD to a tier so peek and expanded can be
-    /// inspected without a real cursor. See IslandPaths.forceModeFlag.
-    var forcedMode: IslandMode? = {
-        guard
-            let raw = try? String(contentsOf: IslandPaths.forceModeFlag, encoding: .utf8)
-        else { return nil }
-        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "peek": return .peek
-        case "expanded": return .expanded
-        case "alert": return .alert
-        case "compact": return .compact
-        default: return nil
-        }
-    }()
+    /// inspected without a real cursor. See `IslandSettings.forcedMode`.
+    ///
+    /// Defaults here are all inert — every one of these is seeded from settings
+    /// by `AppController`, and the self-test drives them directly.
+    var forcedMode: IslandMode?
 
     /// Drives elapsed-time labels. Nil — and therefore not scheduled at all —
     /// whenever nothing is running. This is the idle-CPU contract: no session,

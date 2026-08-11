@@ -215,5 +215,5 @@ else
         failed)    echo "Hooks were not installed — run '$BIN --install-hooks' by hand." ;;
         skipped)   echo "Hooks were not installed. Run '$BIN --install-hooks' when you're ready." ;;
     esac
-    echo "Enable 'Launch at Login' from the menu bar extra to keep it across reboots."
+    echo "Open the app again to reach Settings; enable 'Launch at login' to keep it across reboots."
 fi

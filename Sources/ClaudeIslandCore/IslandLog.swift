@@ -8,20 +8,13 @@ public enum IslandPaths {
     public static var socket: URL { root.appendingPathComponent("island.sock") }
     public static var logFile: URL { root.appendingPathComponent("log") }
     public static var rotatedLogFile: URL { root.appendingPathComponent("log.1") }
-    /// Presence of this file turns logging on without a rebuild or a relaunch
-    /// into the menu.
-    public static var debugFlag: URL { root.appendingPathComponent("debug") }
-    /// Temporary development aid: fills the island with a visible colour so its
-    /// edges can be seen against the notch and the menu bar, which pure #000
-    /// deliberately blends into.
-    public static var tintFlag: URL { root.appendingPathComponent("tint") }
-    /// Development aid: contains "peek" or "expanded" to pin the HUD to that
-    /// tier. Hover and click cannot be synthesised without Accessibility
-    /// permission, so without this the open tiers cannot be inspected.
-    public static var forceModeFlag: URL { root.appendingPathComponent("force-mode") }
-    /// Presence of this file mutes the sound cues without touching the HUD
-    /// itself.
-    public static var dndFlag: URL { root.appendingPathComponent("dnd") }
+    /// Every user-visible setting. See `IslandSettings`.
+    ///
+    /// The `dnd`, `debug`, `tint` and `force-mode` sentinel files this replaced
+    /// are named only in `IslandSettings.bootstrap()`, which consumes them.
+    /// Nothing else may read them — a second reader is how two files start
+    /// disagreeing about one setting.
+    public static var settingsFile: URL { root.appendingPathComponent("settings.json") }
 
     public static var claudeHome: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
@@ -60,10 +53,18 @@ public final class IslandLog: @unchecked Sendable {
         if enabled { queue.async { self.open() } }
     }
 
-    /// Enabled when the caller asks, or when the debug sentinel file exists.
+    /// Enabled when settings say so, or when the environment overrides them.
+    ///
+    /// The environment variable stays a pure runtime override — it turns logging
+    /// on for one run without writing anything, which is what makes it usable
+    /// from a test harness or a one-off `--replay`.
+    ///
+    /// Callers that also read settings must run `IslandSettings.bootstrap()`
+    /// first, or a migrating install reads `logging: false` here and then finds
+    /// the sentinel a moment later.
     public static func fromEnvironment() -> IslandLog {
         let on =
-            FileManager.default.fileExists(atPath: IslandPaths.debugFlag.path)
+            IslandSettings.load().logging
             || ProcessInfo.processInfo.environment["CLAUDE_ISLAND_DEBUG"] == "1"
         return IslandLog(enabled: on)
     }

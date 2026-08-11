@@ -27,6 +27,7 @@ if getrlimit(RLIMIT_NOFILE, &limits) == 0 {
 }
 
 registerStateMachineTests()
+registerSettingsTests()
 registerRedactorTests()
 registerSessionStoreTests()
 registerContextWindowTests()

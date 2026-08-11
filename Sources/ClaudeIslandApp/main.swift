@@ -13,7 +13,10 @@ func printUsage() {
         ClaudeIsland — a Dynamic Island-style HUD for Claude Code sessions.
 
         USAGE
-          ClaudeIslandApp                     Run the HUD (menu bar only).
+          ClaudeIslandApp                     Run the HUD (no Dock or menu bar icon).
+          ClaudeIslandApp --settings          Run the HUD and open the settings
+                                              window. Launching the app again
+                                              while it is running does the same.
           ClaudeIslandApp --replay <file>     Feed a recorded JSONL event log
                                               through the full pipeline with no
                                               UI and print the state trace.
@@ -139,14 +142,21 @@ case "--selftest":
     _ = NSApplication.shared
     exit(await SelfTest.run())
 
-case .some(let unknown) where unknown.hasPrefix("-"):
+case .some(let unknown) where unknown.hasPrefix("-") && unknown != "--settings":
     FileHandle.standardError.write(Data("unknown option: \(unknown)\n".utf8))
     printUsage()
     exit(2)
 
 default:
+    // Before anything reads settings: this folds any leftover sentinel file
+    // into settings.json and reports whether this is a fresh install.
+    let hadSettings = FileManager.default.fileExists(atPath: IslandSettings.path.path)
+    let settings = IslandSettings.bootstrap()
+
     let app = NSApplication.shared
-    let controller = AppController()
+    let controller = AppController(
+        settings: settings,
+        opensSettingsAtLaunch: !hadSettings || arguments.first == "--settings")
     app.delegate = controller
     app.setActivationPolicy(.accessory)
     app.run()

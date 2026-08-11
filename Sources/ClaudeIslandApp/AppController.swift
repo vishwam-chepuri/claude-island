@@ -11,8 +11,14 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var watcher: TranscriptWatcher!
     private var panel: IslandPanel!
     private var hoverMonitor: HoverMonitor!
-    private var statusItem: NSStatusItem!
     private let model = IslandViewModel()
+    private let settings: SettingsStore
+    private var settingsWindow: SettingsWindowController!
+    /// Whether to open the settings window as soon as the app is up — true on a
+    /// fresh install, and for `--settings`. With no menu bar extra there is
+    /// nothing on screen to find, so a first run that showed no window at all
+    /// would be indistinguishable from one that failed to launch.
+    private let opensSettingsAtLaunch: Bool
 
     private var socketTask: Task<Void, Never>?
     private var snapshotTask: Task<Void, Never>?
@@ -28,21 +34,44 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// The cue each session was last observed in, so a repeat of the same cue
     /// — a second permission ask, another idle nudge — does not re-ring.
     private var lastSoundCue: [String: SoundCue] = [:]
-    /// Mutes sound cues alone; the HUD keeps running. Persisted via
-    /// IslandPaths.dndFlag so it survives a relaunch.
-    private var doNotDisturb = FileManager.default.fileExists(atPath: IslandPaths.dndFlag.path)
+
+    /// Mutes sound cues alone; the HUD keeps running.
+    private var doNotDisturb: Bool { settings.doNotDisturb }
+
+    init(settings loaded: IslandSettings, opensSettingsAtLaunch: Bool) {
+        self.settings = SettingsStore(loaded)
+        self.opensSettingsAtLaunch = opensSettingsAtLaunch
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement already implies this, but be explicit: the app must never
-        // take focus, so it must never become a regular activation-policy app.
+        // take focus except to show its own settings window, so it must never
+        // become a regular activation-policy app.
         NSApp.setActivationPolicy(.accessory)
 
         IslandPaths.ensureRoot()
+        // Panel first: seeding the settings applies them, and applying
+        // `hudEnabled: false` orders the panel out — which needs a panel.
         buildPanel()
-        buildStatusItem()
+        buildSettings()
         startPipeline()
         observeScreenChanges()
         log.debug("ClaudeIsland started")
+
+        if opensSettingsAtLaunch { openSettings() }
+    }
+
+    /// Reopening the app — from Finder, Spotlight, or `open -a` — is the way
+    /// back to the settings window.
+    ///
+    /// With the menu bar extra gone this is the app's only permanent entry
+    /// point: the HUD itself is unclickable whenever it is dormant, which is
+    /// most of the time, and an accessory app has no Dock icon to click.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        log.debug("reopen requested (hasVisibleWindows: \(hasVisibleWindows))")
+        openSettings()
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -202,7 +231,6 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func apply(_ snapshot: HUDSnapshot) {
         playSoundCues(for: snapshot)
         model.apply(snapshot)
-        updateStatusItemGlyph()
 
         // The hover monitor exists only while there is something to hover.
         // With no sessions it is torn down completely, which is what keeps idle
@@ -261,130 +289,45 @@ final class AppController: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    // MARK: - Menu bar
+    // MARK: - Settings
 
-    private func buildStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "circle.dashed", accessibilityDescription: "ClaudeIsland")
-        statusItem.button?.image?.isTemplate = true
-        rebuildMenu()
+    private func buildSettings() {
+        settings.onChange = { [weak self] new in self?.applySettings(new) }
+        let actions = SettingsActions(
+            quit: { [weak self] in self?.quit() },
+            revealSupportFolder: { [weak self] in self?.revealSupportFolder() },
+            notifyBinaryPath: { Self.notifyBinaryPath() })
+        settingsWindow = SettingsWindowController { [settings, model] in
+            AnyView(SettingsView(store: settings, model: model, actions: actions))
+        }
+        // Seed the live state from what was loaded, so a HUD that was switched
+        // off in a previous run comes back off rather than flashing on.
+        applySettings(settings.current)
     }
 
-    private func updateStatusItemGlyph() {
-        let symbol: String
-        if !model.isEnabled {
-            symbol = "circle.dashed"
-        } else if model.snapshot.primary?.state.isAlert == true {
-            symbol = "exclamationmark.circle.fill"
-        } else if model.snapshot.isDormant {
-            symbol = "circle.dashed"
-        } else {
-            symbol = "circle.fill"
-        }
-        statusItem.button?.image = NSImage(
-            systemSymbolName: symbol, accessibilityDescription: "ClaudeIsland")
-        statusItem.button?.image?.isTemplate = true
+    private func openSettings() {
+        settingsWindow.show()
+        let state = settingsWindow.diagnostics
+        log.debug("settings window: \(state)")
     }
 
-    private func rebuildMenu() {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
+    /// Applies a settings change to the running app.
+    ///
+    /// Called for every change rather than only for the interesting ones: it is
+    /// cheap, and it means there is exactly one path from a stored setting to
+    /// its effect, so a setting cannot be honoured on relaunch but ignored live.
+    private func applySettings(_ new: IslandSettings) {
+        // The environment override outranks the stored setting, in both
+        // directions: seeding settings at launch must not switch off logging
+        // that `CLAUDE_ISLAND_DEBUG=1` asked for.
+        let forcedByEnvironment = ProcessInfo.processInfo.environment["CLAUDE_ISLAND_DEBUG"] == "1"
+        log.setEnabled(new.logging || forcedByEnvironment)
+        model.debugTint = new.debugTint
+        model.forcedMode = IslandMode(forcedName: new.forcedMode)
 
-        let status = NSMenuItem(title: statusLine, action: nil, keyEquivalent: "")
-        status.isEnabled = false
-        menu.addItem(status)
-        menu.addItem(.separator())
-
-        let toggle = NSMenuItem(
-            title: model.isEnabled ? "Disable HUD" : "Enable HUD",
-            action: #selector(toggleEnabled), keyEquivalent: "")
-        toggle.target = self
-        menu.addItem(toggle)
-
-        let dnd = NSMenuItem(
-            title: doNotDisturb ? "Disable Do Not Disturb" : "Enable Do Not Disturb",
-            action: #selector(toggleDoNotDisturb), keyEquivalent: "")
-        dnd.target = self
-        menu.addItem(dnd)
-
-        let installed = HookInstaller.isInstalled()
-        // A block from before the permission hook learned to wait is installed and
-        // stale at once, and the only symptom is an absence: prompts arrive with no
-        // way to answer them and nothing says why. Name it in the menu rather than
-        // leave the user to notice a missing button.
-        let stale = installed && !HookInstaller.isCurrent(binaryPath: Self.notifyBinaryPath())
-        let install = NSMenuItem(
-            title: installed
-                ? (stale ? "Update Hooks (out of date)" : "Reinstall Hooks")
-                : "Install Hooks…",
-            action: #selector(installHooks), keyEquivalent: "")
-        install.target = self
-        menu.addItem(install)
-
-        if installed {
-            let uninstall = NSMenuItem(
-                title: "Remove Hooks", action: #selector(uninstallHooks), keyEquivalent: "")
-            uninstall.target = self
-            menu.addItem(uninstall)
-        }
-
-        let copyBlock = NSMenuItem(
-            title: "Copy Hook JSON", action: #selector(copyHookBlock), keyEquivalent: "")
-        copyBlock.target = self
-        menu.addItem(copyBlock)
-
-        menu.addItem(.separator())
-
-        let logging = NSMenuItem(
-            title: log.isEnabled ? "Disable Logging" : "Enable Logging",
-            action: #selector(toggleLogging), keyEquivalent: "")
-        logging.target = self
-        menu.addItem(logging)
-
-        let tint = NSMenuItem(
-            title: model.debugTint ? "Hide Debug Tint" : "Show Debug Tint",
-            action: #selector(toggleDebugTint), keyEquivalent: "")
-        tint.target = self
-        menu.addItem(tint)
-
-        if LoginItem.isAvailable {
-            let login = NSMenuItem(
-                title: LoginItem.isEnabled ? "Don't Launch at Login" : "Launch at Login",
-                action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-            login.target = self
-            menu.addItem(login)
-        }
-
-        let reveal = NSMenuItem(
-            title: "Reveal Support Folder", action: #selector(revealSupportFolder),
-            keyEquivalent: "")
-        reveal.target = self
-        menu.addItem(reveal)
-
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit ClaudeIsland", action: #selector(quit), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
-
-        statusItem.menu = menu
-    }
-
-    private var statusLine: String {
-        guard model.isEnabled else { return "HUD disabled" }
-        let count = model.snapshot.sessionCount
-        switch count {
-        case 0: return "No active sessions"
-        case 1: return "1 session · \(model.snapshot.primary?.state.label ?? "")"
-        default: return "\(count) sessions"
-        }
-    }
-
-    // MARK: - Actions
-
-    @objc private func toggleEnabled() {
-        model.setEnabled(!model.isEnabled)
-        if model.isEnabled {
+        guard new.hudEnabled != model.isEnabled else { return }
+        model.setEnabled(new.hudEnabled)
+        if new.hudEnabled {
             panel.orderFrontRegardless()
             if !model.snapshot.isDormant { hoverMonitor.start() }
         } else {
@@ -392,140 +335,18 @@ final class AppController: NSObject, NSApplicationDelegate {
             hoverMonitor.stop()
         }
         syncInteractiveRect()
-        updateStatusItemGlyph()
-        rebuildMenu()
     }
 
-    @objc private func toggleDoNotDisturb() {
-        doNotDisturb.toggle()
-        IslandPaths.ensureRoot()
-        if doNotDisturb {
-            FileManager.default.createFile(atPath: IslandPaths.dndFlag.path, contents: nil)
-        } else {
-            try? FileManager.default.removeItem(at: IslandPaths.dndFlag)
-        }
-        rebuildMenu()
-    }
+    // MARK: - Actions
 
-    @objc private func installHooks() {
-        do {
-            let result = try HookInstaller.install(binaryPath: Self.notifyBinaryPath())
-            let alert = NSAlert()
-            alert.messageText = "Hooks installed"
-            alert.informativeText = """
-                \(result.installedEvents.count) events registered in ~/.claude/settings.json.
-                \(result.preservedOtherHooks) existing hook(s) from other tools were preserved.
-                Backup: \(result.backupPath.map { ($0 as NSString).lastPathComponent } ?? "none needed")
-
-                Restart any running Claude Code sessions to pick them up.
-                """
-            alert.runModal()
-        } catch {
-            presentError("Could not install hooks", error)
-        }
-        rebuildMenu()
-    }
-
-    @objc private func uninstallHooks() {
-        do {
-            try HookInstaller.uninstall()
-            // Mirror the CLI's --uninstall-hooks: a statusLine forwarding line
-            // added by --install-hooks is this route's to remove too, or the
-            // menu leaves a dangling reference the CLI would have cleaned up.
-            let statusline = try StatuslineInstaller.uninstall()
-            let alert = NSAlert()
-            alert.messageText = "Hooks removed"
-            if case .removed(let script) = statusline {
-                alert.informativeText = """
-                    ClaudeIsland's entries were removed from settings.json.
-                    The forwarding line was also removed from \(script).
-                    """
-            } else {
-                alert.informativeText = "ClaudeIsland's entries were removed from settings.json."
-            }
-            alert.runModal()
-        } catch {
-            presentError("Could not remove hooks", error)
-        }
-        rebuildMenu()
-    }
-
-    @objc private func copyHookBlock() {
-        let text = HookInstaller.hookBlockJSON(binaryPath: Self.notifyBinaryPath())
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    @objc private func toggleLogging() {
-        let turningOn = !log.isEnabled
-        log.setEnabled(turningOn)
-        // Persist through the sentinel file so it survives a relaunch.
-        if turningOn {
-            FileManager.default.createFile(atPath: IslandPaths.debugFlag.path, contents: nil)
-        } else {
-            try? FileManager.default.removeItem(at: IslandPaths.debugFlag)
-        }
-        rebuildMenu()
-    }
-
-    @objc private func toggleDebugTint() {
-        model.debugTint.toggle()
-        if model.debugTint {
-            IslandPaths.ensureRoot()
-            FileManager.default.createFile(atPath: IslandPaths.tintFlag.path, contents: nil)
-        } else {
-            try? FileManager.default.removeItem(at: IslandPaths.tintFlag)
-        }
-        rebuildMenu()
-    }
-
-    @objc private func toggleLaunchAtLogin() {
-        do {
-            try LoginItem.setEnabled(!LoginItem.isEnabled)
-            // Approval lives in System Settings and cannot be granted from here,
-            // so say where it is rather than leaving the menu title lying.
-            if LoginItem.status == .requiresApproval {
-                presentApprovalNeeded()
-            }
-        } catch {
-            // `register()` itself throws once the user has switched the item
-            // off in System Settings, not just the status after it succeeds —
-            // re-check status rather than assume every throw is opaque, so
-            // that reportedly-common case still gets the actionable message
-            // instead of a generic error dialog.
-            if LoginItem.status == .requiresApproval {
-                presentApprovalNeeded()
-            } else {
-                presentError("Could not change the login item", error)
-            }
-        }
-        rebuildMenu()
-    }
-
-    @objc private func revealSupportFolder() {
+    private func revealSupportFolder() {
         IslandPaths.ensureRoot()
         NSWorkspace.shared.activateFileViewerSelecting([IslandPaths.root])
     }
 
-    @objc private func quit() {
+    private func quit() {
         shutdown()
         NSApp.terminate(nil)
-    }
-
-    private func presentError(_ title: String, _ error: Error) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = "\(error)"
-        alert.alertStyle = .warning
-        alert.runModal()
-    }
-
-    private func presentApprovalNeeded() {
-        let alert = NSAlert()
-        alert.messageText = "Approval needed"
-        alert.informativeText =
-            "Enable ClaudeIsland under System Settings → General → Login Items."
-        alert.runModal()
     }
 
     // MARK: - Lifecycle

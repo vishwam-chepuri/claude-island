@@ -430,6 +430,56 @@ enum SelfTest {
             ))
         outlineGeometryChecks(&checks)
         await switcherChecks(&checks, model: model)
+        settingsChecks(&checks)
+    }
+
+    private static func settingsChecks(_ checks: inout [Check]) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("island-selftest-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var seeded = IslandSettings()
+        seeded.hudEnabled = true
+        let store = SettingsStore(seeded, root: root)
+
+        var applied: [IslandSettings] = []
+        store.onChange = { applied.append($0) }
+
+        store.hudEnabled = false
+        checks.append(
+            Check(
+                name: "changing a setting notifies the app",
+                passed: applied.count == 1 && applied.last?.hudEnabled == false,
+                detail: "\(applied.count) notification(s), last hudEnabled="
+                    + "\(applied.last.map { "\($0.hudEnabled)" } ?? "none")"))
+
+        checks.append(
+            Check(
+                name: "changing a setting writes it to disk at once",
+                passed: IslandSettings.load(root: root).hudEnabled == false,
+                detail: "on disk: \(IslandSettings.load(root: root))"))
+
+        store.doNotDisturb = true
+        store.forcedMode = "peek"
+        let reloaded = IslandSettings.load(root: root)
+        checks.append(
+            Check(
+                name: "later changes do not drop the earlier ones",
+                passed: !reloaded.hudEnabled && reloaded.doNotDisturb
+                    && reloaded.forcedMode == "peek",
+                detail: "\(reloaded)"))
+
+        // The window writes a string; the HUD needs a tier. A typo must leave
+        // the HUD unpinned rather than pin it to something arbitrary.
+        checks.append(
+            Check(
+                name: "a stored tier name maps onto the HUD's mode",
+                passed: IslandMode(forcedName: "expanded") == .expanded
+                    && IslandMode(forcedName: " Peek ") == .peek
+                    && IslandMode(forcedName: "nonsense") == nil
+                    && IslandMode(forcedName: nil) == nil,
+                detail: "expanded=\(String(describing: IslandMode(forcedName: "expanded"))) "
+                    + "nonsense=\(String(describing: IslandMode(forcedName: "nonsense")))"))
     }
 
     /// The edge belongs to a permission prompt, and only a permission prompt.

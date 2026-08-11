@@ -48,9 +48,33 @@ build on Apple Silicon; several minutes, silently, on Intel — the script
 suppresses build output.
 
 Restart any running Claude Code sessions afterwards, and turn on **Launch at
-Login** from the menu bar extra so it survives a reboot.
+login** in Settings so it survives a reboot.
 
 Everything is local — the app makes no network calls, ever.
+
+## Settings
+
+There is no menu bar icon and no Dock icon. To open Settings, **launch the app
+again** — from Finder, Spotlight, or `open -a ClaudeIsland`. It is already
+running, so instead of starting a second copy it brings the window up. On a
+fresh install the window opens by itself, since otherwise nothing on screen
+would say the app had started.
+
+The window is a sidebar with one pane per concern:
+
+```
+General   Status · Show the HUD · Launch at login
+Sounds    Play sounds
+Hooks     Install / update / remove, Copy Hook JSON
+Advanced  Debug log · Debug tint · Pin the HUD to · Reveal Support Folder
+```
+
+**Quit ClaudeIsland** sits in the footer, always visible. With no menu bar icon
+it is the only way to quit short of Activity Monitor, so it must never be
+something you have to scroll to find. ⌘Q works too, while the window has focus.
+
+The HUD itself is not an entry point: it is unclickable whenever no session is
+running, which is most of the time.
 
 ## Uninstall
 
@@ -63,12 +87,13 @@ hook event runs a missing command:
 /Applications/ClaudeIsland.app/Contents/MacOS/ClaudeIsland --uninstall-hooks
 ```
 
-or **Remove Hooks** from the menu bar extra — either strips ClaudeIsland's
-entries from `settings.json` and the forwarding line from your status-line
-script, if one was added, rather than touching anything else in those files.
-Then turn off **Launch at Login** from the same menu, and only then delete
-`ClaudeIsland.app` (from `/Applications` or `~/Applications`, wherever it
-landed).
+or **Remove** under Claude Code hooks in Settings — either strips
+ClaudeIsland's entries from `settings.json` and the forwarding line from your
+status-line script, if one was added, rather than touching anything else in
+those files. Then turn off **Launch at login** in the same window, and only then
+delete `ClaudeIsland.app` (from `/Applications` or `~/Applications`, wherever it
+landed). Its settings stay in `~/.claude-island/`; delete that folder too for a
+clean sweep.
 
 ## Build
 
@@ -78,7 +103,7 @@ swift build -c release          # binaries
 open dist/ClaudeIsland.app
 ```
 
-Then install the hooks, from the menu bar extra or the CLI:
+Then install the hooks, from the settings window or the CLI:
 
 ```bash
 dist/ClaudeIsland.app/Contents/MacOS/ClaudeIsland --install-hooks
@@ -199,8 +224,8 @@ discard; the session's next event retires it, and pressing it is a no-op that
 clears the offer.
 
 Hooks installed before this existed are installed *and* stale — present, so they
-look fine, but unable to answer anything. The menu bar says `Update Hooks (out of
-date)` rather than leaving you to notice a missing button.
+look fine, but unable to answer anything. Settings says `Installed, out of date`
+rather than leaving you to notice a missing button.
 
 **A permission clears on any subsequent event.** Approve leads to `PostToolUse`,
 deny leads to `UserPromptSubmit`; rather than enumerate every resolution path,
@@ -363,12 +388,13 @@ your session once the prompt is answered.
 
 When no session is active the island is dormant and deliberately unreachable —
 the mouse monitor is torn down entirely, which is what keeps idle CPU at
-0.000% rather than merely low. Use the menu bar extra in that state.
+0.000% rather than merely low. Open the app again to reach Settings in that
+state.
 
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 194 tests
+swift build && swift run ClaudeIslandTests      # 206 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
@@ -380,9 +406,10 @@ byte-stable. Fixtures in `Fixtures/` cover a normal session, permissions and
 failures, two concurrent sessions, subagents, and deliberately hostile input
 (malformed lines, unknown future events, embedded secrets).
 
-`--selftest` is a 90-check harness for what unit tests cannot exercise: that
-the panel never takes focus, that clicks land where they should, and dozens of
-on-screen layout and geometry checks besides. Click-through is verified
+`--selftest` is a 94-check harness for what unit tests cannot exercise: that
+the panel never takes focus, that clicks land where they should, that a settings
+change reaches both disk and the running HUD, and dozens of on-screen layout and
+geometry checks besides. Click-through is verified
 against the window server itself via `NSWindow.windowNumber(at:)` rather than
 trusting our own flags. **Run it with the screen unlocked** — a lock
 screen puts a full-screen `loginwindow` layer above everything and those three
@@ -413,28 +440,41 @@ the suites port back with a mechanical find-and-replace if Xcode is installed.
 ## Debug tint
 
 Pure `#000` is deliberate — it makes the island read as the physical cutout —
-but it also makes the shape's edges invisible while iterating on layout. The
-menu bar extra has **Show Debug Tint**, which fills it indigo with a cyan edge
-so the outline, the corner radii and the notch punch-out are all visible.
-
-```bash
-touch ~/.claude-island/tint            # or toggle it from the menu bar
-echo peek > ~/.claude-island/force-mode   # pin a tier: compact|alert|peek|expanded
-```
-
-Both are off by default and persisted by their sentinel files. `force-mode`
+but it also makes the shape's edges invisible while iterating on layout.
+Settings has **Show debug tint** under Developer, which fills it indigo with a
+cyan edge so the outline, the corner radii and the notch punch-out are all
+visible. **Pin the HUD to** in the same section holds it at one tier; that
 exists because hover and click cannot be synthesised without Accessibility
 permission — without it the open tiers cannot be looked at at all, and three
 padding bugs in the peek layout survived precisely because they had never been
-seen.
+seen. Leave it off otherwise: a leftover pin fails most of `--selftest`'s mode
+checks.
 
 ## Configuration
 
-Logging is **off by default**. Enable it from the menu bar, or:
+Settings live in `~/.claude-island/settings.json` — one readable file, safe to
+hand-edit or delete (deleting it restores every default). Changes made in the
+window apply immediately; changes made in the file are picked up at next launch.
+
+```json
+{
+  "debugTint": false,
+  "doNotDisturb": false,
+  "hudEnabled": true,
+  "logging": false
+}
+```
+
+Logging is **off by default**. Turn it on under Developer, or:
 
 ```bash
-touch ~/.claude-island/debug      # or CLAUDE_ISLAND_DEBUG=1
+touch ~/.claude-island/debug      # folded into settings.json at next launch
+CLAUDE_ISLAND_DEBUG=1             # or override for one run, writing nothing
 ```
+
+`dnd`, `tint` and `force-mode` work the same way — each is consumed on the next
+launch and folded into the JSON, which is also how installs from before the
+settings window carry their old flags across.
 
 It writes to `~/.claude-island/log`, capped at 1 MiB with a single rotation.
 
@@ -463,7 +503,7 @@ Step 2 is the awkward one: a sandboxed build would have to prompt for access to
 
 ```
 Sources/ClaudeIslandCore/     types, state machine, store, watcher, redaction, IPC
-Sources/ClaudeIslandApp/      panel, views, menu bar, CLI entry points
+Sources/ClaudeIslandApp/      panel, views, settings window, CLI entry points
 Sources/claude-island-notify/ hook client (Darwin only)
 Tests/ClaudeIslandCoreTests/  suites + TinyTest harness
 Fixtures/                     replay logs
