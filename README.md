@@ -109,6 +109,45 @@ text it does not recognise leaves the state alone rather than guessing.
 responding" hook. It is entered on `PostToolUse` and when the `prompting` flash
 expires.
 
+**A permission prompt can be answered from the card.** `PermissionRequest` is a
+*decision* hook, not just a notification, so the client for that one event runs
+with `--await-decision`: it holds its socket open and forwards whatever the HUD
+answers to stdout, where Claude Code reads it. Allow and Deny appear on the peek
+and expanded cards, and the transcript records `Allowed by PermissionRequest
+hook`.
+
+This races the terminal rather than replacing it. Claude Code paints its own
+dialog *and* waits on the hook at the same time, so whichever is answered first
+wins and nothing is ever taken away from the terminal. Every failure path
+degrades the same way — a dead HUD fails to connect in 50 ms, a wedged one is
+bounded by the client's deadline, and a hook that answers nothing simply leaves
+the dialog where it was. That is the whole safety argument: the worst outcome is
+that you walk back to the terminal, which is where you started.
+
+Three things it deliberately refuses to do:
+
+- **Approve a command it cannot show you whole.** The card grows to fit the
+  command; past six lines it stops growing and withholds Allow, because
+  approving something with an ellipsis through the middle of it is the one
+  hazard the terminal does not have.
+- **Answer when two prompts are live in one session.** Parallel tool calls raise
+  a prompt each while the terminal shows one at a time, and there is no signal
+  pairing them up — so a press could approve the call you are not reading. The
+  card says `2 prompts waiting` and refuses both.
+- **Persist a rule.** `decision.applyRule` would write an "always allow" into
+  settings.json, and that shape has not been verified the way allow and deny
+  have been.
+
+Answering in the terminal does **not** reap the waiting hook (measured: still
+alive 10s later), so there is no signal that a prompt was settled elsewhere. The
+card can briefly offer an answer Claude Code has already superseded and will
+discard; the session's next event retires it, and pressing it is a no-op that
+clears the offer.
+
+Hooks installed before this existed are installed *and* stale — present, so they
+look fine, but unable to answer anything. The menu bar says `Update Hooks (out of
+date)` rather than leaving you to notice a missing button.
+
 **A permission clears on any subsequent event.** Approve leads to `PostToolUse`,
 deny leads to `UserPromptSubmit`; rather than enumerate every resolution path,
 anything else happening counts as resolution.

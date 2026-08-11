@@ -148,6 +148,109 @@ func registerHookInstallerTests() {
             await expectEqual(after, "[1, 2, 3]")
         }
 
+        test("The permission hook is installed in await mode") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            let command = try await require(
+                hookEntries(try readJSON(url), event: "PermissionRequest").first?["command"]
+                    as? String)
+            await expect(
+                command.contains("--await-decision"),
+                "permission prompts cannot be answered from the HUD: \(command)")
+        }
+
+        test("No other event waits for a decision") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            let settings = try readJSON(url)
+            for event in HookEvent.installable where event != .permissionRequest {
+                let commands = hookEntries(settings, event: event.name)
+                    .compactMap { $0["command"] as? String }
+                await expect(
+                    !commands.contains { $0.contains("--await-decision") },
+                    "\(event.name) would block a tool call for no reason")
+            }
+        }
+
+        // The client stops waiting on its own deadline. If Claude Code's timeout
+        // fired first it would kill the client mid-wait, so the hook timeout has
+        // to be the longer of the two.
+        test("The permission hook outlasts the client's own deadline") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            let timeout = try await require(
+                hookEntries(try readJSON(url), event: "PermissionRequest").first?["timeout"]
+                    as? Int)
+            await expect(
+                Double(timeout) > Double(DecisionTimeout.clientMillis) / 1000,
+                "hook timeout \(timeout)s does not outlast the \(DecisionTimeout.clientMillis)ms client deadline"
+            )
+        }
+
+        test("Every other event keeps the short backstop") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            let settings = try readJSON(url)
+            for event in HookEvent.installable where event != .permissionRequest {
+                let timeout = hookEntries(settings, event: event.name).first?["timeout"] as? Int
+                await expectEqual(timeout, 5, "\(event.name) may now stall a session")
+            }
+        }
+
+        test("A path with spaces stays quoted once arguments follow it") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(
+                binaryPath:
+                    "/Users/dev/my apps/ClaudeIsland.app/Contents/MacOS/claude-island-notify",
+                settingsURL: url)
+            let command = try await require(
+                hookEntries(try readJSON(url), event: "PermissionRequest").first?["command"]
+                    as? String)
+            await expectEqual(
+                command,
+                "\"/Users/dev/my apps/ClaudeIsland.app/Contents/MacOS/claude-island-notify\" --await-decision"
+            )
+        }
+
+        test("A freshly installed block reports as current") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            await expect(HookInstaller.isCurrent(binaryPath: notifyPath, settingsURL: url))
+        }
+
+        // The case this exists for: an install from before the permission hook
+        // learned to wait. It is present, so `isInstalled` says yes, and it
+        // silently cannot answer a prompt.
+        test("A block predating --await-decision reports as stale") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+
+            var settings =
+                (try JSONSerialization.jsonObject(with: try Data(contentsOf: url))
+                    as? [String: Any]) ?? [:]
+            var hooks = (settings["hooks"] as? [String: Any]) ?? [:]
+            hooks["PermissionRequest"] = [
+                [
+                    "matcher": "",
+                    "hooks": [["type": "command", "command": notifyPath, "timeout": 5]],
+                ]
+            ]
+            settings["hooks"] = hooks
+            try JSONSerialization.data(withJSONObject: settings).write(to: url)
+
+            await expect(
+                HookInstaller.isInstalled(settingsURL: url), "still installed, just old")
+            await expect(
+                !HookInstaller.isCurrent(binaryPath: notifyPath, settingsURL: url),
+                "a hook that cannot answer prompts reported as current")
+        }
+
+        test("A block installed for a different binary reports as stale") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(binaryPath: "/old/claude-island-notify", settingsURL: url)
+            await expect(!HookInstaller.isCurrent(binaryPath: notifyPath, settingsURL: url))
+        }
+
         test("The printable block is valid JSON covering every event") {
             let text = HookInstaller.hookBlockJSON(binaryPath: notifyPath)
             let parsed =
