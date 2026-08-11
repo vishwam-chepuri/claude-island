@@ -41,10 +41,11 @@ arrive quarantined and macOS would tell you it could not be verified. Code
 compiled on your own machine never is. Building also means you get a binary for
 your own architecture with no universal-binary machinery.
 
-**Requirements:** macOS 14+, and Command Line Tools — if they're missing, the
-script fires Apple's installer and exits so you can finish it and re-run. No
-Xcode. No dependencies. About 40 seconds to build on Apple Silicon; several
-minutes, silently, on Intel — the script suppresses build output.
+**Requirements:** macOS 14+, and Command Line Tools — if they're missing, or
+stale after a macOS upgrade, the script fires Apple's installer and exits so
+you can finish it and re-run. No Xcode. No dependencies. About 40 seconds to
+build on Apple Silicon; several minutes, silently, on Intel — the script
+suppresses build output.
 
 Restart any running Claude Code sessions afterwards, and turn on **Launch at
 Login** from the menu bar extra so it survives a reboot.
@@ -297,7 +298,7 @@ animations moved.
 | Compact, animating | 0.2% |
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
-| Tests | 98 passing |
+| Tests | 194 total |
 | Self-test | 90 checks passing |
 
 ## Visual language
@@ -367,7 +368,7 @@ the mouse monitor is torn down entirely, which is what keeps idle CPU at
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 98 tests
+swift build && swift run ClaudeIslandTests      # 194 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
@@ -379,10 +380,11 @@ byte-stable. Fixtures in `Fixtures/` cover a normal session, permissions and
 failures, two concurrent sessions, subagents, and deliberately hostile input
 (malformed lines, unknown future events, embedded secrets).
 
-`--selftest` checks the two behaviours that unit tests cannot: that the panel
-never takes focus, and that clicks land where they should. Click-through is
-verified against the window server itself via `NSWindow.windowNumber(at:)`
-rather than trusting our own flags. **Run it with the screen unlocked** — a lock
+`--selftest` is a 90-check harness for what unit tests cannot exercise: that
+the panel never takes focus, that clicks land where they should, and dozens of
+on-screen layout and geometry checks besides. Click-through is verified
+against the window server itself via `NSWindow.windowNumber(at:)` rather than
+trusting our own flags. **Run it with the screen unlocked** — a lock
 screen puts a full-screen `loginwindow` layer above everything and those three
 checks are reported as skipped rather than silently passing.
 

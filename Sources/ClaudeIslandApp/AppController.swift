@@ -429,9 +429,20 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc private func uninstallHooks() {
         do {
             try HookInstaller.uninstall()
+            // Mirror the CLI's --uninstall-hooks: a statusLine forwarding line
+            // added by --install-hooks is this route's to remove too, or the
+            // menu leaves a dangling reference the CLI would have cleaned up.
+            let statusline = try StatuslineInstaller.uninstall()
             let alert = NSAlert()
             alert.messageText = "Hooks removed"
-            alert.informativeText = "Only ClaudeIsland's entries were removed."
+            if case .removed(let script) = statusline {
+                alert.informativeText = """
+                    ClaudeIsland's entries were removed from settings.json.
+                    The forwarding line was also removed from \(script).
+                    """
+            } else {
+                alert.informativeText = "ClaudeIsland's entries were removed from settings.json."
+            }
             alert.runModal()
         } catch {
             presentError("Could not remove hooks", error)

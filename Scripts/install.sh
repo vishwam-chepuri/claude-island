@@ -95,7 +95,7 @@ TMP="$(mktemp -d)"
 # STAGING is included here too: if the copy below fails partway, or the user
 # hits Ctrl-C during it, this is what removes the half-written staging copy
 # rather than leaving it to be found later.
-trap 'rm -rf "$TMP" "$STAGING"' EXIT
+trap 'rm -rf "$TMP"; [ "$DRY_RUN" -eq 1 ] || rm -rf "$STAGING"' EXIT
 
 say "Cloning vishwam-chepuri/claude-island"
 run git clone --depth 1 --quiet "$REPO" "$TMP/src"
@@ -106,7 +106,7 @@ run git clone --depth 1 --quiet "$REPO" "$TMP/src"
 # for a cosmetic version string, which is backwards — 0.0.0-dev is fine.
 run git -C "$TMP/src" fetch --quiet --tags --depth 1 origin || true
 
-say "Building (this takes a minute)"
+say "Building (about 40s on Apple Silicon, several minutes on Intel)"
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "    would: $TMP/src/Scripts/bundle.sh release"
 else
