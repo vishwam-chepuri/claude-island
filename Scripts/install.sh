@@ -81,7 +81,9 @@ run git clone --depth 1 --quiet "$REPO" "$TMP/src"
 # A depth-1 clone carries no tag history, so bundle.sh's `git describe` would
 # fall back to 0.0.0-dev even on a tagged main. Fetching tags is enough when
 # the tag is the cloned commit itself; an untagged branch still falls back.
-run git -C "$TMP/src" fetch --quiet --tags --depth 1 origin
+# Best-effort: a flaky network here would otherwise trade a working install
+# for a cosmetic version string, which is backwards — 0.0.0-dev is fine.
+run git -C "$TMP/src" fetch --quiet --tags --depth 1 origin || true
 
 say "Building (this takes a minute)"
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -132,7 +134,7 @@ fi
 case "$answer" in
     [Yy]*)
         say "Installing hooks"
-        run "$BIN" --install-hooks || true
+        run "$BIN" --install-hooks || say "Hook install failed — run '$BIN --install-hooks' by hand."
         ;;
     *)
         say "Skipped. Run '$BIN --install-hooks' when you're ready."
