@@ -348,6 +348,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         tint.target = self
         menu.addItem(tint)
 
+        if LoginItem.isAvailable {
+            let login = NSMenuItem(
+                title: LoginItem.isEnabled ? "Don't Launch at Login" : "Launch at Login",
+                action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+            login.target = self
+            menu.addItem(login)
+        }
+
         let reveal = NSMenuItem(
             title: "Reveal Support Folder", action: #selector(revealSupportFolder),
             keyEquivalent: "")
@@ -456,6 +464,24 @@ final class AppController: NSObject, NSApplicationDelegate {
             FileManager.default.createFile(atPath: IslandPaths.tintFlag.path, contents: nil)
         } else {
             try? FileManager.default.removeItem(at: IslandPaths.tintFlag)
+        }
+        rebuildMenu()
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        do {
+            try LoginItem.setEnabled(!LoginItem.isEnabled)
+            // Approval lives in System Settings and cannot be granted from here,
+            // so say where it is rather than leaving the menu title lying.
+            if LoginItem.status == .requiresApproval {
+                let alert = NSAlert()
+                alert.messageText = "Approval needed"
+                alert.informativeText =
+                    "Enable ClaudeIsland under System Settings → General → Login Items."
+                alert.runModal()
+            }
+        } catch {
+            presentError("Could not change the login item", error)
         }
         rebuildMenu()
     }

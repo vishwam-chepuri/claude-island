@@ -269,6 +269,41 @@ enum SelfTest {
 
         panel.orderOut(nil)
 
+        // Registration silently failing is precisely the failure this feature
+        // exists to prevent, and it would otherwise only surface on someone
+        // else's reboot. Prior state is restored so running the self-test never
+        // leaves a login item behind.
+        if !LoginItem.isAvailable {
+            checks.append(
+                Check(
+                    name: "launch at login registers",
+                    skipped: "not running from a .app bundle"))
+        } else {
+            let wasEnabled = LoginItem.isEnabled
+            do {
+                try LoginItem.setEnabled(true)
+                if LoginItem.status == .requiresApproval {
+                    checks.append(
+                        Check(
+                            name: "launch at login registers",
+                            skipped: "approval was revoked in System Settings"))
+                } else {
+                    checks.append(
+                        Check(
+                            name: "launch at login registers",
+                            passed: LoginItem.isEnabled,
+                            detail: "status \(LoginItem.status.rawValue)"))
+                }
+            } catch {
+                checks.append(
+                    Check(
+                        name: "launch at login registers",
+                        passed: false,
+                        detail: "\(error)"))
+            }
+            try? LoginItem.setEnabled(wasEnabled)
+        }
+
         // --- Report ---
 
         print("ClaudeIsland self-test\n")
