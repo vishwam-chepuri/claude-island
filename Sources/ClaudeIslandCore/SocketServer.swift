@@ -216,10 +216,22 @@ public final class SocketServer: @unchecked Sendable {
                 if errno == EINTR { continue }
                 return  // EAGAIN/EWOULDBLOCK: drained.
             }
+            // The semaphore is captured directly rather than reached through
+            // `self`. Balancing a `wait()` through a weak reference only works
+            // while the server outlives its own work: if it is released before
+            // this block runs, `self?.signal()` is skipped, the semaphore is
+            // deallocated with an outstanding wait, and libdispatch traps —
+            // `_dispatch_semaphore_dispose`, SIGTRAP, no message. The descriptor
+            // leaked in that case too, so closing it is part of the same fix.
+            let slots = connectionSlots
             connectionSlots.wait()
             connectionQueue.async { [weak self] in
-                defer { self?.connectionSlots.signal() }
-                self?.handle(client)
+                defer { slots.signal() }
+                guard let self else {
+                    close(client)
+                    return
+                }
+                self.handle(client)
             }
         }
     }

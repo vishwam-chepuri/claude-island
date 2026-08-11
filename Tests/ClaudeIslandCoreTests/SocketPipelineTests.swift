@@ -849,6 +849,34 @@ func registerSocketPipelineTests() {
                     + missing.prefix(5).joined(separator: ", "))
         }
 
+        // Releasing a server while its connections are still in flight used to
+        // crash the process: the accept path balanced its connection semaphore
+        // through a weak `self`, so a server that died first left a `wait()`
+        // outstanding and libdispatch trapped on dispose. This test's failure mode
+        // is the whole process dying, not an assertion.
+        test("Releasing a server mid-flight does not trap on its semaphore") {
+            for i in 0..<50 {
+                let path = temporarySocketPath()
+                // Deliberately scoped so the server is released without `stop()`,
+                // while work it accepted is still queued.
+                do {
+                    let server = SocketServer(path: path)
+                    let stream = try server.start()
+                    withExtendedLifetime(stream) {
+                        // More connections than the pool has slots, so some are
+                        // certainly still queued when the server goes away.
+                        for _ in 0..<12 {
+                            _ = sendFrame(
+                                Data("{\"session_id\":\"drop-\(i)\",\"hook_event_name\":\"Stop\"}"
+                                    .utf8), to: path)
+                        }
+                    }
+                }
+                unlink(path)
+            }
+            await expect(true, "reached here without trapping")
+        }
+
         test("Churning the server lifecycle leaves each new one serving") {
             for i in 0..<40 {
                 let path = temporarySocketPath()
