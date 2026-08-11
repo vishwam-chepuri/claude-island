@@ -59,6 +59,29 @@ public enum HookEvent: Sendable, Equatable, Hashable {
         }
     }
 
+    /// Whether the hook that raised this event blocks on a decision the HUD can
+    /// supply.
+    ///
+    /// Only `PermissionRequest` does. Claude Code paints its own dialog and
+    /// waits on the hook at the same time, so answering here races the terminal
+    /// rather than replacing it — whichever lands first settles the prompt.
+    public var awaitsDecision: Bool { self == .permissionRequest }
+
+    /// Extra arguments the hook client needs for this event.
+    public var clientArguments: [String] {
+        awaitsDecision ? ["--await-decision"] : []
+    }
+
+    /// The `timeout` written into settings.json for this event.
+    ///
+    /// Five seconds everywhere the client is fire-and-forget: it self-limits to
+    /// 50 ms, so this is only a backstop against a slow process start. The
+    /// permission hook is the deliberate exception — there the client is supposed
+    /// to wait, and Claude Code has to be willing to wait with it.
+    public var hookTimeoutSeconds: Int {
+        awaitsDecision ? DecisionTimeout.hookSeconds : 5
+    }
+
     /// The set the installer writes into settings.json.
     public static let installable: [HookEvent] = [
         .sessionStart, .userPromptSubmit, .preToolUse, .postToolUse,
@@ -98,6 +121,18 @@ public struct HookEnvelope: Sendable, Equatable {
     /// Wall clock, used for session age and expiry. Injected so tests are
     /// deterministic.
     public let receivedAt: Date
+    /// Handle for answering this payload back down the connection it arrived on.
+    ///
+    /// Stamped by the transport rather than decoded, because it identifies a
+    /// live socket rather than anything in the JSON — which is also why it is
+    /// the only mutable field here. Non-nil only for a `PermissionRequest` whose
+    /// client is still waiting, so `nil` correctly means "not answerable": a
+    /// replayed trace or a fire-and-forget client both land that way.
+    public var decisionToken: UInt64?
+    /// How many *other* prompts are live for this session at the moment this one
+    /// arrived. Stamped by the transport for the same reason as `decisionToken`:
+    /// only the connection registry knows. See `PermissionAsk.siblingCount`.
+    public var siblingPromptCount: Int = 0
 
     public init(
         sessionID: String,
@@ -114,7 +149,9 @@ public struct HookEnvelope: Sendable, Equatable {
         linesAdded: Int? = nil,
         linesRemoved: Int? = nil,
         rateLimit: RateLimitWindow? = nil,
-        receivedAt: Date = Date()
+        receivedAt: Date = Date(),
+        decisionToken: UInt64? = nil,
+        siblingPromptCount: Int = 0
     ) {
         self.sessionID = sessionID
         self.event = event
@@ -131,6 +168,8 @@ public struct HookEnvelope: Sendable, Equatable {
         self.linesRemoved = linesRemoved
         self.rateLimit = rateLimit
         self.receivedAt = receivedAt
+        self.decisionToken = decisionToken
+        self.siblingPromptCount = siblingPromptCount
     }
 }
 

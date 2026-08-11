@@ -4,6 +4,10 @@ import Foundation
 
 /// The hook client binary sits next to this test runner in the build products
 /// directory, so tests exercise the real thing rather than a reimplementation.
+///
+/// It is not a dependency of the test product, so `swift run ClaudeIslandTests`
+/// will happily run these against a stale copy of it. Run `swift build` first
+/// after touching the client, or a green result here means nothing.
 private func notifyBinary() -> URL? {
     let runner = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     let candidate = runner.deletingLastPathComponent()
@@ -48,9 +52,56 @@ private func connectSocket(_ path: String) -> Int32? {
 private func sendFrame(_ payload: Data, to path: String) -> Bool {
     guard let fd = connectSocket(path) else { return false }
     defer { close(fd) }
+    return writeFrame(payload, to: fd)
+}
+
+private func writeFrame(_ payload: Data, to fd: Int32) -> Bool {
     var frame = Data(Framing.encodePrefix(UInt32(payload.count)))
     frame.append(payload)
     return frame.withUnsafeBytes { raw in write(fd, raw.baseAddress, raw.count) == raw.count }
+}
+
+/// Sends a frame and leaves the connection open, the way a client waiting for a
+/// decision does. Caller owns the returned descriptor.
+private func openFrame(_ payload: Data, to path: String) -> Int32? {
+    guard let fd = connectSocket(path) else { return nil }
+    guard writeFrame(payload, to: fd) else {
+        close(fd)
+        return nil
+    }
+    return fd
+}
+
+/// Reads one length-prefixed frame back, or nil if none arrives in time.
+private func readFrame(_ fd: Int32, timeout: TimeInterval = 6) -> Data? {
+    var tv = timeval(
+        tv_sec: Int(timeout), tv_usec: Int32((timeout - Double(Int(timeout))) * 1_000_000))
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
+    var prefix = [UInt8](repeating: 0, count: Framing.prefixLength)
+    guard read(fd, &prefix, Framing.prefixLength) == Framing.prefixLength,
+        let length = Framing.decodePrefix(prefix), length > 0,
+        length <= Framing.maxPayloadBytes
+    else { return nil }
+
+    var body = [UInt8](repeating: 0, count: Int(length))
+    var offset = 0
+    while offset < Int(length) {
+        let n = body[offset...].withUnsafeMutableBytes { raw -> Int in
+            read(fd, raw.baseAddress, Int(length) - offset)
+        }
+        guard n > 0 else { return nil }
+        offset += n
+    }
+    return Data(body)
+}
+
+private func permissionPayload(_ session: String, command: String = "rm -rf ./build") -> Data {
+    Data(
+        """
+        {"session_id":"\(session)","hook_event_name":"PermissionRequest","cwd":"/w",\
+        "tool_name":"Bash","tool_input":{"command":"\(command)"}}
+        """.utf8)
 }
 
 /// Drains a stream into a buffer on a background task so tests can wait for the
@@ -58,13 +109,22 @@ private func sendFrame(_ payload: Data, to path: String) -> Bool {
 private final class StreamCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var buffer: [HookEnvelope] = []
+    /// Every session id ever delivered, kept separately from `buffer` because
+    /// `next()` consumes. A test that asks "what is next?" cannot also answer
+    /// "did this ever arrive?" — looking for one payload throws away the others,
+    /// which turns a late delivery into an indistinguishable phantom loss.
+    private var everSeen = Set<String>()
     private var pump: Task<Void, Never>?
 
     init(_ stream: AsyncStream<HookEnvelope>) {
         // AsyncStream buffers unboundedly by default, so envelopes yielded
         // before this pump starts are still delivered.
-        pump = Task { [self] in
-            for await envelope in stream { append(envelope) }
+        //
+        // `weak self`, not `self`: a strong capture makes the task and the
+        // collector own each other, so `deinit` never runs and every collector
+        // the suite ever built keeps a live task for the rest of the process.
+        pump = Task { [weak self] in
+            for await envelope in stream { self?.append(envelope) }
         }
     }
 
@@ -74,7 +134,24 @@ private final class StreamCollector: @unchecked Sendable {
     private func append(_ e: HookEnvelope) {
         lock.lock()
         buffer.append(e)
+        everSeen.insert(e.sessionID)
         lock.unlock()
+    }
+
+    /// Whether this payload has ever arrived. Non-consuming.
+    func hasSeen(_ sessionID: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return everSeen.contains(sessionID)
+    }
+
+    func waitToSee(_ sessionID: String, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if hasSeen(sessionID) { return true }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return false
     }
 
     private func take() -> HookEnvelope? {
@@ -83,15 +160,50 @@ private final class StreamCollector: @unchecked Sendable {
         return buffer.isEmpty ? nil : buffer.removeFirst()
     }
 
-    /// Generous by default. These assert that a payload arrives, not how fast,
-    /// and a tight bound made the suite flake on a loaded machine.
-    func next(timeout: TimeInterval = 6) async -> HookEnvelope? {
+    /// Generous by default, and deliberately more generous than it looks like it
+    /// needs to be. These assert that a payload *arrives*, never how fast.
+    ///
+    /// The bound has now produced false failures twice at 6s. A reproducer that
+    /// hammers the same paths — see the "Socket resilience" suite — cannot make
+    /// the server drop a payload across 100 malformed frames or 40 lifecycles, so
+    /// what this timeout was catching was a loaded machine, not a defect. Real
+    /// wedges belong to that suite, which fails deterministically; a wall-clock
+    /// bound here can only be a source of noise, so it is set well past anything
+    /// a scheduler hiccup can produce.
+    func next(timeout: TimeInterval = 20) async -> HookEnvelope? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if let head = take() { return head }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
         return nil
+    }
+}
+
+/// Collects withdrawal callbacks so a test can wait for one with a timeout.
+private final class Withdrawals: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokens = Set<UInt64>()
+
+    func record(_ token: UInt64) {
+        lock.lock()
+        tokens.insert(token)
+        lock.unlock()
+    }
+
+    private func contains(_ token: UInt64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return tokens.contains(token)
+    }
+
+    func waitFor(_ token: UInt64, timeout: TimeInterval = 6) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if contains(token) { return true }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return false
     }
 }
 
@@ -280,6 +392,579 @@ func registerSocketPipelineTests() {
             try stdin.fileHandleForWriting.close()
             process.waitUntilExit()
             await expectEqual(process.terminationStatus, 0)
+        }
+    }
+
+    suite("Permission round trip") {
+
+        test("A permission request arrives with a token to answer it by") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+
+            let fd = try await require(openFrame(permissionPayload("tok-1"), to: path))
+            defer { close(fd) }
+
+            let collector = StreamCollector(stream)
+            let envelope = try await require(await collector.next())
+            await expect(envelope.decisionToken != nil, "no token to answer the prompt by")
+        }
+
+        test("An event that cannot be answered carries no token") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+
+            await expect(
+                sendFrame(
+                    Data(#"{"session_id":"tok-2","hook_event_name":"PreToolUse"}"#.utf8), to: path))
+
+            let collector = StreamCollector(stream)
+            let envelope = try await require(await collector.next())
+            await expectEqual(envelope.decisionToken, nil)
+        }
+
+        test("Resolving a token delivers the decision to the waiting client") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+
+            let fd = try await require(openFrame(permissionPayload("tok-3"), to: path))
+            defer { close(fd) }
+
+            let collector = StreamCollector(stream)
+            let envelope = try await require(await collector.next())
+            let token = try await require(envelope.decisionToken)
+
+            await expect(server.resolve(token, with: .allow), "resolve reported failure")
+
+            let response = try await require(readFrame(fd), "client got no decision")
+            let text = String(decoding: response, as: UTF8.self)
+            await expectEqual(text, PermissionDecision.allow.hookResponseJSON)
+        }
+
+        test("A token can only be resolved once") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+
+            let fd = try await require(openFrame(permissionPayload("tok-4"), to: path))
+            defer { close(fd) }
+
+            let collector = StreamCollector(stream)
+            let token = try await require((await collector.next())?.decisionToken)
+
+            await expect(server.resolve(token, with: .allow))
+            await expect(
+                !server.resolve(token, with: .deny(note: nil)),
+                "a second answer to the same prompt was accepted")
+        }
+
+        test("Resolving an unknown token reports failure rather than trapping") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer {
+                withExtendedLifetime(stream) {}
+                server.stop()
+            }
+            await expect(!server.resolve(4_242, with: .allow))
+        }
+
+        // A client can go away at any point — it timed out, it was killed, the
+        // session was interrupted. The island has to notice, or the card keeps
+        // offering a button that answers a closed socket.
+        //
+        // This is deliberately not claimed as the terminal-answered path:
+        // measured against claude 2.1.226, answering in the terminal leaves the
+        // hook running. See `PendingDecisions.onWithdraw`.
+        test("A client that hangs up is reported as withdrawn") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let withdrawn = Withdrawals()
+            server.onWithdraw = { withdrawn.record($0) }
+            let stream = try server.start()
+            defer { server.stop() }
+
+            let fd = try await require(openFrame(permissionPayload("tok-5"), to: path))
+            let collector = StreamCollector(stream)
+            let token = try await require((await collector.next())?.decisionToken)
+
+            close(fd)  // The terminal answered; Claude Code reaped the hook.
+
+            await expect(
+                await withdrawn.waitFor(token), "withdrawal was never reported for \(token)")
+            await expect(
+                !server.resolve(token, with: .allow),
+                "a withdrawn prompt still accepted an answer")
+        }
+
+        // Parallel tool calls in one session raise several prompts at once. The
+        // registry is the only place that knows how many are live, so it is the
+        // only honest place to count them.
+        test("A second prompt in the same session is stamped as having a sibling") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+            let collector = StreamCollector(stream)
+
+            let first = try await require(openFrame(permissionPayload("twin"), to: path))
+            defer { close(first) }
+            let firstEnvelope = try await require(await collector.next())
+            await expectEqual(firstEnvelope.siblingPromptCount, 0, "the first prompt is alone")
+
+            let second = try await require(
+                openFrame(permissionPayload("twin", command: "git push --force"), to: path))
+            defer { close(second) }
+            let secondEnvelope = try await require(await collector.next())
+            await expectEqual(secondEnvelope.siblingPromptCount, 1)
+        }
+
+        test("A prompt in a different session is not counted as a sibling") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+            let collector = StreamCollector(stream)
+
+            let a = try await require(openFrame(permissionPayload("alone-a"), to: path))
+            defer { close(a) }
+            _ = await collector.next()
+            let b = try await require(openFrame(permissionPayload("alone-b"), to: path))
+            defer { close(b) }
+            let envelope = try await require(await collector.next())
+            await expectEqual(envelope.siblingPromptCount, 0)
+        }
+
+        // The withdrawal callback can land before the envelope it belongs to has
+        // reached the store — a client that writes and exits is already gone by
+        // the time its payload is decoded — so a push notification alone cannot
+        // keep a dead prompt off the card. Whoever ingests the envelope has to be
+        // able to ask whether the prompt is still live.
+        test("A prompt whose client has gone is no longer pending") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+
+            let fd = try await require(openFrame(permissionPayload("gone"), to: path))
+            let collector = StreamCollector(stream)
+            let token = try await require((await collector.next())?.decisionToken)
+            await expect(server.isPendingDecision(token), "a live prompt reported as dead")
+
+            close(fd)
+            let deadline = Date().addingTimeInterval(6)
+            while server.isPendingDecision(token), Date() < deadline {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            }
+            await expect(
+                !server.isPendingDecision(token),
+                "a prompt with no client behind it still reports as answerable")
+        }
+
+        // Every held prompt costs a descriptor and a dispatch source until it is
+        // answered or withdrawn. A leak in either would not show up on one
+        // prompt — it would show up as the HUD going deaf after a few hundred
+        // permission requests, days into a session, which is the hardest kind of
+        // bug to attribute. So: churn far more of them than a day would, and
+        // insist the registry comes back to empty and the listener still serves.
+        test("Hundreds of prompts opened and abandoned leave nothing behind") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+            let collector = StreamCollector(stream)
+
+            // What this measures is leaks, not connect capacity. Opening far
+            // faster than the accept loop drains saturates the 64-deep listen
+            // backlog and `connect()` is refused — which the real hook client
+            // treats as "exit 0, let the session continue". Counting refusals as
+            // failures made this test accuse the server three separate times of
+            // losing traffic it had never received.
+            let churn = 300
+            var opened = 0
+            var refused = 0
+            for i in 0..<churn {
+                if let fd = openFrame(permissionPayload("churn-\(i)"), to: path) {
+                    opened += 1
+                    close(fd)
+                } else {
+                    refused += 1
+                }
+            }
+            await expect(opened > churn / 2, "only \(opened)/\(churn) prompts could connect")
+
+            var seen = 0
+            while seen < opened, await collector.next(timeout: 10) != nil { seen += 1 }
+            await expectEqual(
+                seen, opened,
+                "opened \(opened) prompts (\(refused) refused) and saw \(seen); "
+                    + "server reported drops: \(server.drops())")
+
+            let deadline = Date().addingTimeInterval(10)
+            while server.pendingDecisionCount > 0, Date() < deadline {
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            await expectEqual(
+                server.pendingDecisionCount, 0,
+                "held prompts were never reaped after their clients hung up")
+
+            await expect(
+                sendFrame(
+                    Data(#"{"session_id":"after-churn","hook_event_name":"Stop"}"#.utf8), to: path))
+            var arrived = false
+            while !arrived, let envelope = await collector.next(timeout: 10) {
+                arrived = envelope.sessionID == "after-churn"
+            }
+            await expect(arrived, "listener went deaf after \(churn) prompts")
+        }
+
+        // The connection pool is a small semaphore. Holding prompts open must
+        // not consume a worker each, or a handful of pending prompts wedges the
+        // listener for every other session.
+        test("Prompts held open beyond the worker pool do not stall other payloads") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+
+            var held: [Int32] = []
+            defer { held.forEach { close($0) } }
+            for i in 0..<20 {
+                if let fd = openFrame(permissionPayload("held-\(i)"), to: path) { held.append(fd) }
+            }
+            await expectEqual(held.count, 20, "could not open the prompts")
+
+            // Without this the test could pass vacuously: 20 connections that
+            // were quietly closed rather than held would starve nothing.
+            let collector = StreamCollector(stream)
+            var tokens = Set<UInt64>()
+            while tokens.count < 20, let envelope = await collector.next(timeout: 8) {
+                if let token = envelope.decisionToken { tokens.insert(token) }
+            }
+            await expectEqual(tokens.count, 20, "prompts were not all held open")
+            await expectEqual(server.pendingDecisionCount, 20)
+
+            await expect(
+                sendFrame(
+                    Data(#"{"session_id":"still-serving","hook_event_name":"Stop"}"#.utf8),
+                    to: path))
+
+            var seen = Set<String>()
+            while !seen.contains("still-serving"), let envelope = await collector.next(timeout: 8) {
+                seen.insert(envelope.sessionID)
+            }
+            await expect(
+                seen.contains("still-serving"),
+                "listener stalled with 20 prompts pending; saw \(seen.count) payloads")
+        }
+    }
+
+    suite("Awaiting client") {
+
+        /// Launches the real hook client in await mode with the payload on stdin.
+        func launchAwaiting(
+            _ binary: URL, socket: String, timeoutMillis: Int, payload: Data
+        ) throws -> (process: Process, stdout: Pipe) {
+            let process = Process()
+            process.executableURL = binary
+            process.arguments = [
+                "--socket", socket, "--await-decision",
+                "--decision-timeout", String(timeoutMillis),
+            ]
+            let stdin = Pipe()
+            let stdout = Pipe()
+            process.standardInput = stdin
+            process.standardOutput = stdout
+            try process.run()
+            stdin.fileHandleForWriting.write(payload)
+            try stdin.fileHandleForWriting.close()
+            return (process, stdout)
+        }
+
+        test("The client forwards a decision to stdout") {
+            let binary = try await require(notifyBinary(), "claude-island-notify is not built")
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+
+            let launched = try launchAwaiting(
+                binary, socket: path, timeoutMillis: 20_000,
+                payload: permissionPayload("await-1"))
+
+            let collector = StreamCollector(stream)
+            let envelope = try await require(await collector.next(timeout: 8))
+            let token = try await require(envelope.decisionToken, "client was not held open")
+            await expect(server.resolve(token, with: .deny(note: "from the island")))
+
+            launched.process.waitUntilExit()
+            let out = String(
+                decoding: launched.stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            await expectEqual(launched.process.terminationStatus, 0)
+            await expectEqual(
+                out.trimmingCharacters(in: .whitespacesAndNewlines),
+                PermissionDecision.deny(note: "from the island").hookResponseJSON)
+        }
+
+        // Silence is the fallback that keeps this safe: Claude Code goes on
+        // showing its own dialog, so an unanswered prompt is simply a prompt.
+        test("The client stays silent when no decision arrives before its deadline") {
+            let binary = try await require(notifyBinary(), "claude-island-notify is not built")
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer {
+                withExtendedLifetime(stream) {}
+                server.stop()
+            }
+
+            let started = Date()
+            let launched = try launchAwaiting(
+                binary, socket: path, timeoutMillis: 800,
+                payload: permissionPayload("await-2"))
+            launched.process.waitUntilExit()
+            let elapsed = Date().timeIntervalSince(started)
+
+            let out = launched.stdout.fileHandleForReading.readDataToEndOfFile()
+            await expectEqual(launched.process.terminationStatus, 0)
+            await expect(out.isEmpty, "client volunteered \(out.count) bytes with no decision")
+            // Both bounds matter: the upper one catches a client that never gives
+            // up, the lower one catches a client that never waited at all and so
+            // would never have been answerable.
+            await expect(elapsed > 0.7, "client did not wait for its deadline (\(elapsed)s)")
+            await expect(elapsed < 6, "client ignored its deadline (\(elapsed)s)")
+        }
+
+        test("The client gives up at once when nothing is listening") {
+            let binary = try await require(notifyBinary(), "claude-island-notify is not built")
+            let started = Date()
+            let launched = try launchAwaiting(
+                binary, socket: "/tmp/absent-\(UUID().uuidString).sock", timeoutMillis: 60_000,
+                payload: permissionPayload("await-3"))
+            launched.process.waitUntilExit()
+            let elapsed = Date().timeIntervalSince(started)
+
+            let out = launched.stdout.fileHandleForReading.readDataToEndOfFile()
+            await expectEqual(launched.process.terminationStatus, 0)
+            await expect(out.isEmpty)
+            // A dead HUD must not add its deadline to every permission prompt.
+            await expect(elapsed < 2, "waited \(elapsed)s for a socket that was not there")
+        }
+    }
+
+    // Chases an intermittent full-suite failure — "A truncated frame does not
+    // wedge the server", where the recovery payload never arrived at all, not
+    // merely late. One round trip cannot tell a wedge from a slow machine, so
+    // these reproduce the suite's actual shape: malformed frames in quick
+    // succession, and the server lifecycle churned the way 180 tests churn it.
+    suite("Socket resilience") {
+
+        test("A hundred malformed frames in a row never cost a good one") {
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+            let collector = StreamCollector(stream)
+
+            let rounds = 100
+            var sent = Set<String>()
+            for i in 0..<rounds {
+                // Promise 100 bytes, send 10, hang up — the exact shape of the
+                // test that fails.
+                if let fd = connectSocket(path) {
+                    var frame = Framing.encodePrefix(100)
+                    frame.append(contentsOf: Array("{\"a\":1234}".utf8))
+                    _ = write(fd, &frame, frame.count)
+                    close(fd)
+                }
+                // And an oversized claim, which takes the other rejection path.
+                if let fd = connectSocket(path) {
+                    var prefix = Framing.encodePrefix(1 << 30)
+                    _ = write(fd, &prefix, 4)
+                    close(fd)
+                }
+                // Counted, not assumed. Driving 3 connections per round outruns
+                // the 64-deep listen backlog, and a refused connect is not a lost
+                // payload — it is a client that never got to speak, which the real
+                // hook client treats as "exit 0 and let the session continue".
+                // Asserting on sends that never happened is how this test spent a
+                // round accusing the server of dropping traffic it never received.
+                if sendFrame(
+                    Data(#"{"session_id":"good-\#(i)","hook_event_name":"Stop"}"#.utf8),
+                    to: path)
+                {
+                    sent.insert("good-\(i)")
+                }
+            }
+
+            var seen = Set<String>()
+            while seen.count < sent.count, let envelope = await collector.next(timeout: 20) {
+                if sent.contains(envelope.sessionID) { seen.insert(envelope.sessionID) }
+            }
+            await expect(sent.count > rounds / 2, "only \(sent.count)/\(rounds) sends landed")
+            await expectEqual(
+                seen.count, sent.count,
+                "server accepted \(sent.count) payloads and delivered \(seen.count)")
+        }
+
+        // Diagnostic for the intermittent loss: is the payload gone, or merely
+        // stranded in the listen backlog because the accept wakeup was missed?
+        //
+        // If a later connection flushes the earlier one out, the connection was
+        // never accepted and the server simply stopped being told about it — which
+        // is a missed-wakeup bug in the accept source, not a parsing or delivery
+        // bug. That distinction decides the fix, so it is worth a test that says
+        // which it is out loud.
+        test("Every accepted payload is delivered, even if not promptly") {
+            let path = temporarySocketPath()
+            // Deliberately the shipping configuration, not a widened one: this is
+            // the regression guard for payloads the server used to abandon after
+            // accepting them, so it has to fail if that window is tightened again.
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+            let collector = StreamCollector(stream)
+
+            var sent: [String] = []
+            for i in 0..<120 {
+                // A malformed frame first: connect, half-write, hang up. The same
+                // shape as the test that intermittently fails.
+                if let fd = connectSocket(path) {
+                    var frame = Framing.encodePrefix(100)
+                    frame.append(contentsOf: Array("{\"a\":1234}".utf8))
+                    _ = write(fd, &frame, frame.count)
+                    close(fd)
+                }
+                let name = "probe-\(i)"
+                if sendFrame(
+                    Data("{\"session_id\":\"\(name)\",\"hook_event_name\":\"Stop\"}".utf8),
+                    to: path)
+                {
+                    sent.append(name)
+                }
+            }
+
+            // Slow arrivals are fine; absent ones are not. Give the whole batch a
+            // generous window and then ask what never came.
+            for name in sent where !collector.hasSeen(name) {
+                _ = await collector.waitToSee(name, timeout: 20)
+            }
+            let missing = sent.filter { !collector.hasSeen($0) }
+            await expect(
+                missing.isEmpty,
+                "accepted \(sent.count) payloads, never delivered \(missing.count): "
+                    + missing.prefix(5).joined(separator: ", "))
+        }
+
+        // Releasing a server while its connections are still in flight used to
+        // crash the process: the accept path balanced its connection semaphore
+        // through a weak `self`, so a server that died first left a `wait()`
+        // outstanding and libdispatch trapped on dispose. This test's failure mode
+        // is the whole process dying, not an assertion.
+        test("Releasing a server mid-flight does not trap on its semaphore") {
+            for i in 0..<50 {
+                let path = temporarySocketPath()
+                // Deliberately scoped so the server is released without `stop()`,
+                // while work it accepted is still queued.
+                do {
+                    let server = SocketServer(path: path)
+                    let stream = try server.start()
+                    withExtendedLifetime(stream) {
+                        // More connections than the pool has slots, so some are
+                        // certainly still queued when the server goes away.
+                        for _ in 0..<12 {
+                            _ = sendFrame(
+                                Data("{\"session_id\":\"drop-\(i)\",\"hook_event_name\":\"Stop\"}"
+                                    .utf8), to: path)
+                        }
+                    }
+                }
+                unlink(path)
+            }
+            await expect(true, "reached here without trapping")
+        }
+
+        // `readTimeout` was dead code for the entire life of the server.
+        //
+        // `start()` marks the *listening* socket O_NONBLOCK so the accept loop can
+        // drain to EAGAIN. On Darwin, accept() copies that flag onto every socket
+        // it returns, and SO_RCVTIMEO does not apply to a non-blocking descriptor —
+        // so the worker's first read returned EAGAIN in microseconds no matter what
+        // timeout was configured. Any client whose bytes had not already landed by
+        // the time its worker was scheduled was dropped as `shortPrefix`.
+        //
+        // That is what made "Churning the server lifecycle" fail about one run in
+        // ten: nothing to do with churn, just whichever connection happened to lose
+        // the race. Measured directly: with the flag inherited, a 2000 ms
+        // SO_RCVTIMEO expired in 0.0 ms; with it cleared, in 2001 ms.
+        //
+        // This test pins the guarantee instead of the symptom. The client connects
+        // and only then writes, which is precisely the interleaving the bug
+        // punished, and it fails deterministically rather than one run in ten.
+        test("A client that connects before it writes is still read") {
+            let path = temporarySocketPath()
+            // Comfortably longer than the write delay below, short enough that a
+            // regression fails fast instead of hanging.
+            let server = SocketServer(path: path, readTimeout: 3)
+            let stream = try server.start()
+            let collector = StreamCollector(stream)
+
+            let fd = try await require(connectSocket(path), "could not connect")
+            let payload = Data(#"{"session_id":"slow-writer","hook_event_name":"Stop"}"#.utf8)
+            // Deliberately after the server has almost certainly accepted and
+            // reached its first read.
+            Thread.detachNewThread {
+                Thread.sleep(forTimeInterval: 0.4)
+                _ = writeFrame(payload, to: fd)
+            }
+
+            let envelope = await collector.next(timeout: 10)
+            await expectEqual(
+                envelope?.sessionID, "slow-writer",
+                "a connect-then-write client was dropped; server reported drops: \(server.drops())")
+
+            close(fd)
+            server.stop()
+        }
+
+        test("Churning the server lifecycle leaves each new one serving") {
+            for i in 0..<40 {
+                let path = temporarySocketPath()
+                let server = SocketServer(path: path)
+                let stream = try server.start()
+                let collector = StreamCollector(stream)
+
+                // A held prompt, so every generation exercises the handoff and
+                // then the drain that `stop()` performs on it.
+                var expected = Set<String>()
+                let held = openFrame(permissionPayload("churn-\(i)"), to: path)
+                if held != nil { expected.insert("churn-\(i)") }
+                if sendFrame(
+                    Data(#"{"session_id":"live-\#(i)","hook_event_name":"Stop"}"#.utf8), to: path)
+                {
+                    expected.insert("live-\(i)")
+                }
+
+                var seen = Set<String>()
+                while seen.count < expected.count,
+                    let envelope = await collector.next(timeout: 20)
+                {
+                    if expected.contains(envelope.sessionID) { seen.insert(envelope.sessionID) }
+                }
+                await expectEqual(
+                    seen.count, expected.count,
+                    "generation \(i) accepted \(expected) but delivered \(seen); "
+                        + "server reported drops: \(server.drops())")
+
+                server.stop()
+                if let held { close(held) }
+            }
         }
     }
 

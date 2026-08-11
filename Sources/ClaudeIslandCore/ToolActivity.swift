@@ -143,4 +143,30 @@ public struct ToolActivity: Sendable, Equatable, Identifiable {
                 ]))
         }
     }
+
+    /// The same field as `extractTarget`, but whole: no 60-char clamp and no path
+    /// shortening.
+    ///
+    /// For deciding whether to allow something, both of those elisions are
+    /// hazards rather than tidiness — `~/p/c/x.swift` does not identify a file
+    /// well enough to approve writing to it, and a command cut off mid-pipeline
+    /// hides exactly the part worth reading. Redaction is kept: it replaces
+    /// secrets without changing what the command does.
+    ///
+    /// Still capped, well beyond a glance's worth, so a pathological input cannot
+    /// paint an unbounded wall of text over the screen.
+    public static func extractDetail(toolName: String, input: JSONValue?) -> String? {
+        guard let input else { return nil }
+        switch ToolKind(toolName: toolName) {
+        case .bash:
+            return Redactor.sanitize(input["command"]?.stringValue, limit: detailLimit)
+        case .read, .edit, .write, .notebook:
+            return Redactor.sanitize(
+                input.firstString(["file_path", "notebook_path", "path"]), limit: detailLimit)
+        default:
+            return extractTarget(toolName: toolName, input: input)
+        }
+    }
+
+    private static let detailLimit = 400
 }

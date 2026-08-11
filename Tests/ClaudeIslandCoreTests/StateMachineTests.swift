@@ -236,6 +236,112 @@ func registerStateMachineTests() {
             await expectEqual(SessionState.awaitingPermission(ask).soundCue, .inputRequired)
         }
 
+        test("A permission request carries the handle that answers it") {
+            let store = SessionStore()
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "answerable", event: .permissionRequest, toolName: "Bash",
+                    receivedAt: base, decisionToken: 77))
+
+            let session = try await require(await store.session("answerable"))
+            guard case .awaitingPermission(let ask) = session.state else {
+                return await expect(false, "expected awaitingPermission, got \(session.state)")
+            }
+            await expectEqual(ask.decisionToken, 77)
+        }
+
+        // Claude Code runs tool calls in parallel and fires a PermissionRequest
+        // hook for each, but shows one dialog at a time. With two prompts live in
+        // one session the card cannot know which one the terminal is showing, so
+        // a press would risk approving the prompt the human is not looking at.
+        // Refusing to answer either is the only safe reading.
+        test("A prompt with a sibling waiting in the same session is not answerable") {
+            let ask = PermissionAsk(
+                toolName: "Bash", kind: .bash, target: "rm -rf /tmp/x", since: base,
+                decisionToken: 12, siblingCount: 1)
+            await expect(!ask.isAnswerable, "answered one of two indistinguishable prompts")
+            await expectEqual(
+                ask.decisionToken, 12, "the handle is still worth keeping for diagnostics")
+        }
+
+        test("A lone prompt is answerable") {
+            let ask = PermissionAsk(
+                toolName: "Bash", kind: .bash, target: "ls", since: base,
+                decisionToken: 12, siblingCount: 0)
+            await expect(ask.isAnswerable)
+        }
+
+        // `target` is clamped to 60 characters for the resting pill. Approving on
+        // the strength of a truncated command is worse than walking to the
+        // terminal, so an answerable prompt has to carry the whole thing.
+        test("An answerable prompt keeps the whole command, not the pill summary") {
+            let command =
+                "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "
+                + "ghcr.io/example/deploy:latest --env production --confirm"
+            let store = SessionStore()
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "long", event: .permissionRequest, toolName: "Bash",
+                    toolInput: .object(["command": .string(command)]),
+                    receivedAt: base, decisionToken: 1))
+
+            let session = try await require(await store.session("long"))
+            guard case .awaitingPermission(let ask) = session.state else {
+                return await expect(false, "expected awaitingPermission, got \(session.state)")
+            }
+            await expectEqual(ask.detail, command)
+            await expect(
+                (ask.target?.count ?? 0) < command.count, "the pill summary was not clamped")
+        }
+
+        // A prompt inferred from notification prose has no connection behind it,
+        // so it must not offer an answer it cannot deliver.
+        test("A permission prompt inferred from a notification is not answerable") {
+            let store = SessionStore()
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "prose", event: .notification,
+                    message: "Claude needs your permission to use Bash", receivedAt: base))
+
+            let session = try await require(await store.session("prose"))
+            guard case .awaitingPermission(let ask) = session.state else {
+                return await expect(false, "expected awaitingPermission, got \(session.state)")
+            }
+            await expectEqual(ask.decisionToken, nil)
+        }
+
+        // The terminal got there first: the prompt is settled, but no hook event
+        // announces that, so the card has to stop offering to answer it.
+        test("A withdrawn prompt stops being answerable but stays on screen") {
+            let store = SessionStore()
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "withdrawn", event: .permissionRequest, toolName: "Bash",
+                    receivedAt: base, decisionToken: 99))
+            await store.withdrawDecision(99)
+
+            let session = try await require(await store.session("withdrawn"))
+            guard case .awaitingPermission(let ask) = session.state else {
+                return await expect(false, "expected awaitingPermission, got \(session.state)")
+            }
+            await expectEqual(ask.decisionToken, nil, "still offering to answer a settled prompt")
+        }
+
+        test("Withdrawing an unrelated token leaves a live prompt answerable") {
+            let store = SessionStore()
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "live", event: .permissionRequest, toolName: "Bash",
+                    receivedAt: base, decisionToken: 5))
+            await store.withdrawDecision(6)
+
+            let session = try await require(await store.session("live"))
+            guard case .awaitingPermission(let ask) = session.state else {
+                return await expect(false, "expected awaitingPermission, got \(session.state)")
+            }
+            await expectEqual(ask.decisionToken, 5)
+        }
+
         test("AskUserQuestion and ExitPlanMode sound like a permission prompt") {
             await expectEqual(ToolKind(toolName: "AskUserQuestion"), .question)
             await expectEqual(ToolKind(toolName: "ExitPlanMode"), .question)

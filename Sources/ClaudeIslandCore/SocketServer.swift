@@ -35,13 +35,144 @@ public final class SocketServer: @unchecked Sendable {
     /// Payloads are tiny and short-lived; a small window is ample.
     private let connectionSlots = DispatchSemaphore(value: 8)
 
-    private var listenFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
-    private var continuation: AsyncStream<HookEnvelope>.Continuation?
+    private let pending: PendingDecisions
 
-    public init(path: String = IslandPaths.socket.path, log: IslandLog = .disabled) {
+    /// `listenFD` and `continuation` are written by whoever calls `start()` and
+    /// `stop()`, and read from the accept queue and from every connection worker.
+    /// Unsynchronised, that is a data race with a silent failure mode: a worker
+    /// that cannot yet see the continuation drops its payload on the floor, and a
+    /// dropped hook event looks like the HUD simply missing something rather than
+    /// like a bug. Found by the "Socket resilience" suite, which loses roughly one
+    /// payload per few hundred connections without this.
+    private let stateLock = NSLock()
+    private var unsafeListenFD: Int32 = -1
+    private var unsafeContinuation: AsyncStream<HookEnvelope>.Continuation?
+
+    private var listenFD: Int32 {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return unsafeListenFD
+        }
+        set {
+            stateLock.lock()
+            unsafeListenFD = newValue
+            stateLock.unlock()
+        }
+    }
+
+    private var continuation: AsyncStream<HookEnvelope>.Continuation? {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return unsafeContinuation
+        }
+        set {
+            stateLock.lock()
+            unsafeContinuation = newValue
+            stateLock.unlock()
+        }
+    }
+
+    /// Called with the token of a prompt that can no longer be answered here,
+    /// because its client went away — see `PendingDecisions.onWithdraw`. Set it
+    /// before `start()`.
+    public var onWithdraw: ((UInt64) -> Void)? {
+        get { pending.onWithdraw }
+        set { pending.onWithdraw = newValue }
+    }
+
+    /// How long a worker will wait for an accepted client to finish its frame.
+    ///
+    /// It is the only place the server abandons a connection it has already
+    /// accepted, and a client that has connected but not yet been scheduled to
+    /// write looks exactly like a client that has stalled. Measured on a loaded
+    /// machine: 1–2 payloads per 120 were dropped even though the client's
+    /// `connect` and `write` both reported success.
+    ///
+    /// A correction, because the earlier note here recorded a wrong conclusion:
+    /// this value had **no effect at all** until `handle` began clearing
+    /// `O_NONBLOCK` on the accepted descriptor. `accept()` inherits that flag from
+    /// the listening socket on Darwin, and `SO_RCVTIMEO` is ignored on a
+    /// non-blocking descriptor — so every read returned EAGAIN in microseconds and
+    /// widening the window from 2s to 30s only perturbed timing. See `handle`.
+    ///
+    /// Ten seconds keeps the original guarantee — a wedged client cannot hold a
+    /// worker forever — while being far outside anything scheduler starvation
+    /// produces. The cost is paid only when a client really is stuck: in the
+    /// normal case the frame is already in the socket buffer and the read returns
+    /// at once. Dropping a hook event is much worse than briefly holding one of
+    /// eight slots, because the loss is invisible: the client exits 0 believing it
+    /// delivered, and the HUD just quietly misses a state change.
+    ///
+    /// Injectable so the regression test can prove the drop is gone at the value
+    /// that actually ships.
+    private let readTimeout: TimeInterval
+
+    public init(
+        path: String = IslandPaths.socket.path, log: IslandLog = .disabled,
+        readTimeout: TimeInterval = 10
+    ) {
         self.path = path
         self.log = log
+        self.readTimeout = readTimeout
+        self.pending = PendingDecisions(log: log)
+    }
+
+    /// Answers a waiting permission prompt. False if it is no longer pending,
+    /// which is the normal outcome when the terminal was answered first.
+    @discardableResult
+    public func resolve(_ token: UInt64, with decision: PermissionDecision) -> Bool {
+        pending.resolve(token, with: decision)
+    }
+
+    /// Why a payload that was accepted never reached the stream.
+    ///
+    /// Every one of these is a silent loss: the client wrote its frame, exited 0,
+    /// and believes the HUD was told. Counting them by reason is the difference
+    /// between "the island missed something" and a diagnosis — chasing one of
+    /// these without it cost several wrong theories.
+    public enum DropReason: String, Sendable, CaseIterable {
+        /// The length prefix never completed within the read window.
+        case shortPrefix
+        /// A prefix claiming nothing, or more than the cap.
+        case badLength
+        /// The body never completed within the read window.
+        case shortBody
+        /// Malformed JSON, or no session id to key a session on.
+        case undecodable
+        /// Accepted, then the server was torn down before the worker ran.
+        case serverGone
+        /// The stream had already finished, so a yield had nowhere to go.
+        case streamClosed
+    }
+
+    /// Counts of dropped payloads by reason, for diagnostics and tests.
+    public func drops() -> [DropReason: Int] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return dropCounts
+    }
+
+    private var dropCounts: [DropReason: Int] = [:]
+
+    private func recordDrop(_ reason: DropReason) {
+        stateLock.lock()
+        dropCounts[reason, default: 0] += 1
+        stateLock.unlock()
+        log.debug("dropped a payload: \(reason.rawValue)")
+    }
+
+    /// How many prompts are currently held open. Diagnostics only.
+    public var pendingDecisionCount: Int { pending.pendingCount }
+
+    /// Whether a prompt can still be answered here. See `PendingDecisions`.
+    public func isPendingDecision(_ token: UInt64) -> Bool { pending.isPending(token) }
+
+    /// How many prompts are live for one session. See `PermissionAsk.siblingCount`.
+    public func pendingDecisions(forSession id: String) -> Int {
+        pending.pendingCount(forSession: id)
     }
 
     /// Bind, listen, and return a stream of decoded payloads.
@@ -113,6 +244,7 @@ public final class SocketServer: @unchecked Sendable {
         acceptSource = nil
         listenFD = -1
         unlink(path)
+        pending.drain()
         continuation?.finish()
         continuation = nil
     }
@@ -126,40 +258,93 @@ public final class SocketServer: @unchecked Sendable {
                 if errno == EINTR { continue }
                 return  // EAGAIN/EWOULDBLOCK: drained.
             }
+            // The semaphore is captured directly rather than reached through
+            // `self`. Balancing a `wait()` through a weak reference only works
+            // while the server outlives its own work: if it is released before
+            // this block runs, `self?.signal()` is skipped, the semaphore is
+            // deallocated with an outstanding wait, and libdispatch traps —
+            // `_dispatch_semaphore_dispose`, SIGTRAP, no message. The descriptor
+            // leaked in that case too, so closing it is part of the same fix.
+            let slots = connectionSlots
             connectionSlots.wait()
             connectionQueue.async { [weak self] in
-                defer { self?.connectionSlots.signal() }
-                self?.handle(client)
+                defer { slots.signal() }
+                guard let self else {
+                    close(client)
+                    return  // Counted inside `handle` is impossible here; see serverGone.
+                }
+                self.handle(client)
             }
         }
     }
 
     private func handle(_ fd: Int32) {
-        defer { close(fd) }
+        // A prompt the HUD can answer outlives this worker: ownership of the
+        // descriptor moves to `pending`, whose dispatch source closes it.
+        var handedOff = false
+        defer { if !handedOff { close(fd) } }
+
+        // Clear O_NONBLOCK before setting the timeout, or the timeout does nothing.
+        //
+        // `start()` marks the listening socket non-blocking so the accept loop can
+        // drain to EAGAIN, and on Darwin accept() copies that flag onto every
+        // descriptor it returns. SO_RCVTIMEO does not apply to a non-blocking
+        // descriptor: the read returns EAGAIN immediately instead of waiting. Every
+        // client whose bytes had not already landed by the time its worker was
+        // scheduled was therefore dropped as `shortPrefix`, however large the
+        // configured window was.
+        let flags = fcntl(fd, F_GETFL, 0)
+        if flags >= 0 { _ = fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) }
 
         // Don't let a client that connects and then stalls hold a worker.
-        var tv = timeval(tv_sec: 2, tv_usec: 0)
+        var tv = timeval(
+            tv_sec: Int(readTimeout),
+            tv_usec: Int32((readTimeout - Double(Int(readTimeout))) * 1_000_000))
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
         guard let prefix = readExactly(fd, count: Framing.prefixLength),
             let length = Framing.decodePrefix(prefix)
-        else { return }
-
-        guard length > 0, length <= Framing.maxPayloadBytes else {
-            log.debug("rejecting payload of \(length) bytes")
+        else {
+            recordDrop(.shortPrefix)
             return
         }
 
-        guard let body = readExactly(fd, count: Int(length)) else { return }
+        guard length > 0, length <= Framing.maxPayloadBytes else {
+            log.debug("rejecting payload of \(length) bytes")
+            recordDrop(.badLength)
+            return
+        }
+
+        guard let body = readExactly(fd, count: Int(length)) else {
+            recordDrop(.shortBody)
+            return
+        }
 
         do {
-            guard let envelope = try HookEnvelope.decode(Data(body)) else {
-                log.debug("payload had no session_id; dropped")
+            guard var envelope = try HookEnvelope.decode(Data(body)) else {
+                recordDrop(.undecodable)
                 return
             }
-            continuation?.yield(envelope)
+            if envelope.event.awaitsDecision {
+                // Held open whether or not this particular client is waiting for
+                // an answer. A fire-and-forget one has already exited, so its
+                // end reads as EOF immediately and the prompt is withdrawn
+                // before the HUD can offer it — no version handshake needed.
+                envelope.decisionToken = pending.register(fd, session: envelope.sessionID)
+                // Counted after registering, so this prompt is included and the
+                // figure is "how many others".
+                envelope.siblingPromptCount =
+                    max(0, pending.pendingCount(forSession: envelope.sessionID) - 1)
+                handedOff = true
+            }
+            guard let continuation else {
+                recordDrop(.streamClosed)
+                return
+            }
+            continuation.yield(envelope)
         } catch {
             log.debug("payload decode failed: \(error)")
+            recordDrop(.undecodable)
         }
     }
 

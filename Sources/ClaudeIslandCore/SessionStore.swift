@@ -148,6 +148,28 @@ public actor SessionStore {
         publish()
     }
 
+    /// Marks a permission prompt as no longer answerable from the HUD.
+    ///
+    /// Called when the hook client behind it disappears — it timed out, crashed
+    /// or was killed. Not the terminal-answered path: that leaves the hook
+    /// running, and is covered instead by the session's next event replacing this
+    /// state. See `PendingDecisions.onWithdraw`. The prompt itself is left here:
+    /// the state machine only leaves `awaitingPermission` on the next real event,
+    /// and inventing one here would race whatever Claude Code does next.
+    public func withdrawDecision(_ token: UInt64) {
+        for (id, session) in sessions {
+            guard case .awaitingPermission(var ask) = session.state,
+                ask.decisionToken == token
+            else { continue }
+            ask.decisionToken = nil
+            var updated = session
+            updated.state = .awaitingPermission(ask)
+            sessions[id] = updated
+            publish()
+            return
+        }
+    }
+
     /// Merge transcript-derived facts. Kept separate from `ingest` because it
     /// must never alter the state machine — only decorate.
     public func applyTranscript(_ update: TranscriptUpdate) {

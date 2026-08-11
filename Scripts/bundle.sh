@@ -29,7 +29,11 @@ mkdir -p "$MACOS" "$RESOURCES"
 cp "$BIN_DIR/ClaudeIslandApp" "$MACOS/ClaudeIsland"
 cp "$BIN_DIR/claude-island-notify" "$MACOS/claude-island-notify"
 
-VERSION="0.1.0"
+# The tag is the version. Outside a tagged checkout — a fresh shallow clone
+# before any tag exists, or a branch ahead of one — say so rather than claim a
+# release number that was never cut.
+VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0-dev")"
+VERSION="${VERSION#v}"
 BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
 
 cat > "$APP/Contents/Info.plist" <<PLIST

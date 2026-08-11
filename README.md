@@ -3,9 +3,6 @@
 A Dynamic Island-style HUD pinned to the notch that shows, in real time, what
 your running Claude Code sessions are doing.
 
-Swift 6 · SwiftUI · macOS 14+ · no third-party dependencies · builds from the
-CLI with Command Line Tools (no Xcode required).
-
 ```
 ┌─────────────────────────────────────────────┐
 │  ⌘ Bash  swift build           0:12     o°o │   compact
@@ -15,6 +12,63 @@ CLI with Command Line Tools (no Xcode required).
 │     ~/notch/Sources/IslandPanel.swift        │
 └─────────────────────────────────────────────┘
 ```
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vishwam-chepuri/claude-island/main/Scripts/install.sh | bash
+```
+
+Clones, builds, installs to `/Applications` (falling back to `~/Applications`
+if that isn't writable — hooks bake in whichever absolute path it lands at),
+and offers to wire up the hooks. That offer covers two files, not one: if
+`~/.claude/settings.json` already points `statusLine` at a script, it appends
+one forwarding line to that script too, so the prompt names both. Both are
+backed up first, and it declines whichever one it isn't sure about.
+
+Pass `-s -- --dry-run` to see exactly what it would do first — piped into
+`bash`, options have to go after `-s --`, since plain `| bash --dry-run` hands
+`--dry-run` to `bash` itself rather than to the script and fails outright — or
+read it, it is [one file](Scripts/install.sh):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vishwam-chepuri/claude-island/main/Scripts/install.sh | bash -s -- --dry-run
+```
+
+It builds from source rather than downloading a binary, and that is deliberate:
+this project has no Developer ID to sign with, so a downloaded `.app` would
+arrive quarantined and macOS would tell you it could not be verified. Code
+compiled on your own machine never is. Building also means you get a binary for
+your own architecture with no universal-binary machinery.
+
+**Requirements:** macOS 14+, and Command Line Tools — if they're missing, or
+stale after a macOS upgrade, the script fires Apple's installer and exits so
+you can finish it and re-run. No Xcode. No dependencies. About 40 seconds to
+build on Apple Silicon; several minutes, silently, on Intel — the script
+suppresses build output.
+
+Restart any running Claude Code sessions afterwards, and turn on **Launch at
+Login** from the menu bar extra so it survives a reboot.
+
+Everything is local — the app makes no network calls, ever.
+
+## Uninstall
+
+There's no receipt system, so remove things in this order — reversing it (drag
+to the Trash first) leaves every hook command in `~/.claude/settings.json`
+pointing at a binary that no longer exists, so every subsequent Claude Code
+hook event runs a missing command:
+
+```bash
+/Applications/ClaudeIsland.app/Contents/MacOS/ClaudeIsland --uninstall-hooks
+```
+
+or **Remove Hooks** from the menu bar extra — either strips ClaudeIsland's
+entries from `settings.json` and the forwarding line from your status-line
+script, if one was added, rather than touching anything else in those files.
+Then turn off **Launch at Login** from the same menu, and only then delete
+`ClaudeIsland.app` (from `/Applications` or `~/Applications`, wherever it
+landed).
 
 ## Build
 
@@ -108,6 +162,45 @@ text it does not recognise leaves the state alone rather than guessing.
 **`thinking` is inferred, not observed.** Claude Code has no "assistant started
 responding" hook. It is entered on `PostToolUse` and when the `prompting` flash
 expires.
+
+**A permission prompt can be answered from the card.** `PermissionRequest` is a
+*decision* hook, not just a notification, so the client for that one event runs
+with `--await-decision`: it holds its socket open and forwards whatever the HUD
+answers to stdout, where Claude Code reads it. Allow and Deny appear on the peek
+and expanded cards, and the transcript records `Allowed by PermissionRequest
+hook`.
+
+This races the terminal rather than replacing it. Claude Code paints its own
+dialog *and* waits on the hook at the same time, so whichever is answered first
+wins and nothing is ever taken away from the terminal. Every failure path
+degrades the same way — a dead HUD fails to connect in 50 ms, a wedged one is
+bounded by the client's deadline, and a hook that answers nothing simply leaves
+the dialog where it was. That is the whole safety argument: the worst outcome is
+that you walk back to the terminal, which is where you started.
+
+Three things it deliberately refuses to do:
+
+- **Approve a command it cannot show you whole.** The card grows to fit the
+  command; past six lines it stops growing and withholds Allow, because
+  approving something with an ellipsis through the middle of it is the one
+  hazard the terminal does not have.
+- **Answer when two prompts are live in one session.** Parallel tool calls raise
+  a prompt each while the terminal shows one at a time, and there is no signal
+  pairing them up — so a press could approve the call you are not reading. The
+  card says `2 prompts waiting` and refuses both.
+- **Persist a rule.** `decision.applyRule` would write an "always allow" into
+  settings.json, and that shape has not been verified the way allow and deny
+  have been.
+
+Answering in the terminal does **not** reap the waiting hook (measured: still
+alive 10s later), so there is no signal that a prompt was settled elsewhere. The
+card can briefly offer an answer Claude Code has already superseded and will
+discard; the session's next event retires it, and pressing it is a no-op that
+clears the offer.
+
+Hooks installed before this existed are installed *and* stale — present, so they
+look fine, but unable to answer anything. The menu bar says `Update Hooks (out of
+date)` rather than leaving you to notice a missing button.
 
 **A permission clears on any subsequent event.** Approve leads to `PostToolUse`,
 deny leads to `UserPromptSubmit`; rather than enumerate every resolution path,
@@ -205,8 +298,8 @@ animations moved.
 | Compact, animating | 0.2% |
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
-| Tests | 98 passing |
-| Self-test | 44 checks passing |
+| Tests | 194 total |
+| Self-test | 90 checks passing |
 
 ## Visual language
 
@@ -275,7 +368,7 @@ the mouse monitor is torn down entirely, which is what keeps idle CPU at
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 98 tests
+swift build && swift run ClaudeIslandTests      # 194 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
@@ -287,10 +380,11 @@ byte-stable. Fixtures in `Fixtures/` cover a normal session, permissions and
 failures, two concurrent sessions, subagents, and deliberately hostile input
 (malformed lines, unknown future events, embedded secrets).
 
-`--selftest` checks the two behaviours that unit tests cannot: that the panel
-never takes focus, and that clicks land where they should. Click-through is
-verified against the window server itself via `NSWindow.windowNumber(at:)`
-rather than trusting our own flags. **Run it with the screen unlocked** — a lock
+`--selftest` is a 90-check harness for what unit tests cannot exercise: that
+the panel never takes focus, that clicks land where they should, and dozens of
+on-screen layout and geometry checks besides. Click-through is verified
+against the window server itself via `NSWindow.windowNumber(at:)` rather than
+trusting our own flags. **Run it with the screen unlocked** — a lock
 screen puts a full-screen `loginwindow` layer above everything and those three
 checks are reported as skipped rather than silently passing.
 

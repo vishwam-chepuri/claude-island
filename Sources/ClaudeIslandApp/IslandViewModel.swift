@@ -46,6 +46,9 @@ final class IslandViewModel {
     private(set) var isPinnedOpen = false
     /// Set false by the menu bar extra; the HUD hides and all timers stop.
     var isEnabled = true
+    /// Answers a permission prompt. Set by `AppController`, which owns the socket
+    /// the waiting hook client is on.
+    var onAnswerPermission: ((UInt64, PermissionDecision) -> Void)?
     /// Development aid, off by default. See IslandPaths.tintFlag.
     var debugTint = FileManager.default.fileExists(atPath: IslandPaths.tintFlag.path)
     /// Development aid: pins the HUD to a tier so peek and expanded can be
@@ -182,6 +185,23 @@ final class IslandViewModel {
         bodyTopPadding + 13 + 7 + 13 + 7 + 22 + bodyBottomPadding
     /// The chip row and the 7pt gap above it.
     static let chipRowHeight: CGFloat = 7 + 34
+
+    /// The answer block's fixed furniture: the gap above it and the button row.
+    /// The command area is measured on top of this — see `answerBlockHeight`.
+    static let answerBlockChrome: CGFloat = 7 + 26 + 6
+
+    static let commandLineHeight: CGFloat = 12
+    /// The font the answer block draws the command in. Measuring with anything
+    /// else under-measures and the last line gets clipped.
+    static let commandFont: NSFont = .monospaced(9.5, weight: .regular)
+
+    /// Where the card stops growing to fit a command.
+    ///
+    /// Six lines is roughly 500 monospaced characters at this width — past that
+    /// the card would be taller than the thing it is meant to be a glance at, and
+    /// a command that long wants a terminal anyway. Beyond this the block still
+    /// shows what it can, but Allow is withheld; see `canShowCommandInFull`.
+    static let maxCommandLines = 6
     /// The 5-hour meter, grouped downward with the list it describes rather
     /// than sitting equidistant between that list and the header above it.
     /// Equidistant, it read as a figure belonging to the shown session, which
@@ -335,6 +355,73 @@ final class IslandViewModel {
 
     /// Whether any session has a plan, and whether any has one still in flight.
     private var anyTasks: Bool { allSessions.contains { !$0.tasks.isEmpty } }
+
+    /// The prompt the shown session is blocked on, when this HUD can settle it.
+    ///
+    /// Nil covers both "not waiting" and "waiting, but not ours to answer" — a
+    /// prompt reconstructed from notification prose, replayed from a trace, or
+    /// already settled in the terminal. The card must not offer a control it
+    /// cannot honour, so every answer affordance hangs off this being non-nil.
+    var answerablePrompt: PermissionAsk? {
+        guard case .awaitingPermission(let ask) = displaySession?.state, ask.isAnswerable
+        else { return nil }
+        return ask
+    }
+
+    /// Whether any session has a prompt this HUD could settle.
+    ///
+    /// The expanded card sizes itself across every session so that changing the
+    /// selection never resizes it, so the answer block has to be reserved on the
+    /// same terms — see `shapeSize`.
+    var anyAnswerablePrompt: Bool { !allAnswerablePrompts.isEmpty }
+
+    /// Every prompt this HUD could settle, across all sessions.
+    var allAnswerablePrompts: [PermissionAsk] {
+        allSessions.compactMap {
+            guard case .awaitingPermission(let ask) = $0.state, ask.isAnswerable else { return nil }
+            return ask
+        }
+    }
+
+    /// How many lines the command needs at a given column width.
+    ///
+    /// Measured rather than assumed, because the whole point of the answer block
+    /// is that you can read what you are approving. `TextMetrics` measures one
+    /// line, so this divides; word wrapping breaks on token boundaries and can
+    /// therefore need one line more than the raw ratio, which is what the margin
+    /// absorbs.
+    func commandLines(_ ask: PermissionAsk, width: CGFloat? = nil) -> Int {
+        let column = (width ?? cardContentWidth) * 0.95
+        guard let detail = ask.detail, !detail.isEmpty, column > 20 else { return 0 }
+        let measured = TextMetrics.width(detail, font: Self.commandFont)
+        return max(1, Int(ceil(measured / column)))
+    }
+
+    /// Whether the command can be shown in its entirety.
+    ///
+    /// Gates the Allow control. Approving a command whose middle has been elided
+    /// is the one hazard this feature could add that the terminal does not already
+    /// have — the terminal wraps and shows everything. Deny stays available
+    /// regardless: refusing something you cannot fully see is always safe.
+    func canShowCommandInFull(_ ask: PermissionAsk, width: CGFloat? = nil) -> Bool {
+        commandLines(ask, width: width) <= Self.maxCommandLines
+    }
+
+    /// Lines the block will actually draw, which is the need clamped to the cap.
+    func drawnCommandLines(_ ask: PermissionAsk, width: CGFloat? = nil) -> Int {
+        min(commandLines(ask, width: width), Self.maxCommandLines)
+    }
+
+    /// Height for the answer block, sized to the tallest command it must show.
+    ///
+    /// Takes every prompt it may have to display rather than just the current one:
+    /// the expanded card is measured across all sessions so that changing the
+    /// selection never resizes it mid-decision.
+    func answerBlockHeight(for asks: [PermissionAsk], width: CGFloat? = nil) -> CGFloat {
+        guard !asks.isEmpty else { return 0 }
+        let lines = asks.map { drawnCommandLines($0, width: width) }.max() ?? 1
+        return Self.answerBlockChrome + CGFloat(lines) * Self.commandLineHeight
+    }
     private var anyCurrentTask: Bool { allSessions.contains { $0.tasks.current != nil } }
 
     /// Whether peek's chip row draws anything: lines changed, a cache ratio
@@ -464,6 +551,35 @@ final class IslandViewModel {
         min(width, NotchGeometryResolver.panelWidth)
     }
 
+    /// Width of the drawn shape for the current mode.
+    ///
+    /// Split out of `shapeSize` because the answer block's height depends on how
+    /// many lines the command wraps to, which depends on the width — while the
+    /// width depends on nothing but the header and meta line. Computing it on its
+    /// own is what keeps that from being circular.
+    var shapeWidth: CGFloat {
+        guard let g = geometry else { return 0 }
+        let base = g.dormantSize
+        let flanking = notchGap + 2 * evenFlankWidth
+        switch mode {
+        case .dormant:
+            return base.width
+        case .compact, .alert:
+            return max(flanking, base.width + 80)
+        case .peek:
+            let even = notchGap + 2 * max(headerLeftClusterWidth, rightClusterWidth)
+            let meta = displaySession.map(metaLineWidth(for:)) ?? 0
+            return Self.withinPanel(max(even, 460, meta))
+        case .expanded:
+            let evenWidth = notchGap + 2 * widestFlank
+            return Self.withinPanel(
+                max(evenWidth, NotchGeometryResolver.cardWidth, widestMetaLine))
+        }
+    }
+
+    /// The width a card body actually has for text, once its own padding is off.
+    var cardContentWidth: CGFloat { max(0, shapeWidth - 2 * Self.sidePadding) }
+
     /// Size of the drawn shape for the current mode.
     var shapeSize: CGSize {
         guard let g = geometry else { return .zero }
@@ -488,11 +604,10 @@ final class IslandViewModel {
                 displaySession.map(Self.peekHasChips) == true ? Self.chipRowHeight : 0
             // The open tiers split their flanks evenly, so the width has to fit
             // TWICE the wider side — sizing to the sum truncates the header.
-            let even = notchGap + 2 * max(headerLeftClusterWidth, rightClusterWidth)
-            let meta = displaySession.map(metaLineWidth(for:)) ?? 0
+            let answer = answerBlockHeight(for: [answerablePrompt].compactMap { $0 })
             return CGSize(
-                width: Self.withinPanel(max(even, 460, meta)),
-                height: bodyTopInset + Self.peekBodyHeight + chips + taskRow)
+                width: shapeWidth,
+                height: bodyTopInset + Self.peekBodyHeight + chips + taskRow + answer)
         case .expanded:
             // Every term here is measured across all sessions, so switching
             // between them never changes the card's size.
@@ -502,11 +617,10 @@ final class IslandViewModel {
             let taskBlock: CGFloat = anyTasks ? (34 + (anyCurrentTask ? 18 : 0)) : 0
             let chipBlock: CGFloat = anyExpandedChips ? Self.expandedChipRowHeight : 0
             let usageBlock: CGFloat = rateLimit != nil ? Self.usageWindowHeight : 0
-            let evenWidth = notchGap + 2 * widestFlank
+            let answerBlock = answerBlockHeight(for: allAnswerablePrompts)
             return CGSize(
-                width: Self.withinPanel(
-                    max(evenWidth, NotchGeometryResolver.cardWidth, widestMetaLine)),
-                height: bodyTopInset + Self.expandedChromeHeight + usageBlock
+                width: shapeWidth,
+                height: bodyTopInset + Self.expandedChromeHeight + usageBlock + answerBlock
                     + rows * Self.sessionRowHeight + overflow + chipBlock + taskBlock
                     + Self.nowRowTopPadding + Self.nowRowHeight
                     + Self.trailTopPadding + trailBudget)
@@ -565,6 +679,14 @@ final class IslandViewModel {
     func unpin() {
         isPinnedOpen = false
         syncTicker()
+    }
+
+    /// Settles a permission prompt from the card. Silently does nothing for a
+    /// prompt with no connection behind it, which is what `isAnswerable` is for —
+    /// the controls are not offered in that case.
+    func answer(_ ask: PermissionAsk, with decision: PermissionDecision) {
+        guard let token = ask.decisionToken else { return }
+        onAnswerPermission?(token, decision)
     }
 
     func apply(_ snapshot: HUDSnapshot) {

@@ -128,6 +128,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
 
         server = SocketServer(log: log)
+        // The client behind a held prompt vanishes when the terminal answers
+        // first. Nothing else tells us, so this is the only way the card learns
+        // to stop offering an answer it can no longer deliver.
+        server.onWithdraw = { [weak self] token in
+            Task { @MainActor [weak self] in
+                await self?.store.withdrawDecision(token)
+            }
+        }
+        model.onAnswerPermission = { [weak self] token, decision in
+            self?.answerPermission(token, with: decision)
+        }
         do {
             let stream = try server.start()
             socketTask = Task { [weak self] in
@@ -148,7 +159,30 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Delivers a decision to the waiting hook client.
+    ///
+    /// The write is a couple of hundred bytes into a socket with an empty send
+    /// buffer, so this does not block the main thread. The prompt is retired here
+    /// either way: if the write failed, the terminal had already settled it, and
+    /// in both cases the card should stop offering to answer.
+    private func answerPermission(_ token: UInt64, with decision: PermissionDecision) {
+        let delivered = server.resolve(token, with: decision)
+        if !delivered {
+            log.debug("decision for \(token) arrived after the prompt was settled")
+        }
+        Task { [weak self] in await self?.store.withdrawDecision(token) }
+    }
+
     private func handle(_ envelope: HookEnvelope) async {
+        // A prompt whose client is already gone must not arrive answerable. The
+        // withdrawal for it has, by then, already been delivered against a
+        // session that was not yet waiting on anything, so it cleared nothing —
+        // this is the half of that race the push notification cannot cover. A
+        // hook installed without `--await-decision` hits it every single time.
+        var envelope = envelope
+        if let token = envelope.decisionToken, !server.isPendingDecision(token) {
+            envelope.decisionToken = nil
+        }
         await store.ingest(envelope)
 
         // Arm the transcript watcher the first time a session tells us where
@@ -275,8 +309,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(dnd)
 
         let installed = HookInstaller.isInstalled()
+        // A block from before the permission hook learned to wait is installed and
+        // stale at once, and the only symptom is an absence: prompts arrive with no
+        // way to answer them and nothing says why. Name it in the menu rather than
+        // leave the user to notice a missing button.
+        let stale = installed && !HookInstaller.isCurrent(binaryPath: Self.notifyBinaryPath())
         let install = NSMenuItem(
-            title: installed ? "Reinstall Hooks" : "Install Hooks…",
+            title: installed
+                ? (stale ? "Update Hooks (out of date)" : "Reinstall Hooks")
+                : "Install Hooks…",
             action: #selector(installHooks), keyEquivalent: "")
         install.target = self
         menu.addItem(install)
@@ -306,6 +347,14 @@ final class AppController: NSObject, NSApplicationDelegate {
             action: #selector(toggleDebugTint), keyEquivalent: "")
         tint.target = self
         menu.addItem(tint)
+
+        if LoginItem.isAvailable {
+            let login = NSMenuItem(
+                title: LoginItem.isEnabled ? "Don't Launch at Login" : "Launch at Login",
+                action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+            login.target = self
+            menu.addItem(login)
+        }
 
         let reveal = NSMenuItem(
             title: "Reveal Support Folder", action: #selector(revealSupportFolder),
@@ -380,9 +429,20 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc private func uninstallHooks() {
         do {
             try HookInstaller.uninstall()
+            // Mirror the CLI's --uninstall-hooks: a statusLine forwarding line
+            // added by --install-hooks is this route's to remove too, or the
+            // menu leaves a dangling reference the CLI would have cleaned up.
+            let statusline = try StatuslineInstaller.uninstall()
             let alert = NSAlert()
             alert.messageText = "Hooks removed"
-            alert.informativeText = "Only ClaudeIsland's entries were removed."
+            if case .removed(let script) = statusline {
+                alert.informativeText = """
+                    ClaudeIsland's entries were removed from settings.json.
+                    The forwarding line was also removed from \(script).
+                    """
+            } else {
+                alert.informativeText = "ClaudeIsland's entries were removed from settings.json."
+            }
             alert.runModal()
         } catch {
             presentError("Could not remove hooks", error)
@@ -419,6 +479,29 @@ final class AppController: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    @objc private func toggleLaunchAtLogin() {
+        do {
+            try LoginItem.setEnabled(!LoginItem.isEnabled)
+            // Approval lives in System Settings and cannot be granted from here,
+            // so say where it is rather than leaving the menu title lying.
+            if LoginItem.status == .requiresApproval {
+                presentApprovalNeeded()
+            }
+        } catch {
+            // `register()` itself throws once the user has switched the item
+            // off in System Settings, not just the status after it succeeds —
+            // re-check status rather than assume every throw is opaque, so
+            // that reportedly-common case still gets the actionable message
+            // instead of a generic error dialog.
+            if LoginItem.status == .requiresApproval {
+                presentApprovalNeeded()
+            } else {
+                presentError("Could not change the login item", error)
+            }
+        }
+        rebuildMenu()
+    }
+
     @objc private func revealSupportFolder() {
         IslandPaths.ensureRoot()
         NSWorkspace.shared.activateFileViewerSelecting([IslandPaths.root])
@@ -434,6 +517,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         alert.messageText = title
         alert.informativeText = "\(error)"
         alert.alertStyle = .warning
+        alert.runModal()
+    }
+
+    private func presentApprovalNeeded() {
+        let alert = NSAlert()
+        alert.messageText = "Approval needed"
+        alert.informativeText =
+            "Enable ClaudeIsland under System Settings → General → Login Items."
         alert.runModal()
     }
 

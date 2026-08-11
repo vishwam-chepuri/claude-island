@@ -41,24 +41,29 @@ public enum HookInstaller {
 
     static func hooksDictionary(binaryPath: String) -> [String: Any] {
         var result: [String: Any] = [:]
-        let command = quoteIfNeeded(binaryPath)
         for event in HookEvent.installable {
-            result[event.name] = [
-                [
-                    "matcher": "",
-                    "hooks": [
-                        [
-                            "type": "command",
-                            "command": command,
-                            // The client self-limits to 50 ms; this is a backstop
-                            // in case the process itself is slow to start.
-                            "timeout": 5,
-                        ] as [String: Any]
-                    ],
-                ] as [String: Any]
-            ]
+            result[event.name] = [matcher(binaryPath: binaryPath, event: event)]
         }
         return result
+    }
+
+    /// The one place an entry of ours is shaped, so the printable block and the
+    /// merged install cannot drift apart on arguments or timeouts.
+    private static func matcher(binaryPath: String, event: HookEvent) -> [String: Any] {
+        [
+            "matcher": "",
+            "hooks": [
+                [
+                    "type": "command",
+                    "command": command(binaryPath: binaryPath, event: event),
+                    "timeout": event.hookTimeoutSeconds,
+                ] as [String: Any]
+            ],
+        ]
+    }
+
+    private static func command(binaryPath: String, event: HookEvent) -> String {
+        ([quoteIfNeeded(binaryPath)] + event.clientArguments).joined(separator: " ")
     }
 
     private static func quoteIfNeeded(_ path: String) -> String {
@@ -91,17 +96,7 @@ public enum HookInstaller {
                 m["hooks"] = kept
                 return m
             }
-            matchers.append(
-                [
-                    "matcher": "",
-                    "hooks": [
-                        [
-                            "type": "command",
-                            "command": quoteIfNeeded(binaryPath),
-                            "timeout": 5,
-                        ] as [String: Any]
-                    ],
-                ] as [String: Any])
+            matchers.append(matcher(binaryPath: binaryPath, event: event))
             hooks[event.name] = matchers
         }
 
@@ -163,6 +158,36 @@ public enum HookInstaller {
             }
         }
         return false
+    }
+
+    /// Whether the installed block matches what this build would write.
+    ///
+    /// `isInstalled` only answers "is there an entry of ours", which was enough
+    /// when every event got an identical command. It no longer is: a block
+    /// installed before `PermissionRequest` gained `--await-decision` looks
+    /// installed and is, but silently cannot answer a prompt from the card. The
+    /// symptom is an absence — no controls, no explanation — so the app has to be
+    /// able to tell the difference and say so.
+    public static func isCurrent(
+        binaryPath: String, settingsURL: URL = IslandPaths.claudeSettings
+    ) -> Bool {
+        guard let settings = try? loadSettings(settingsURL),
+            let hooks = settings["hooks"] as? [String: Any]
+        else { return false }
+
+        for event in HookEvent.installable {
+            let expected = command(binaryPath: binaryPath, event: event)
+            let entries = ((hooks[event.name] as? [[String: Any]]) ?? [])
+                .flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] }
+                .filter(isOurs)
+            guard
+                entries.contains(where: {
+                    ($0["command"] as? String) == expected
+                        && ($0["timeout"] as? Int) == event.hookTimeoutSeconds
+                })
+            else { return false }
+        }
+        return true
     }
 
     private static func isOurs(_ hook: [String: Any]) -> Bool {
