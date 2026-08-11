@@ -431,6 +431,7 @@ enum SelfTest {
         outlineGeometryChecks(&checks)
         await switcherChecks(&checks, model: model)
         settingsChecks(&checks)
+        displayChecks(&checks)
         soundChecks(&checks)
         frontmostMuteChecks(&checks)
         await healthChecks(&checks)
@@ -596,13 +597,15 @@ enum SelfTest {
     /// it laid out to. The settings store writes to a temporary directory: this
     /// only mounts the view, but `onAppear` installs a write-failure handler and
     /// a self-test must not be able to touch the real settings file.
-    private static func settingsPaneSize(health: PipelineHealthStore) -> CGSize {
+    private static func settingsPaneSize(
+        health: PipelineHealthStore, settings: IslandSettings = IslandSettings()
+    ) -> CGSize {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("island-selftest-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
         let view = SettingsView(
-            store: SettingsStore(IslandSettings(), root: root),
+            store: SettingsStore(settings, root: root),
             health: health,
             model: IslandViewModel(),
             actions: SettingsActions(
@@ -671,6 +674,24 @@ enum SelfTest {
                     && sounds[.done] == SoundCue.done.defaultSound,
                 detail: "waiting=\(sounds[.waiting]) done=\(sounds[.done])"))
 
+        // The display is stored as a name that may well not be attached, so
+        // nothing along the write path is allowed to "helpfully" drop it — the
+        // whole fallback rests on the choice outliving the monitor.
+        store.preferredDisplay = "LG UltraFine"
+        checks.append(
+            Check(
+                name: "a chosen display persists even though nothing here is called that",
+                passed: IslandSettings.load(root: root).preferredDisplay == "LG UltraFine",
+                detail: "on disk: "
+                    + "\(IslandSettings.load(root: root).preferredDisplay ?? "none")"))
+        store.preferredDisplay = nil
+        checks.append(
+            Check(
+                name: "choosing the menu bar display again clears the stored name",
+                passed: IslandSettings.load(root: root).preferredDisplay == nil,
+                detail: "on disk: "
+                    + "\(IslandSettings.load(root: root).preferredDisplay ?? "none")"))
+
         // The window writes a string; the HUD needs a tier. A typo must leave
         // the HUD unpinned rather than pin it to something arbitrary.
         checks.append(
@@ -682,6 +703,138 @@ enum SelfTest {
                     && IslandMode(forcedName: nil) == nil,
                 detail: "expanded=\(String(describing: IslandMode(forcedName: "expanded"))) "
                     + "nonsense=\(String(describing: IslandMode(forcedName: "nonsense")))"))
+    }
+
+    /// Which display the HUD draws on, and what becomes of it when that display
+    /// is not there.
+    ///
+    /// The rule is driven against a made-up list of display names. The failure it
+    /// exists for is a monitor being unplugged, and a check that could only be
+    /// run by pulling a cable is a check nobody runs; worse, one that passed
+    /// because of the two monitors on this particular desk would say nothing
+    /// about anyone else's. `DisplaySelection` is deliberately shaped to take a
+    /// list of strings so this can be asserted from a keyboard.
+    ///
+    /// The last two then walk the real `NSScreen` path, which is the half no
+    /// headless suite can reach: a rule that resolves perfectly and is wired to
+    /// nothing looks exactly like no feature at all.
+    private static func displayChecks(_ checks: inout [Check]) {
+        let attached = ["Built-in Retina Display", "DELL P3223QE", "LG UltraFine"]
+        func resolve(_ preferred: String?, _ list: [String], menuBar: Int = 0)
+            -> DisplayResolution?
+        {
+            DisplaySelection.resolve(preferred: preferred, attached: list, menuBarIndex: menuBar)
+        }
+
+        let unset = resolve(nil, attached)
+        checks.append(
+            Check(
+                name: "with no display chosen the HUD stays on the menu bar's",
+                passed: unset?.index == 0 && unset?.missing == nil,
+                detail: "\(String(describing: unset))"))
+
+        let chosen = resolve("DELL P3223QE", attached)
+        checks.append(
+            Check(
+                name: "a chosen display that is attached is the one drawn on",
+                passed: chosen?.index == 1 && chosen?.missing == nil,
+                detail: "\(String(describing: chosen))"))
+
+        // The behaviour the whole feature turns on. "Not attached" has to mean
+        // the menu bar's display — not the panel's last coordinates, which now
+        // belong to no screen at all, and not nil, which would leave the geometry
+        // unresolved and the island drawn nowhere.
+        let unplugged = resolve("LG UltraFine", ["Built-in Retina Display", "DELL P3223QE"])
+        checks.append(
+            Check(
+                name: "an unplugged display falls back to the menu bar's, not to nothing",
+                passed: unplugged?.index == 0 && unplugged?.missing == "LG UltraFine",
+                detail: "\(String(describing: unplugged))"))
+
+        // Only equal to "the first display" because AppKit happens to order that
+        // array menu-bar-first; the rule is written against the menu bar.
+        let elsewhere = resolve("Unplugged", attached, menuBar: 2)
+        checks.append(
+            Check(
+                name: "the fallback follows the menu bar, not the first display in the list",
+                passed: elsewhere?.index == 2,
+                detail: "\(String(describing: elsewhere))"))
+
+        // --- The real screens, through the app's own path ---
+
+        guard let menuBar = NotchGeometryResolver.menuBarScreen() else {
+            checks.append(
+                Check(name: "a display this Mac does not have lands on the menu bar screen",
+                    skipped: "no screens are attached"))
+            return
+        }
+        let menuBarID = NotchGeometryResolver.displayID(of: menuBar)
+        // A name no display can have, so this says the same thing on every Mac —
+        // including one where the user really does own an LG UltraFine.
+        let phantom = "No Such Display \(UUID().uuidString)"
+        let stranded = NotchGeometryResolver.resolveDisplay(preferred: phantom)
+        checks.append(
+            Check(
+                name: "a display this Mac does not have lands on the menu bar screen",
+                passed: stranded?.missing == phantom
+                    && stranded.map { NotchGeometryResolver.displayID(of: $0.screen) } == menuBarID
+                    && stranded?.geometry.screenID == menuBarID
+                    // On-screen, not merely on the right screen: the point of
+                    // falling back is that the island is somewhere you can see.
+                    && menuBar.frame.contains(stranded?.geometry.islandRect ?? .null),
+                detail: "screen=\(stranded?.screen.localizedName ?? "none") "
+                    + "island=\(String(describing: stranded?.geometry.islandRect)) "
+                    + "menuBar=\(menuBar.localizedName) \(menuBar.frame)"))
+
+        // Not merely "on the right screen" but pixel-for-pixel what an install
+        // that had never touched this setting would draw. A fallback that landed
+        // on the menu bar's display with subtly different geometry would be a
+        // second bug hiding inside the fix for the first.
+        checks.append(
+            Check(
+                name: "the fallback geometry is exactly the no-preference geometry",
+                passed: stranded?.geometry == NotchGeometryResolver.current(),
+                detail: "fallback=\(String(describing: stranded?.geometry.islandRect)) "
+                    + "default=\(String(describing: NotchGeometryResolver.current()?.islandRect))"))
+
+        // The picker's odd branch, laid out for real: a stored display that is
+        // not attached puts an extra row and a caption on General. A smoke test
+        // — it cannot see what was drawn — but the alternative is a branch that
+        // only ever runs on a desk with the right monitor missing.
+        var pinnedToNothing = IslandSettings()
+        pinnedToNothing.preferredDisplay = phantom
+        let paneSize = settingsPaneSize(health: PipelineHealthStore(), settings: pinnedToNothing)
+        checks.append(
+            Check(
+                name: "the general pane lays out with a display that is not connected",
+                passed: paneSize.width > 0 && paneSize.height > 0,
+                detail: "\(paneSize)"))
+
+        // The other direction: every attached display resolves back to itself.
+        // Skipped rather than asserted when two share a name — `DisplaySelection`
+        // says why they cannot be told apart, and failing here would report a
+        // documented limitation as a regression.
+        let names = NSScreen.screens.map(\.localizedName)
+        let ambiguous = Set(names.filter { name in names.filter { $0 == name }.count > 1 })
+        if let duplicate = ambiguous.first {
+            checks.append(
+                Check(
+                    name: "every attached display can be picked by name",
+                    skipped: "two displays are both called \"\(duplicate)\""))
+        } else {
+            let wrong = NSScreen.screens.filter { screen in
+                NotchGeometryResolver.resolveDisplay(preferred: screen.localizedName)?
+                    .geometry.screenID != NotchGeometryResolver.displayID(of: screen)
+            }
+            checks.append(
+                Check(
+                    name: "every attached display can be picked by name",
+                    passed: wrong.isEmpty,
+                    detail: wrong.isEmpty
+                        ? "\(names.count) display(s): \(names.joined(separator: ", "))"
+                        : "did not resolve to itself: "
+                            + wrong.map(\.localizedName).joined(separator: ", ")))
+        }
     }
 
     /// The sound settings' app-side half: a stored name has to become a sound.

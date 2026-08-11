@@ -29,6 +29,9 @@ func registerSettingsTests() {
             await expect(!s.debugTint, "tint off by default")
             await expect(s.forcedMode == nil, "not pinned by default")
             await expect(
+                s.preferredDisplay == nil,
+                "no display is pinned by default — the HUD follows the menu bar")
+            await expect(
                 !s.muteWhileTerminalFrontmost,
                 "the frontmost-terminal gate is opt-in — it changes what an install already does")
             await expect(
@@ -47,6 +50,7 @@ func registerSettingsTests() {
             s.debugTint = true
             s.forcedMode = "peek"
             s.muteWhileTerminalFrontmost = true
+            s.preferredDisplay = "DELL P3223QE"
             s.doneSound = CueSound(enabled: false, name: "Hero")
             s.inputRequiredSound = CueSound(enabled: true, name: "Sosumi")
             s.waitingSound = CueSound(enabled: false, name: "Tink")
@@ -209,6 +213,59 @@ func registerSettingsTests() {
             await expectEqual(s[.done].name, "Hero", "and the rest of the file still loaded")
         }
 
+        // MARK: - Which display the HUD draws on
+
+        test("The chosen display round-trips on its own") {
+            let root = try tempRoot()
+            var s = IslandSettings()
+            s.preferredDisplay = "DELL P3223QE"
+            try s.save(root: root)
+
+            let loaded = IslandSettings.load(root: root)
+            await expectEqual(
+                loaded.preferredDisplay, "DELL P3223QE", "the display came back wrong")
+            await expect(loaded == s, "and nothing else moved when it was written")
+        }
+
+        // The upgrade path: every settings.json on disk before the HUD could be
+        // moved has no such key, and those builds drew on the menu bar's display.
+        // A default of anything else would relocate a working HUD on update.
+        test("A settings file written before the display could be chosen keeps the menu bar") {
+            let root = try tempRoot()
+            try write(
+                """
+                {
+                  "debugTint" : false,
+                  "doNotDisturb" : false,
+                  "doneSound" : { "enabled" : true, "name" : "Hero" },
+                  "hudEnabled" : true,
+                  "logging" : false,
+                  "muteWhileTerminalFrontmost" : true
+                }
+                """, "settings.json", in: root)
+
+            let s = IslandSettings.load(root: root)
+            await expect(s.preferredDisplay == nil, "an absent key pinned a display")
+            await expectEqual(s[.done].name, "Hero", "and the rest of the file still loaded")
+            await expect(s.muteWhileTerminalFrontmost, "including the key next to it")
+        }
+
+        // Hand-editing is a documented way to use this file, and clearing a
+        // string by emptying it is what a hand-edit looks like. Left as-is it
+        // would be a display named "" that is never found and reports itself
+        // missing in the picker forever.
+        test("A blank display name means the menu bar, not a display called nothing") {
+            let root = try tempRoot()
+            try write(#"{"preferredDisplay": "   "}"#, "settings.json", in: root)
+            await expect(IslandSettings.load(root: root).preferredDisplay == nil, "blank pinned")
+        }
+
+        test("A stored display name is kept verbatim, only trimmed") {
+            let root = try tempRoot()
+            try write(#"{"preferredDisplay": "  DELL P3223QE\n"}"#, "settings.json", in: root)
+            await expectEqual(IslandSettings.load(root: root).preferredDisplay, "DELL P3223QE")
+        }
+
         // MARK: - Migration off the sentinel files
 
         test("Each sentinel file migrates into settings.json and is deleted") {
@@ -269,6 +326,111 @@ func registerSettingsTests() {
             s.forcedMode = "expanded"
             try s.save(root: root)
             await expect(IslandSettings.bootstrap(root: root) == s, "unchanged")
+        }
+    }
+
+    // The rule the stored name is read through. Expressed over a list of display
+    // names rather than over `NSScreen` precisely so the case that matters — the
+    // chosen monitor is not plugged in — can be written down here instead of
+    // requiring somebody to pull a cable while watching the notch.
+    suite("Display selection") {
+
+        let attached = ["Built-in Retina Display", "DELL P3223QE", "LG UltraFine"]
+
+        test("No preference means the display with the menu bar") {
+            let r = DisplaySelection.resolve(preferred: nil, attached: attached, menuBarIndex: 0)
+            await expectEqual(r?.index, 0)
+            await expect(r?.missing == nil, "nothing is missing when nothing was asked for")
+        }
+
+        test("A chosen display that is attached is the one used") {
+            let r = DisplaySelection.resolve(
+                preferred: "DELL P3223QE", attached: attached, menuBarIndex: 0)
+            await expectEqual(r?.index, 1)
+            await expect(r?.missing == nil, "reported missing while plugged in")
+        }
+
+        test("Matching ignores case, because this name can be typed by hand") {
+            await expectEqual(
+                DisplaySelection.resolve(
+                    preferred: "dell p3223qe", attached: attached, menuBarIndex: 0)?.index, 1)
+        }
+
+        // The one that matters. Unplugging a monitor must leave the HUD on a
+        // screen that exists — not at coordinates that belong to nothing, and
+        // not nowhere at all.
+        test("A chosen display that is gone falls back to the menu bar's, and says so") {
+            let stillHere = ["Built-in Retina Display", "DELL P3223QE"]
+            let r = DisplaySelection.resolve(
+                preferred: "LG UltraFine", attached: stillHere, menuBarIndex: 0)
+            await expectEqual(r?.index, 0, "the HUD did not land on the menu bar's display")
+            await expectEqual(r?.missing, "LG UltraFine", "the fallback went unreported")
+        }
+
+        // The fallback is "the display with the menu bar", not "the first one" —
+        // and the two are only the same because AppKit happens to order that
+        // array menu-bar-first.
+        test("The fallback is the menu bar's display wherever it sits in the list") {
+            let r = DisplaySelection.resolve(
+                preferred: "Unplugged", attached: attached, menuBarIndex: 2)
+            await expectEqual(r?.index, 2)
+        }
+
+        test("A nonsense menu-bar index still resolves to a real display") {
+            let r = DisplaySelection.resolve(
+                preferred: nil, attached: attached, menuBarIndex: 9)
+            await expectEqual(
+                r?.index, 0, "an out-of-range fallback must not become an off-screen panel")
+        }
+
+        test("No displays at all resolves to nothing") {
+            await expect(
+                DisplaySelection.resolve(preferred: "DELL P3223QE", attached: [], menuBarIndex: 0)
+                    == nil,
+                "there is no display to fall back to, and nobody to see it")
+        }
+
+        test("Blank and whitespace preferences read as no preference") {
+            for blank in ["", "   ", "\n"] {
+                let r = DisplaySelection.resolve(
+                    preferred: blank, attached: attached, menuBarIndex: 1)
+                await expectEqual(r?.index, 1, "blank \"\(blank)\" was not treated as unset")
+                await expect(r?.missing == nil, "blank \"\(blank)\" was reported missing")
+            }
+        }
+
+        // MARK: - What the picker offers
+
+        test("The picker offers every attached display") {
+            await expectEqual(DisplaySelection.options(attached: attached, chosen: nil), attached)
+        }
+
+        // A picker whose selection matches no row draws an empty one, which reads
+        // as a setting that reset itself rather than one waiting for a cable.
+        test("A remembered display that is unplugged is still offered") {
+            let options = DisplaySelection.options(
+                attached: ["Built-in Retina Display"], chosen: "LG UltraFine")
+            await expectEqual(options, ["Built-in Retina Display", "LG UltraFine"])
+        }
+
+        test("A chosen display that is attached is not offered twice") {
+            await expectEqual(
+                DisplaySelection.options(attached: attached, chosen: "dell p3223qe"), attached)
+        }
+
+        // Two identical monitors report identical names. The second row would
+        // carry the same tag as the first and could never be selected, so it
+        // would be a row that does nothing — see DisplaySelection for the honest
+        // account of what this costs.
+        test("Two identical monitors collapse to one row") {
+            await expectEqual(
+                DisplaySelection.options(
+                    attached: ["DELL P3223QE", "DELL P3223QE"], chosen: nil),
+                ["DELL P3223QE"])
+        }
+
+        test("A blank stored choice adds no row") {
+            await expectEqual(DisplaySelection.options(attached: attached, chosen: "  "), attached)
         }
     }
 }

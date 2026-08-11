@@ -1,4 +1,5 @@
 import AppKit
+import ClaudeIslandCore
 
 /// Where the island should be drawn on a given screen.
 struct NotchGeometry: Equatable {
@@ -47,10 +48,50 @@ enum NotchGeometryResolver {
     /// notch rather than a floating widget.
     static let pillSize = CGSize(width: 200, height: 32)
 
-    /// Resolve geometry for the screen that currently owns the menu bar.
-    static func current() -> NotchGeometry? {
-        guard let screen = menuBarScreen() else { return nil }
-        return resolve(for: screen)
+    /// The display the HUD is to be drawn on, and whether that is the one that
+    /// was asked for.
+    struct ResolvedDisplay {
+        let screen: NSScreen
+        /// The stored display name, when nothing attached answers to it. The HUD
+        /// is on the menu-bar display in that case — never nowhere.
+        let missing: String?
+
+        var geometry: NotchGeometry { NotchGeometryResolver.resolve(for: screen) }
+    }
+
+    /// Resolve geometry for the display the HUD is pinned to, or — with no
+    /// preference, or one that is not plugged in — the one that owns the menu bar.
+    static func current(preferredDisplay: String? = nil) -> NotchGeometry? {
+        resolveDisplay(preferred: preferredDisplay)?.geometry
+    }
+
+    /// Turns a stored display name into a live `NSScreen`.
+    ///
+    /// The rule itself lives in `DisplaySelection`, over a list of names, so the
+    /// case that matters — a chosen display that is not attached — is testable
+    /// without unplugging anything. All this adds is the AppKit half: which names
+    /// are attached, and which of them is the menu bar's.
+    ///
+    /// Nothing here writes to settings. A monitor that is merely asleep, or
+    /// unplugged for the afternoon, must come back to the display the user chose
+    /// rather than to whatever we quietly saved instead.
+    static func resolveDisplay(preferred: String?) -> ResolvedDisplay? {
+        let screens = NSScreen.screens
+        guard
+            let resolution = DisplaySelection.resolve(
+                preferred: preferred,
+                attached: screens.map(\.localizedName),
+                // The menu bar's display is `screens.first`; see `menuBarScreen()`.
+                menuBarIndex: 0)
+        else { return nil }
+        return ResolvedDisplay(screen: screens[resolution.index], missing: resolution.missing)
+    }
+
+    /// The displays a picker should offer, in AppKit's order, with duplicate
+    /// names collapsed — see `DisplaySelection.options`, which is also where the
+    /// reason two identical monitors cannot be told apart is written down.
+    static func attachedDisplayNames() -> [String] {
+        DisplaySelection.options(attached: NSScreen.screens.map(\.localizedName), chosen: nil)
     }
 
     /// The screen holding the menu bar is `NSScreen.screens.first` — AppKit
@@ -61,11 +102,20 @@ enum NotchGeometryResolver {
         NSScreen.screens.first
     }
 
+    /// The window server's id for a screen.
+    ///
+    /// Carried in the geometry, and the only thing that identifies a screen
+    /// unambiguously *within one session* — which is why it is what a check
+    /// compares, and why it is not what the setting stores. See
+    /// `DisplaySelection` for the difference between those two jobs.
+    static func displayID(of screen: NSScreen) -> CGDirectDisplayID {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+            .uint32Value ?? 0
+    }
+
     static func resolve(for screen: NSScreen) -> NotchGeometry {
         let frame = screen.frame
-        let displayID =
-            (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
-            .uint32Value ?? 0
+        let displayID = displayID(of: screen)
 
         let island: CGRect
         let hasNotch: Bool

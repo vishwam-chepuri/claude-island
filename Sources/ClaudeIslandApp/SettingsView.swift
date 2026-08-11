@@ -1,5 +1,6 @@
 import AppKit
 import ClaudeIslandCore
+import Combine
 import SwiftUI
 
 /// Side effects the settings window needs but does not own.
@@ -43,6 +44,13 @@ struct SettingsView: View {
     /// sidebar the user can lose is one they cannot ask for again.
     @State private var columns = NavigationSplitViewVisibility.all
 
+    /// The displays attached right now, re-read whenever the window learns they
+    /// changed. Held in state rather than asked for inside `body`: SwiftUI has no
+    /// reason to re-run a view because a monitor was unplugged, so a picker that
+    /// read `NSScreen.screens` directly would go on offering a display that is no
+    /// longer there for as long as the window stayed open.
+    @State private var displays: [String] = []
+
     var body: some View {
         VStack(spacing: 0) {
             // maxHeight, not just the natural height: a pane's content is
@@ -65,6 +73,18 @@ struct SettingsView: View {
             store.onWriteFailure = { error in
                 writeFailure = "Could not save settings: \(error)"
             }
+            displays = NotchGeometryResolver.attachedDisplayNames()
+        }
+        // On the window rather than on the General pane: the same notification is
+        // what moves the HUD (see `AppController.observeScreenChanges`), and a
+        // list refreshed only while its own pane happens to be showing would be
+        // stale exactly when someone switches to it to find out where the island
+        // went.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didChangeScreenParametersNotification)
+        ) { _ in
+            displays = NotchGeometryResolver.attachedDisplayNames()
         }
     }
 
@@ -128,6 +148,7 @@ struct SettingsView: View {
             Section {
                 LabeledContent("Status", value: statusLine)
                 Toggle("Show the HUD", isOn: $store.hudEnabled)
+                displayRow
                 if LoginItem.isAvailable {
                     Toggle("Launch at login", isOn: launchAtLoginBinding)
                 }
@@ -140,6 +161,51 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Which display the island draws on.
+    ///
+    /// On General, next to "Show the HUD", rather than on Appearance. Both were
+    /// defensible and this one is a judgement call, made on two grounds: this
+    /// setting answers *where the HUD is*, which is the same question as whether
+    /// it is showing at all — someone whose island has vanished onto the laptop
+    /// panel behind a closed lid goes looking in the pane that turns it on, not
+    /// in the one about how it looks. And Appearance is currently a pane that
+    /// writes no settings whatsoever: it is the preview and nothing else, which
+    /// is a property worth keeping.
+    ///
+    /// The caption only appears when the chosen display is missing. A row that
+    /// explained itself at all times would be four lines of prose above "Launch
+    /// at login" for the single-display majority, who never touch this.
+    private var displayRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Show it on", selection: preferredDisplayBinding) {
+                // The default is a rule, not a display: it follows the menu bar
+                // wherever that moves, which is not the same as naming the
+                // display the menu bar happens to be on today. No separator
+                // under it — a `Divider` in a `Picker` renders as a real row on
+                // some macOS versions, and an inert row in a two-item menu is a
+                // worse bug than the missing hairline it was meant to be.
+                Text("The display with the menu bar").tag("")
+                ForEach(displayOptions, id: \.self) { name in
+                    // The remembered-but-absent display is offered too, marked as
+                    // such — see `DisplaySelection.options`. Without it the picker
+                    // would draw an empty row for a selection matching no tag,
+                    // which reads as a setting that reset itself rather than one
+                    // being honoured as soon as the cable goes back in.
+                    Text(isAttached(name) ? name : "\(name) — not connected").tag(name)
+                }
+            }
+            if let missing = missingDisplay {
+                Text(
+                    "\(missing) is not connected. The HUD is on the display with the menu bar "
+                        + "until it is back — the choice is kept, not reset."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     /// Whether anything is reaching the HUD at all.
@@ -498,6 +564,25 @@ struct SettingsView: View {
         }
     }
 
+    /// Every attached display, plus the stored choice when that is not one of
+    /// them. Duplicate names collapse — two identical monitors are one row, and
+    /// `DisplaySelection` says why that cannot be fixed here.
+    private var displayOptions: [String] {
+        DisplaySelection.options(attached: displays, chosen: store.preferredDisplay)
+    }
+
+    private func isAttached(_ name: String) -> Bool {
+        displays.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// The chosen display's name when it is not attached, for the caption.
+    private var missingDisplay: String? {
+        guard let chosen = DisplaySelection.normalized(store.preferredDisplay),
+            !isAttached(chosen)
+        else { return nil }
+        return chosen
+    }
+
     private var statusLine: String {
         guard store.hudEnabled else { return "Hidden" }
         switch model.snapshot.sessionCount {
@@ -573,6 +658,28 @@ struct SettingsView: View {
                     }
                 }
             })
+    }
+
+    /// Empty tag means the menu bar's display, the same way an absent key does in
+    /// `settings.json` — so the default row and a file with nothing in it agree.
+    private var preferredDisplayBinding: Binding<String> {
+        Binding(
+            get: { canonicalDisplayName(store.preferredDisplay) ?? "" },
+            set: { store.preferredDisplay = DisplaySelection.normalized($0) })
+    }
+
+    /// The stored name spelled the way this picker's tags spell it.
+    ///
+    /// Resolution is case-insensitive, because the file is hand-editable — but a
+    /// `Picker` compares tags exactly, so a hand-edited "dell p3223qe" would
+    /// drive the HUD to the right display and still draw an empty row, which is
+    /// the one thing this pane is careful never to do. Canonicalised for display
+    /// only: nothing is written back, because rewriting the setting on the
+    /// strength of what happens to be plugged in is precisely what the fallback
+    /// must not do.
+    private func canonicalDisplayName(_ stored: String?) -> String? {
+        guard let stored = DisplaySelection.normalized(stored) else { return nil }
+        return displays.first { $0.caseInsensitiveCompare(stored) == .orderedSame } ?? stored
     }
 
     private var forcedModeBinding: Binding<String> {

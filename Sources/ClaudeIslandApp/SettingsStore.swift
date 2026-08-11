@@ -25,6 +25,9 @@ final class SettingsStore {
     var debugTint: Bool { didSet { persist() } }
     var forcedMode: String? { didSet { persist() } }
     var muteWhileTerminalFrontmost: Bool { didSet { persist() } }
+    /// The display's `localizedName`, or nil for the menu bar's. Held even while
+    /// that display is unplugged — see `IslandSettings.preferredDisplay`.
+    var preferredDisplay: String? { didSet { persist() } }
     var doneSound: CueSound { didSet { persist() } }
     var inputRequiredSound: CueSound { didSet { persist() } }
     var waitingSound: CueSound { didSet { persist() } }
@@ -68,6 +71,7 @@ final class SettingsStore {
         debugTint = settings.debugTint
         forcedMode = settings.forcedMode
         muteWhileTerminalFrontmost = settings.muteWhileTerminalFrontmost
+        preferredDisplay = settings.preferredDisplay
         doneSound = settings.doneSound
         inputRequiredSound = settings.inputRequiredSound
         waitingSound = settings.waitingSound
@@ -81,6 +85,7 @@ final class SettingsStore {
         s.debugTint = debugTint
         s.forcedMode = forcedMode
         s.muteWhileTerminalFrontmost = muteWhileTerminalFrontmost
+        s.preferredDisplay = preferredDisplay
         s.doneSound = doneSound
         s.inputRequiredSound = inputRequiredSound
         s.waitingSound = waitingSound

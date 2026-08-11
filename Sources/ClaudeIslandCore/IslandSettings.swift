@@ -90,6 +90,22 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// replaces — a switch that silently resets on every relaunch reads as a
     /// bug once it lives in a window rather than a menu.
     public var hudEnabled: Bool = true
+    /// Which display the HUD draws on, by `NSScreen.localizedName`. Next to
+    /// `hudEnabled` because it is the other half of the same question: whether
+    /// the island is showing, and where.
+    ///
+    /// Nil means the display that owns the menu bar — what every build before
+    /// this one did, and still the right default: that is where the notch is on
+    /// the one Mac shape this HUD is drawn to imitate.
+    ///
+    /// A name rather than a display id, and a name that may well not be attached
+    /// right now. `DisplaySelection` holds the reasoning for both, including what
+    /// two identical monitors do to it. The short version: a `CGDirectDisplayID`
+    /// survives neither a reboot nor a replug and cannot be shown in a picker; and
+    /// this field is deliberately *not* rewritten when the display it names goes
+    /// away, so unplugging a monitor falls back for as long as it is gone and the
+    /// choice comes back with the cable.
+    public var preferredDisplay: String?
     /// Mutes every sound cue without touching the HUD itself, and without
     /// disturbing the per-cue switches below — one thing to hit when a meeting
     /// starts, that leaves the configuration to come back to afterwards.
@@ -151,7 +167,7 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// and gains the new keys the next time anything is saved.
     private enum CodingKeys: String, CodingKey {
         case hudEnabled, doNotDisturb, logging, debugTint, forcedMode
-        case muteWhileTerminalFrontmost
+        case muteWhileTerminalFrontmost, preferredDisplay
         case doneSound, inputRequiredSound, waitingSound
     }
 
@@ -167,6 +183,13 @@ public struct IslandSettings: Codable, Equatable, Sendable {
         // Opting in is the only way to get the quieter behaviour.
         muteWhileTerminalFrontmost =
             try c.decodeIfPresent(Bool.self, forKey: .muteWhileTerminalFrontmost) ?? false
+        // Absent — every settings.json written before the HUD could be moved —
+        // means the menu-bar display, which is where those builds always drew.
+        // Normalised on the way in so a hand-edited `""` reads as "no
+        // preference" here rather than as a display named "" that will never be
+        // found and will report itself missing forever.
+        preferredDisplay = DisplaySelection.normalized(
+            try c.decodeIfPresent(String.self, forKey: .preferredDisplay))
 
         // The upgrade path that matters: every settings.json written before
         // these keys existed has none of them, and must come back ringing

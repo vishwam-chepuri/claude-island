@@ -66,12 +66,14 @@ final class IslandPreviewSource {
     /// figures count from the moment the segment was pressed. A cached one is
     /// still live — the ticker keeps it moving — but it reads "3h 12m" after the
     /// window has sat open all afternoon, which is accurate and useless.
-    func show(_ tier: IslandPreviewTier) {
-        // Re-resolved per pose rather than once: the HUD always draws on the
-        // menu bar screen, and someone who unplugs an external display between
-        // poses should see the shape their island will actually take — a notch
-        // on the built-in panel, the fallback pill on anything else.
-        model.setGeometry(Self.geometry())
+    func show(_ tier: IslandPreviewTier, on preferredDisplay: String? = nil) {
+        // Re-resolved per pose rather than once, and against the chosen display
+        // rather than always the menu bar's: the two have different shapes — a
+        // notch on the built-in panel, the fallback pill on anything else — and
+        // the preview is only worth having if it shows the one the HUD will
+        // actually take. Unplugging that display between poses falls back here
+        // exactly as it does on screen, because it is the same resolution.
+        model.setGeometry(Self.geometry(preferredDisplay: preferredDisplay))
         model.forcedMode = tier.mode
         model.apply(IslandPreviewFixtures.snapshot(for: tier))
     }
@@ -94,8 +96,8 @@ final class IslandPreviewSource {
     /// renders an empty box, which looks like a bug rather than like the missing
     /// display it is. The fallback is only reachable with no screens at all, in
     /// which case there is no settings window to show it in either.
-    private static func geometry() -> NotchGeometry {
-        NotchGeometryResolver.current()
+    private static func geometry(preferredDisplay: String?) -> NotchGeometry {
+        NotchGeometryResolver.current(preferredDisplay: preferredDisplay)
             ?? NotchGeometry(
                 islandRect: CGRect(x: 0, y: 0, width: 220, height: 38),
                 panelRect: CGRect(
@@ -293,9 +295,17 @@ struct IslandPreview: View {
             .pickerStyle(.segmented)
             .labelsHidden()
         }
-        .onAppear { source.show(tier) }
+        .onAppear { source.show(tier, on: store.preferredDisplay) }
         .onDisappear { source.shutdown() }
-        .onChange(of: tier) { _, chosen in source.show(chosen) }
+        .onChange(of: tier) { _, chosen in source.show(chosen, on: store.preferredDisplay) }
+        // The display picker is a pane away, on General, so this normally
+        // re-poses on the way back here — but the shape is the one thing on this
+        // stage that a *different pane* can change, and a preview showing a notch
+        // for a HUD that is now a pill on an external monitor is worse than no
+        // preview at all.
+        .onChange(of: store.preferredDisplay) { _, display in
+            source.show(tier, on: display)
+        }
         // Read through to the store rather than copied at appear, so throwing the
         // switch in Advanced and coming back here shows the tint already applied
         // — and so does throwing it while this pane is open, if the window is

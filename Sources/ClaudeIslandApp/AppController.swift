@@ -27,6 +27,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var socketTask: Task<Void, Never>?
     private var snapshotTask: Task<Void, Never>?
     private var trackedTranscripts = Set<String>()
+    /// The display name the panel was last positioned for, so `applySettings` can
+    /// tell a change of display from any other settings change. Not the display
+    /// it is *on*: that can be the menu bar's while this names an unplugged
+    /// monitor, which is exactly the state the fallback exists to hold.
+    private var positionedForDisplay: String?
 
     // MARK: - Sound cues
 
@@ -82,7 +87,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     // MARK: - Panel
 
     private func buildPanel() {
-        let geometry = NotchGeometryResolver.current()
+        let geometry = resolveGeometry()
+        positionedForDisplay = settings.preferredDisplay
         model.setGeometry(geometry)
 
         let frame = geometry?.panelRect
@@ -128,8 +134,36 @@ final class AppController: NSObject, NSApplicationDelegate {
         hoverMonitor.setInteractiveRect(model.interactiveScreenRect)
     }
 
+    /// Where the island belongs right now: the chosen display if it is attached,
+    /// the menu bar's if it is not.
+    ///
+    /// The fallback is logged rather than silent. It is the one state where the
+    /// HUD is deliberately not where the settings window says it should be, and
+    /// without a line saying which display went missing the only symptom is an
+    /// island that moved on its own.
+    private func resolveGeometry() -> NotchGeometry? {
+        guard
+            let resolved = NotchGeometryResolver.resolveDisplay(
+                preferred: settings.preferredDisplay)
+        else { return nil }
+        if let missing = resolved.missing {
+            log.debug(
+                "display \"\(missing)\" is not attached — falling back to "
+                    + "\(resolved.screen.localizedName)")
+        }
+        return resolved.geometry
+    }
+
+    /// Moves the panel onto whichever display the geometry now resolves to.
+    ///
+    /// The whole of the display-choice feature's failure handling is this one
+    /// call being made at the right moments: unplugging the chosen monitor posts
+    /// `didChangeScreenParameters`, this re-resolves, and the island lands on the
+    /// menu bar's display instead of staying at coordinates that no longer belong
+    /// to any screen. Plugging it back in posts the same notification and puts it
+    /// back, because nothing along the way rewrote the setting.
     private func repositionPanel() {
-        guard let geometry = NotchGeometryResolver.current() else { return }
+        guard let geometry = resolveGeometry() else { return }
         model.setGeometry(geometry)
         panel.setFrame(geometry.panelRect, display: true)
         syncInteractiveRect()
@@ -423,6 +457,18 @@ final class AppController: NSObject, NSApplicationDelegate {
         log.setEnabled(new.logging || forcedByEnvironment)
         model.debugTint = new.debugTint
         model.forcedMode = IslandMode(forcedName: new.forcedMode)
+
+        // Above the `hudEnabled` guard, which returns early on every change that
+        // is not the HUD switch itself — a display picked while the HUD is
+        // already showing would otherwise not move until the next relaunch or
+        // the next time a monitor was plugged in.
+        //
+        // Guarded on a change rather than done unconditionally only to keep the
+        // reposition log line meaningful; setting the same frame again is free.
+        if new.preferredDisplay != positionedForDisplay {
+            positionedForDisplay = new.preferredDisplay
+            repositionPanel()
+        }
 
         guard new.hudEnabled != model.isEnabled else { return }
         model.setEnabled(new.hudEnabled)

@@ -24,7 +24,13 @@ func printUsage() {
           ClaudeIslandApp --install-hooks     Merge hooks into ~/.claude/settings.json,
                                               preserving any existing entries.
           ClaudeIslandApp --uninstall-hooks   Remove only ClaudeIsland's entries.
-          ClaudeIslandApp --probe-screens     Print notch geometry for each display.
+          ClaudeIslandApp --probe-screens [display]
+                                              Print notch geometry for each display,
+                                              and which one the HUD would draw on.
+                                              Naming a display tries that choice
+                                              without saving it — including one
+                                              that is not plugged in, to see the
+                                              fallback.
           ClaudeIslandApp --selftest          Verify focus and click-through behaviour.
                                               Moves the cursor briefly, then restores it.
           ClaudeIslandApp --help
@@ -56,7 +62,14 @@ func runReplay(_ path: String) async -> Int32 {
     }
 }
 
-func probeScreens() -> Int32 {
+/// Geometry per display, and where the HUD would put itself.
+///
+/// `override` stands in for the stored preference, which is the only way to see
+/// what happens to a display that is not plugged in without editing the settings
+/// file of a running app — or unplugging something. Naming a display that is not
+/// attached is a legitimate use of it, not a mistake: the fallback is the
+/// interesting half of this feature and this is how you watch it happen.
+func probeScreens(override: String?) -> Int32 {
     for screen in NSScreen.screens {
         let g = NotchGeometryResolver.resolve(for: screen)
         print("\(screen.localizedName)")
@@ -70,6 +83,21 @@ func probeScreens() -> Int32 {
     }
     if let menuBar = NotchGeometryResolver.menuBarScreen() {
         print("\nmenu bar screen: \(menuBar.localizedName)")
+    }
+    // Which display the HUD would use right now, which is a different question
+    // from what is stored: the setting names a display that may not be plugged
+    // in, and the whole point of this probe is to be able to see that from a
+    // terminal rather than by looking at the notch. `load`, never `bootstrap` —
+    // a probe must not write to the settings file of a running app.
+    let preferred = override ?? IslandSettings.load().preferredDisplay
+    print(
+        "preferred display: \(preferred ?? "(none — the menu bar's)")"
+            + (override == nil ? "" : "  [from the command line, not settings.json]"))
+    if let resolved = NotchGeometryResolver.resolveDisplay(preferred: preferred) {
+        print("drawing on: \(resolved.screen.localizedName)")
+        if let missing = resolved.missing {
+            print("  \"\(missing)\" is not attached — fell back to the menu bar's display")
+        }
     }
     return 0
 }
@@ -135,7 +163,10 @@ case "--uninstall-hooks":
     }
 
 case "--probe-screens":
-    exit(probeScreens())
+    // A leading dash is a mistyped flag, not a display: no monitor is called
+    // "--selftest", and silently probing for one would answer a question nobody
+    // asked with a fallback that looks like a result.
+    exit(probeScreens(override: arguments.dropFirst().first { !$0.hasPrefix("-") }))
 
 case "--selftest":
     // Briefly moves the cursor to probe the hit region, then puts it back.

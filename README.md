@@ -63,11 +63,19 @@ would say the app had started.
 The window is a sidebar with one pane per concern:
 
 ```
-General   Status · Show the HUD · Launch at login
-Sounds    Play sounds · Stay quiet while a terminal is frontmost · a sound per cue
-Hooks     Install / update / remove, Copy Hook JSON
-Advanced  Debug log · Debug tint · Pin the HUD to · Reveal Support Folder
+General     Status · Show the HUD · Show it on … · Launch at login
+Appearance  A live preview of the island, posed at each tier
+Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per cue
+Hooks       Install / update / remove, Copy Hook JSON
+Advanced    Debug log · Debug tint · Pin the HUD to · Reveal Support Folder
 ```
+
+**Show it on** picks the display. The default follows the menu bar, which on a
+notched Mac is where the cutout is; any other display gets the pill instead.
+The choice is stored by display name and kept even while that display is
+unplugged — the HUD falls back to the menu bar's display for as long as it is
+gone and moves back on its own when it returns. Two identical monitors report
+identical names and cannot be told apart.
 
 **Quit ClaudeIsland** sits in the footer, always visible. With no menu bar icon
 it is the only way to quit short of Activity Monitor, so it must never be
@@ -398,7 +406,12 @@ swift build && swift run ClaudeIslandTests      # 206 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
+./dist/.../ClaudeIsland --probe-screens "DELL P3223QE"   # …and where that choice lands
 ```
+
+Passing a display name to `--probe-screens` tries that choice without saving it.
+Name one that is not plugged in to watch the fallback happen from a terminal
+rather than by pulling a cable.
 
 `--replay` feeds a recorded JSONL log through the full pipeline with no UI, on a
 virtual clock so timed transitions fire deterministically and traces are
