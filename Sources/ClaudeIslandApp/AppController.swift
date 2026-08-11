@@ -128,6 +128,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
 
         server = SocketServer(log: log)
+        // The client behind a held prompt vanishes when the terminal answers
+        // first. Nothing else tells us, so this is the only way the card learns
+        // to stop offering an answer it can no longer deliver.
+        server.onWithdraw = { [weak self] token in
+            Task { @MainActor [weak self] in
+                await self?.store.withdrawDecision(token)
+            }
+        }
+        model.onAnswerPermission = { [weak self] token, decision in
+            self?.answerPermission(token, with: decision)
+        }
         do {
             let stream = try server.start()
             socketTask = Task { [weak self] in
@@ -148,7 +159,30 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Delivers a decision to the waiting hook client.
+    ///
+    /// The write is a couple of hundred bytes into a socket with an empty send
+    /// buffer, so this does not block the main thread. The prompt is retired here
+    /// either way: if the write failed, the terminal had already settled it, and
+    /// in both cases the card should stop offering to answer.
+    private func answerPermission(_ token: UInt64, with decision: PermissionDecision) {
+        let delivered = server.resolve(token, with: decision)
+        if !delivered {
+            log.debug("decision for \(token) arrived after the prompt was settled")
+        }
+        Task { [weak self] in await self?.store.withdrawDecision(token) }
+    }
+
     private func handle(_ envelope: HookEnvelope) async {
+        // A prompt whose client is already gone must not arrive answerable. The
+        // withdrawal for it has, by then, already been delivered against a
+        // session that was not yet waiting on anything, so it cleared nothing —
+        // this is the half of that race the push notification cannot cover. A
+        // hook installed without `--await-decision` hits it every single time.
+        var envelope = envelope
+        if let token = envelope.decisionToken, !server.isPendingDecision(token) {
+            envelope.decisionToken = nil
+        }
         await store.ingest(envelope)
 
         // Arm the transcript watcher the first time a session tells us where
@@ -275,8 +309,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(dnd)
 
         let installed = HookInstaller.isInstalled()
+        // A block from before the permission hook learned to wait is installed and
+        // stale at once, and the only symptom is an absence: prompts arrive with no
+        // way to answer them and nothing says why. Name it in the menu rather than
+        // leave the user to notice a missing button.
+        let stale = installed && !HookInstaller.isCurrent(binaryPath: Self.notifyBinaryPath())
         let install = NSMenuItem(
-            title: installed ? "Reinstall Hooks" : "Install Hooks…",
+            title: installed
+                ? (stale ? "Update Hooks (out of date)" : "Reinstall Hooks")
+                : "Install Hooks…",
             action: #selector(installHooks), keyEquivalent: "")
         install.target = self
         menu.addItem(install)

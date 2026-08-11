@@ -831,8 +831,138 @@ enum SelfTest {
         model.apply(HUDSnapshot())
 
         await peekFitChecks(&checks, model: model)
+        await answerBlockFitChecks(&checks, model: model)
         await branchFitChecks(&checks, model: model)
         await titleFitChecks(&checks, model: model)
+    }
+
+    /// The answer block's height is a constant, not a measurement, so the only
+    /// thing keeping the Deny button on the card is this check.
+    ///
+    /// Measured with a command long enough to wrap onto the three lines the block
+    /// allows itself, because that is the tall case: a short command that fits on
+    /// one line cannot clip anything, and would pass a budget that is two lines
+    /// short of correct.
+    private static func answerBlockFitChecks(
+        _ checks: inout [Check], model: IslandViewModel
+    ) async {
+        let command =
+            "docker compose -f docker-compose.prod.yml run --rm migrate "
+            + "--database postgres://user@db.internal:5432/app --yes --verbose"
+        let ask = PermissionAsk(
+            toolName: "Bash", kind: .bash, target: String(command.prefix(60)),
+            since: Date(), decisionToken: 1, detail: command)
+
+        var waiting = session("waiting", state: .awaitingPermission(ask))
+        waiting.gitBranch = "main"
+        waiting.model = "claude-opus-5"
+        waiting.tokens.contextTokens = 42_000
+
+        checks.append(
+            Check(
+                name: "an answerable prompt offers its controls",
+                passed: {
+                    model.apply(HUDSnapshot(primary: waiting))
+                    return model.answerablePrompt != nil
+                }(),
+                detail: "answerablePrompt=\(String(describing: model.answerablePrompt?.toolName))"))
+
+        for (label, mode) in [("peek", IslandMode.peek), ("expanded", IslandMode.expanded)] {
+            model.apply(HUDSnapshot(primary: waiting))
+            model.forcedMode = mode
+            let size = model.shapeSize
+            let host: NSHostingView<AnyView> =
+                mode == .peek
+                ? NSHostingView(
+                    rootView: AnyView(PeekContent(session: waiting, model: model)))
+                : NSHostingView(
+                    rootView: AnyView(ExpandedContent(session: waiting, model: model)))
+            host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let needed = host.fittingSize.height
+
+            checks.append(
+                Check(
+                    name: "\(label) with an answer block is never shorter than its contents",
+                    passed: needed <= size.height + 0.5,
+                    detail: "content=\(needed) card=\(size.height)"))
+        }
+
+        // The point of the block is that you can read what you are approving, so
+        // the card has to grow with the command — and where it stops growing,
+        // Allow has to stop being offered. A command that wraps past the cap is
+        // the case that made this necessary: the old fixed three-line block drew
+        // an ellipsis through the middle of a command and an Allow button beside
+        // it, which is the one hazard the terminal does not have.
+        let longCommand = String(repeating: "deploy --region eu-west-1 --confirm ", count: 30)
+        let longAsk = PermissionAsk(
+            toolName: "Bash", kind: .bash, target: String(longCommand.prefix(60)),
+            since: Date(), decisionToken: 2, detail: longCommand)
+        var longWaiting = session("long", state: .awaitingPermission(longAsk))
+        longWaiting.gitBranch = "main"
+
+        model.apply(HUDSnapshot(primary: longWaiting))
+        model.forcedMode = .peek
+        checks.append(
+            Check(
+                name: "a command too long to show does not offer Allow",
+                passed: !model.canShowCommandInFull(longAsk),
+                detail: "lines=\(model.commandLines(longAsk)) cap=\(IslandViewModel.maxCommandLines)"
+            ))
+        checks.append(
+            Check(
+                name: "a short command does offer Allow",
+                passed: model.canShowCommandInFull(ask),
+                detail: "lines=\(model.commandLines(ask))"))
+
+        // Both ends of the growth: a card sized for a one-line command must not
+        // clip a three-line one, and a card sized for the cap must not leave a
+        // gap under a one-liner.
+        for (label, sized) in [("wrapping", waiting), ("capped", longWaiting)] {
+            model.apply(HUDSnapshot(primary: sized))
+            model.forcedMode = .peek
+            let size = model.shapeSize
+            let host = NSHostingView(rootView: PeekContent(session: sized, model: model))
+            host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            checks.append(
+                Check(
+                    name: "peek fits a \(label) command without clipping the controls",
+                    passed: host.fittingSize.height <= size.height + 0.5,
+                    detail: "content=\(host.fittingSize.height) card=\(size.height)"))
+        }
+
+        model.apply(HUDSnapshot(primary: longWaiting))
+        model.forcedMode = .peek
+        let tallCard = model.shapeSize.height
+        model.apply(HUDSnapshot(primary: waiting))
+        let shortCard = model.shapeSize.height
+        checks.append(
+            Check(
+                name: "the card grows for a longer command",
+                passed: tallCard > shortCard,
+                detail: "capped=\(tallCard) wrapping=\(shortCard)"))
+
+        // The block is reserved across every session so that changing the
+        // selection cannot resize the card mid-decision. Both tiers of that claim
+        // are worth stating: reserved when someone is waiting, given back when
+        // nobody is.
+        model.apply(HUDSnapshot(primary: waiting, others: [session("idle", state: .thinking)]))
+        model.forcedMode = .expanded
+        let withPrompt = model.shapeSize.height
+        model.apply(
+            HUDSnapshot(
+                primary: session("a", state: .thinking),
+                others: [session("idle", state: .thinking)]))
+        let withoutPrompt = model.shapeSize.height
+        checks.append(
+            Check(
+                name: "the answer block is given back when nobody is waiting",
+                passed: withoutPrompt < withPrompt,
+                detail: "waiting=\(withPrompt) none=\(withoutPrompt)"))
+
+        model.forcedMode = nil
+        model.apply(HUDSnapshot())
     }
 
     /// Peek's chip row is conditional, and the height budget has to follow it

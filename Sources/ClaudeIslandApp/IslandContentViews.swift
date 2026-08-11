@@ -140,6 +140,12 @@ struct PeekContent: View {
     private var subline: String? {
         switch session.state {
         case .awaitingPermission(let ask):
+            // The answer block below shows the command whole; repeating a clamped
+            // copy of it here would only invite reading the shorter one.
+            if ask.isAnswerable { return "Allow \(ask.toolName)?" }
+            if ask.siblingCount > 0 {
+                return "\(ask.siblingCount + 1) prompts waiting — answer in the terminal"
+            }
             return "Allow \(ask.toolName)?" + (ask.target.map { "  \($0)" } ?? "")
         case .running(let tool):
             return tool.target ?? tool.toolName
@@ -196,6 +202,10 @@ struct PeekContent: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
+                }
+
+                if let ask = model.answerablePrompt {
+                    PermissionAnswerBlock(ask: ask, model: model)
                 }
 
                 MetaLine(session: session, tick: model.tick)
@@ -329,6 +339,23 @@ struct ExpandedContent: View {
                 }
 
                 Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 7)
+
+                // Directly under the session list, above this session's figures:
+                // a blocked turn is the one thing on this card worth acting on,
+                // and it should not sit below a context meter.
+                if let ask = model.answerablePrompt {
+                    PermissionAnswerBlock(ask: ask, model: model)
+                        .padding(.bottom, 7)
+                } else if model.anyAnswerablePrompt {
+                    // The block's height is reserved across every session so that
+                    // changing the selection never resizes the card. Saying what
+                    // the space is for beats leaving it blank, which reads as the
+                    // card having failed to finish drawing.
+                    Text("another session is waiting on you — pick it above to answer")
+                        .font(.system(size: 8.5))
+                        .foregroundStyle(IslandPalette.tertiary)
+                        .padding(.bottom, 7)
+                }
 
                 MetaLine(session: session, tick: model.tick)
 
@@ -512,9 +539,19 @@ struct NowRow: View {
 
     private var detail: String? {
         switch session.state {
-        case .running(let t): t.target
-        case .awaitingPermission(let a): a.target
-        default: nil
+        case .running(let t): return t.target
+        // The answer block above already shows this command in full. Repeating a
+        // clamped copy of it here put the same command on the card twice, and the
+        // shorter one is the one you must not read before approving.
+        case .awaitingPermission(let a):
+            if a.isAnswerable { return nil }
+            // Several at once: the card cannot tell which one the terminal is
+            // showing, so it says so instead of naming one of them.
+            if a.siblingCount > 0 {
+                return "\(a.siblingCount + 1) waiting — answer in the terminal"
+            }
+            return a.target
+        default: return nil
         }
     }
 
@@ -805,6 +842,93 @@ struct ToolGlyph: View {
         case .thinking: "sparkle"
         case .idle(let waiting): waiting ? "person.wave.2" : "moon.zzz"
         }
+    }
+}
+
+/// Settles a permission prompt without going back to the terminal.
+///
+/// Claude Code paints its own dialog and waits on our hook at the same time, so
+/// this never takes the decision away from the terminal — whichever is answered
+/// first wins, and the other path stops mattering. That is also why there is no
+/// confirmation step here: the cost of a misclick is bounded by the fact that the
+/// prompt was going to be answered one way or the other, and a wrong deny simply
+/// asks Claude to try again.
+///
+/// The command is shown whole, wrapped, rather than clamped to one line the way
+/// the pill shows it. Approving something you can only half see is the one
+/// failure mode this feature could add that the terminal does not already have.
+struct PermissionAnswerBlock: View {
+    let ask: PermissionAsk
+    @Bindable var model: IslandViewModel
+
+    /// False when the command is longer than the card will ever show. Allow is
+    /// withheld in that case rather than offered over an elided command.
+    private var showsWholeCommand: Bool { model.canShowCommandInFull(ask) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let detail = ask.detail {
+                Text(detail)
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+                    // The card's height was measured for exactly this many lines,
+                    // so the two have to agree or the buttons get clipped.
+                    .lineLimit(model.drawnCommandLines(ask))
+                    .truncationMode(.middle)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 6) {
+                if showsWholeCommand {
+                    AnswerButton(
+                        title: "Allow", symbol: "checkmark", tint: IslandPalette.done,
+                        action: { model.answer(ask, with: .allow) })
+                }
+                AnswerButton(
+                    title: "Deny", symbol: "xmark", tint: IslandPalette.alert,
+                    action: {
+                        model.answer(
+                            ask, with: .deny(note: "Denied from the Dynamic Island."))
+                    })
+                Spacer(minLength: 0)
+                Text(
+                    showsWholeCommand
+                        ? "or answer in the terminal"
+                        : "too long to show in full — allow it in the terminal"
+                )
+                .font(.system(size: 8))
+                .foregroundStyle(
+                    showsWholeCommand ? IslandPalette.tertiary : IslandPalette.alert)
+            }
+        }
+    }
+}
+
+/// One answer control. Deliberately a `Button` with a plain style rather than a
+/// tap gesture: the panel never becomes key, so hit testing is the only thing
+/// standing between a decision and a stray click, and a real control keeps the
+/// pressed-state feedback that tells you the click landed.
+private struct AnswerButton: View {
+    let title: String
+    let symbol: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: symbol)
+                    .font(.system(size: 8, weight: .bold))
+                Text(title)
+                    .font(.system(size: 9.5, weight: .semibold))
+            }
+            .foregroundStyle(.black)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(tint))
+        }
+        .buttonStyle(.plain)
     }
 }
 
