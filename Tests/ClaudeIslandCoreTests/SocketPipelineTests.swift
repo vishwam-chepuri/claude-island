@@ -890,6 +890,49 @@ func registerSocketPipelineTests() {
             await expect(true, "reached here without trapping")
         }
 
+        // `readTimeout` was dead code for the entire life of the server.
+        //
+        // `start()` marks the *listening* socket O_NONBLOCK so the accept loop can
+        // drain to EAGAIN. On Darwin, accept() copies that flag onto every socket
+        // it returns, and SO_RCVTIMEO does not apply to a non-blocking descriptor —
+        // so the worker's first read returned EAGAIN in microseconds no matter what
+        // timeout was configured. Any client whose bytes had not already landed by
+        // the time its worker was scheduled was dropped as `shortPrefix`.
+        //
+        // That is what made "Churning the server lifecycle" fail about one run in
+        // ten: nothing to do with churn, just whichever connection happened to lose
+        // the race. Measured directly: with the flag inherited, a 2000 ms
+        // SO_RCVTIMEO expired in 0.0 ms; with it cleared, in 2001 ms.
+        //
+        // This test pins the guarantee instead of the symptom. The client connects
+        // and only then writes, which is precisely the interleaving the bug
+        // punished, and it fails deterministically rather than one run in ten.
+        test("A client that connects before it writes is still read") {
+            let path = temporarySocketPath()
+            // Comfortably longer than the write delay below, short enough that a
+            // regression fails fast instead of hanging.
+            let server = SocketServer(path: path, readTimeout: 3)
+            let stream = try server.start()
+            let collector = StreamCollector(stream)
+
+            let fd = try await require(connectSocket(path), "could not connect")
+            let payload = Data(#"{"session_id":"slow-writer","hook_event_name":"Stop"}"#.utf8)
+            // Deliberately after the server has almost certainly accepted and
+            // reached its first read.
+            Thread.detachNewThread {
+                Thread.sleep(forTimeInterval: 0.4)
+                _ = writeFrame(payload, to: fd)
+            }
+
+            let envelope = await collector.next(timeout: 10)
+            await expectEqual(
+                envelope?.sessionID, "slow-writer",
+                "a connect-then-write client was dropped; server reported drops: \(server.drops())")
+
+            close(fd)
+            server.stop()
+        }
+
         test("Churning the server lifecycle leaves each new one serving") {
             for i in 0..<40 {
                 let path = temporarySocketPath()

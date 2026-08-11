@@ -85,13 +85,18 @@ public final class SocketServer: @unchecked Sendable {
 
     /// How long a worker will wait for an accepted client to finish its frame.
     ///
-    /// This was 2 seconds, and 2 seconds silently lost hook events. It is the only
-    /// place the server abandons a connection it has already accepted, and a
-    /// client that has connected but not yet been scheduled to write looks exactly
-    /// like a client that has stalled. Measured on a loaded machine: 1–2 payloads
-    /// per 120 were dropped even though the client's `connect` and `write` both
-    /// reported success. Widening the window to 30s made it zero, which is what
-    /// identified this as the cause rather than anything downstream.
+    /// It is the only place the server abandons a connection it has already
+    /// accepted, and a client that has connected but not yet been scheduled to
+    /// write looks exactly like a client that has stalled. Measured on a loaded
+    /// machine: 1–2 payloads per 120 were dropped even though the client's
+    /// `connect` and `write` both reported success.
+    ///
+    /// A correction, because the earlier note here recorded a wrong conclusion:
+    /// this value had **no effect at all** until `handle` began clearing
+    /// `O_NONBLOCK` on the accepted descriptor. `accept()` inherits that flag from
+    /// the listening socket on Darwin, and `SO_RCVTIMEO` is ignored on a
+    /// non-blocking descriptor — so every read returned EAGAIN in microseconds and
+    /// widening the window from 2s to 30s only perturbed timing. See `handle`.
     ///
     /// Ten seconds keeps the original guarantee — a wedged client cannot hold a
     /// worker forever — while being far outside anything scheduler starvation
@@ -278,6 +283,18 @@ public final class SocketServer: @unchecked Sendable {
         // descriptor moves to `pending`, whose dispatch source closes it.
         var handedOff = false
         defer { if !handedOff { close(fd) } }
+
+        // Clear O_NONBLOCK before setting the timeout, or the timeout does nothing.
+        //
+        // `start()` marks the listening socket non-blocking so the accept loop can
+        // drain to EAGAIN, and on Darwin accept() copies that flag onto every
+        // descriptor it returns. SO_RCVTIMEO does not apply to a non-blocking
+        // descriptor: the read returns EAGAIN immediately instead of waiting. Every
+        // client whose bytes had not already landed by the time its worker was
+        // scheduled was therefore dropped as `shortPrefix`, however large the
+        // configured window was.
+        let flags = fcntl(fd, F_GETFL, 0)
+        if flags >= 0 { _ = fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) }
 
         // Don't let a client that connects and then stalls hold a worker.
         var tv = timeval(
