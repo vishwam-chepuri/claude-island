@@ -134,26 +134,32 @@ private func captureRawPayload(from binary: URL, stdin bytes: Data) throws -> Da
     pipe.fileHandleForWriting.write(bytes)
     try pipe.fileHandleForWriting.close()
 
+    // Bounded the same way the client bounds its own connect in
+    // `connectWithTimeout`: a `poll()` deadline ahead of the blocking call, so
+    // a client that regresses to hanging before it ever connects fails this
+    // test with a clear timeout instead of blocking the whole suite forever.
+    // `accept()` on a listening socket does not reliably honor SO_RCVTIMEO the
+    // way a connected socket's `read()` does, so this is `poll()` rather than
+    // the socket option `readFrame` uses below.
+    var pfd = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+    guard poll(&pfd, 1, 6_000) > 0, pfd.revents & Int16(POLLIN) != 0 else {
+        process.terminate()
+        process.waitUntilExit()
+        return nil
+    }
+
     let conn = accept(listener, nil, nil)
-    guard conn >= 0 else { return nil }
+    guard conn >= 0 else {
+        process.waitUntilExit()
+        return nil
+    }
     defer { close(conn) }
 
-    var prefix = [UInt8](repeating: 0, count: 4)
-    guard read(conn, &prefix, 4) == 4, let length = Framing.decodePrefix(prefix),
-        length <= Framing.maxPayloadBytes
-    else { return nil }
-
-    var body = [UInt8](repeating: 0, count: Int(length))
-    var got = 0
-    while got < Int(length) {
-        let n = body[got...].withUnsafeMutableBytes {
-            read(conn, $0.baseAddress, Int(length) - got)
-        }
-        if n <= 0 { break }
-        got += n
-    }
+    // Delegates to `readFrame` — already timeout-guarded via SO_RCVTIMEO —
+    // rather than re-reading the prefix and body by hand.
+    let result = readFrame(conn)
     process.waitUntilExit()
-    return got == Int(length) ? Data(body) : nil
+    return result
 }
 
 private func permissionPayload(_ session: String, command: String = "rm -rf ./build") -> Data {
