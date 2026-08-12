@@ -121,6 +121,10 @@ public struct HookEnvelope: Sendable, Equatable {
     /// Wall clock, used for session age and expiry. Injected so tests are
     /// deterministic.
     public let receivedAt: Date
+    /// Ancestor pids of the hook client, nearest first, as stamped by
+    /// `claude-island-notify`. Empty for replayed traces, synthetic events and
+    /// status-line payloads — never a reason to clear an ancestry already held.
+    public let ancestorPIDs: [Int32]
     /// Handle for answering this payload back down the connection it arrived on.
     ///
     /// Stamped by the transport rather than decoded, because it identifies a
@@ -150,6 +154,7 @@ public struct HookEnvelope: Sendable, Equatable {
         linesRemoved: Int? = nil,
         rateLimit: RateLimitWindow? = nil,
         receivedAt: Date = Date(),
+        ancestorPIDs: [Int32] = [],
         decisionToken: UInt64? = nil,
         siblingPromptCount: Int = 0
     ) {
@@ -168,6 +173,7 @@ public struct HookEnvelope: Sendable, Equatable {
         self.linesRemoved = linesRemoved
         self.rateLimit = rateLimit
         self.receivedAt = receivedAt
+        self.ancestorPIDs = ancestorPIDs
         self.decisionToken = decisionToken
         self.siblingPromptCount = siblingPromptCount
     }
@@ -190,6 +196,7 @@ extension HookEnvelope {
         case cost
         case rateLimits = "rate_limits"
         case delayMs = "_delayMs"
+        case islandPIDs = "_island_pids"
     }
 
     private enum ContextWindowKey: String, CodingKey {
@@ -242,7 +249,8 @@ extension HookEnvelope {
             linesAdded: raw.linesAdded,
             linesRemoved: raw.linesRemoved,
             rateLimit: raw.rateLimit,
-            receivedAt: receivedAt
+            receivedAt: receivedAt,
+            ancestorPIDs: raw.ancestorPIDs ?? []
         )
     }
 
@@ -288,6 +296,7 @@ extension HookEnvelope {
         let linesRemoved: Int?
         let rateLimit: RateLimitWindow?
         let delayMs: Int?
+        let ancestorPIDs: [Int32]?
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: Key.self)
@@ -332,6 +341,9 @@ extension HookEnvelope {
                     usedPercentage: used, resetsAt: HookEnvelope.decodeResetStamp(window))
             }()
             delayMs = try? c.decodeIfPresent(Int.self, forKey: .delayMs)
+            // `try?` rather than `try`: a malformed `_island_pids` must cost the
+            // jump button, not the whole payload.
+            ancestorPIDs = (try? c.decodeIfPresent([Int32].self, forKey: .islandPIDs)) ?? nil
         }
     }
 }

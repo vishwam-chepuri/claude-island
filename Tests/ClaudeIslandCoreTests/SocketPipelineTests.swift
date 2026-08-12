@@ -96,6 +96,66 @@ private func readFrame(_ fd: Int32, timeout: TimeInterval = 6) -> Data? {
     return Data(body)
 }
 
+/// Accepts exactly one connection and returns the payload bytes verbatim, so a
+/// test can assert on what the client actually wrote rather than on what the
+/// decoder made of it. `SocketServer` cannot serve here: it drops anything
+/// without a session id, which is precisely the case the splice can corrupt.
+private func captureRawPayload(from binary: URL, stdin bytes: Data) throws -> Data? {
+    let path = temporarySocketPath()
+    let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard listener >= 0 else { return nil }
+    defer {
+        close(listener)
+        unlink(path)
+    }
+
+    var addr = sockaddr_un()
+    addr.sun_family = sa_family_t(AF_UNIX)
+    addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+    let pathBytes = Array(path.utf8)
+    guard pathBytes.count < 104 else { return nil }
+    withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+        raw.copyBytes(from: pathBytes)
+        raw[pathBytes.count] = 0
+    }
+    let bound = withUnsafePointer(to: &addr) { ptr in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    guard bound == 0, listen(listener, 1) == 0 else { return nil }
+
+    let process = Process()
+    process.executableURL = binary
+    process.arguments = ["--socket", path]
+    let pipe = Pipe()
+    process.standardInput = pipe
+    try process.run()
+    pipe.fileHandleForWriting.write(bytes)
+    try pipe.fileHandleForWriting.close()
+
+    let conn = accept(listener, nil, nil)
+    guard conn >= 0 else { return nil }
+    defer { close(conn) }
+
+    var prefix = [UInt8](repeating: 0, count: 4)
+    guard read(conn, &prefix, 4) == 4, let length = Framing.decodePrefix(prefix),
+        length <= Framing.maxPayloadBytes
+    else { return nil }
+
+    var body = [UInt8](repeating: 0, count: Int(length))
+    var got = 0
+    while got < Int(length) {
+        let n = body[got...].withUnsafeMutableBytes {
+            read(conn, $0.baseAddress, Int(length) - got)
+        }
+        if n <= 0 { break }
+        got += n
+    }
+    process.waitUntilExit()
+    return got == Int(length) ? Data(body) : nil
+}
+
 private func permissionPayload(_ session: String, command: String = "rm -rf ./build") -> Data {
     Data(
         """
@@ -392,6 +452,69 @@ func registerSocketPipelineTests() {
             try stdin.fileHandleForWriting.close()
             process.waitUntilExit()
             await expectEqual(process.terminationStatus, 0)
+        }
+
+        // The client's parent IS this test runner, so the first entry is a
+        // known value rather than merely "some number" — which is what makes
+        // this a test of the walk and not of its plumbing.
+        test("The hook client stamps its process ancestry into the payload") {
+            let binary = try await require(notifyBinary(), "claude-island-notify is not built")
+            let path = temporarySocketPath()
+            let server = SocketServer(path: path)
+            let stream = try server.start()
+            defer { server.stop() }
+
+            let process = Process()
+            process.executableURL = binary
+            process.arguments = ["--socket", path]
+            let stdin = Pipe()
+            process.standardInput = stdin
+            try process.run()
+            stdin.fileHandleForWriting.write(
+                Data(#"{"session_id":"anc","hook_event_name":"Stop"}"#.utf8))
+            try stdin.fileHandleForWriting.close()
+            process.waitUntilExit()
+
+            let collector = StreamCollector(stream)
+            let envelope = try await require(await collector.next(timeout: 8))
+            await expectEqual(envelope.sessionID, "anc")
+            await expect(
+                !envelope.ancestorPIDs.isEmpty, "the client recorded no ancestry at all")
+            await expectEqual(
+                envelope.ancestorPIDs.first, ProcessInfo.processInfo.processIdentifier,
+                "the nearest ancestor should be this test runner")
+        }
+
+        // `{"_island_pids":[…],}` is not valid JSON. Spliced naively onto an
+        // empty object that is exactly what comes out, and the payload is then
+        // dropped in full rather than merely losing its ancestry.
+        test("Splicing an empty object still produces valid JSON") {
+            let binary = try await require(notifyBinary(), "claude-island-notify is not built")
+            let raw = try await require(captureRawPayload(from: binary, stdin: Data("{}".utf8)))
+            let parsed = try? JSONSerialization.jsonObject(with: raw)
+            let object = try await require(parsed as? [String: Any], "not a JSON object: \(String(decoding: raw, as: UTF8.self))")
+            await expect(object["_island_pids"] is [Any], "ancestry missing from spliced empty object")
+        }
+
+        test("A payload that is not an object is forwarded byte for byte") {
+            let binary = try await require(notifyBinary(), "claude-island-notify is not built")
+            let input = Data("[1,2,3]".utf8)
+            let raw = try await require(captureRawPayload(from: binary, stdin: input))
+            await expectEqual(raw, input, "the client rewrote a payload it did not understand")
+        }
+
+        test("Splicing preserves every original key") {
+            let binary = try await require(notifyBinary(), "claude-island-notify is not built")
+            let raw = try await require(
+                captureRawPayload(
+                    from: binary,
+                    stdin: Data(#"  {"session_id":"keep","hook_event_name":"Stop","cwd":"/tmp"}"#.utf8)))
+            let object = try await require(
+                (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any])
+            await expectEqual(object["session_id"] as? String, "keep")
+            await expectEqual(object["hook_event_name"] as? String, "Stop")
+            await expectEqual(object["cwd"] as? String, "/tmp")
+            await expect(object["_island_pids"] is [Any], "ancestry missing")
         }
     }
 

@@ -65,6 +65,94 @@ private func decisionTimeoutMillis() -> Int32 {
     return parsed
 }
 
+/// How far up the process tree to look.
+///
+/// The observed chain is notify → claude → shell → helper → app, which is four;
+/// eight leaves room for a wrapper or two without ever walking a pathological
+/// tree to init.
+private let maxAncestorHops = 8
+
+/// Parent pid of `pid`, or 0 when it cannot be read.
+private func parentPID(of pid: Int32) -> Int32 {
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.stride
+    guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return 0 }
+    return info.kp_eproc.e_ppid
+}
+
+/// The chain of ancestor pids, nearest first, stopping at init.
+///
+/// Costs at most eight sysctls of a few microseconds each — negligible against
+/// the 2.49 ms median this binary is held to.
+private func ancestorPIDs() -> [Int32] {
+    var chain = [Int32]()
+    var pid = getppid()
+    while pid > 1, chain.count < maxAncestorHops {
+        chain.append(pid)
+        pid = parentPID(of: pid)
+    }
+    return chain
+}
+
+/// Append a non-negative integer as decimal ASCII. Foundation-free itoa.
+private func appendDecimal(_ out: inout [UInt8], _ value: Int32) {
+    if value <= 0 {
+        out.append(UInt8(ascii: "0"))
+        return
+    }
+    var v = value
+    var digits = [UInt8]()
+    while v > 0 {
+        digits.append(UInt8(ascii: "0") + UInt8(v % 10))
+        v /= 10
+    }
+    out.append(contentsOf: digits.reversed())
+}
+
+private func isJSONSpace(_ b: UInt8) -> Bool {
+    b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D
+}
+
+/// Inject the ancestry into the payload without parsing it.
+///
+/// This binary's most valuable property is that it forwards the hook payload
+/// byte for byte. Becoming a JSON parser would cost the Foundation-free budget
+/// and add a way to corrupt something we did not understand — so this finds the
+/// opening brace and writes immediately after it, leaving every other byte
+/// exactly where it was.
+///
+/// Anything that is not an object is returned unchanged. No ancestry is free;
+/// a mangled payload is not.
+private func splicingAncestry(into payload: [UInt8], _ pids: [Int32]) -> [UInt8] {
+    guard !pids.isEmpty else { return payload }
+
+    var open = 0
+    while open < payload.count, isJSONSpace(payload[open]) { open += 1 }
+    guard open < payload.count, payload[open] == UInt8(ascii: "{") else { return payload }
+
+    // An empty object must not gain a trailing comma: `{"_island_pids":[1],}`
+    // is not valid JSON, and the server would drop the payload outright.
+    var next = open + 1
+    while next < payload.count, isJSONSpace(payload[next]) { next += 1 }
+    let isEmptyObject = next >= payload.count || payload[next] == UInt8(ascii: "}")
+
+    var out = [UInt8]()
+    out.reserveCapacity(payload.count + 20 + pids.count * 8)
+    out.append(contentsOf: payload[0...open])
+    out.append(contentsOf: Array(#""_island_pids":["#.utf8))
+    for (i, pid) in pids.enumerated() {
+        if i > 0 { out.append(UInt8(ascii: ",")) }
+        appendDecimal(&out, pid)
+    }
+    out.append(UInt8(ascii: "]"))
+    if !isEmptyObject { out.append(UInt8(ascii: ",")) }
+    if open + 1 < payload.count {
+        out.append(contentsOf: payload[(open + 1)...])
+    }
+    return out
+}
+
 /// Reads exactly `count` bytes, or nil if the connection ends or stalls first.
 private func readExactly(_ fd: Int32, _ count: Int) -> [UInt8]? {
     var buffer = [UInt8](repeating: 0, count: count)
@@ -181,8 +269,9 @@ private func writeAll(_ fd: Int32, _ bytes: [UInt8]) -> Bool {
 // into an EPIPE we already treat as "give up quietly".
 signal(SIGPIPE, SIG_IGN)
 
-let payload = readStdin()
-guard !payload.isEmpty, payload.count <= maxPayloadBytes else { exit(0) }
+let raw = readStdin()
+guard !raw.isEmpty, raw.count <= maxPayloadBytes else { exit(0) }
+let payload = splicingAncestry(into: raw, ancestorPIDs())
 guard let path = socketPath(), let fd = connectWithTimeout(path) else { exit(0) }
 
 let length = UInt32(payload.count)
