@@ -569,6 +569,7 @@ enum SelfTest {
         soundChecks(&checks)
         frontmostMuteChecks(&checks)
         revealStateChecks(&checks)
+        revealTickerChecks(&checks, model: model)
         await healthChecks(&checks)
         previewIsolationChecks(&checks, live: model)
     }
@@ -1144,6 +1145,51 @@ enum SelfTest {
                 detail: "\(unknown)"))
     }
 
+    /// The reveal row's cache can only go stale while the card is open, so the
+    /// ticker that refreshes it has to run in exactly that situation — even
+    /// when every displayed session is idle/done/error and no rate-limit
+    /// countdown is showing, the one condition `syncTicker`'s other two terms
+    /// (`wantsAnimation`, `showsResetCountdown`) do not cover. Without this,
+    /// pinning the card open to browse a finished session and then quitting
+    /// its terminal left the row reading a stale `.owner` until an unrelated
+    /// snapshot arrived or the card was closed and reopened.
+    private static func revealTickerChecks(_ checks: inout [Check], model: IslandViewModel) {
+        model.isHovered = false
+        model.forcedMode = nil
+        model.apply(HUDSnapshot())
+        checks.append(
+            Check(
+                name: "no sessions means no ticker, pinned or not",
+                passed: !model.isTickerRunning && model.mode == .dormant,
+                detail: "ticking=\(model.isTickerRunning) mode=\(model.mode)"))
+
+        // A single settled session: nothing animating, no countdown either —
+        // the exact combination that used to leave the ticker off entirely.
+        model.apply(HUDSnapshot(primary: session("done", state: .done)))
+        checks.append(
+            Check(
+                name: "an idle session with the card unpinned starts no ticker",
+                passed: !model.isTickerRunning,
+                detail: "ticking=\(model.isTickerRunning) mode=\(model.mode)"))
+
+        model.togglePinned()
+        checks.append(
+            Check(
+                name: "pinning an all-idle card open starts the ticker anyway",
+                passed: model.mode == .expanded && model.isTickerRunning,
+                detail: "mode=\(model.mode) ticking=\(model.isTickerRunning)"))
+
+        model.togglePinned()
+        checks.append(
+            Check(
+                name: "unpinning stops the ticker again",
+                passed: !model.isPinnedOpen && !model.isTickerRunning,
+                detail: "pinned=\(model.isPinnedOpen) ticking=\(model.isTickerRunning)"))
+
+        model.forcedMode = nil
+        model.apply(HUDSnapshot())
+    }
+
     /// The edge belongs to a permission prompt, and only a permission prompt.
     ///
     /// `SelfTest` works at view-model level and cannot inspect `CALayer` state,
@@ -1473,9 +1519,15 @@ enum SelfTest {
     private static func stableSizeChecks(_ checks: inout [Check], model: IslandViewModel) async {
         var short = session("s", state: .thinking)
         short.cwd = "/tmp/ui"
+        // A `.gone` owner: the shortest of the four reveal-row labels.
+        short.ownerPIDs = [4242]
 
         var long = session("l", state: .done)
         long.cwd = "/tmp/a-considerably-longer-worktree-name"
+        // A resolvable `.owner`: the longest label the row draws, and the one
+        // state that swaps a plain `Text` for a `Button` with its own padding
+        // — the shape most likely to drift in height if anyone touches it.
+        long.ownerPIDs = [1797]
         long.recentTools = (0..<3).map {
             ToolActivity(
                 kind: .bash, toolName: "Bash", target: "step \($0)", startedAt: Date(),
@@ -1488,6 +1540,25 @@ enum SelfTest {
 
         model.apply(HUDSnapshot(primary: short, others: [long]))
         model.forcedMode = .expanded
+
+        // `apply()` above ran the moment it was called, with `forcedMode` still
+        // nil — its own `refreshOwners()` found `mode != .expanded` and left
+        // `ownerCache` empty, so both fixtures would silently read back as
+        // `.unknown` and the checks below would never see a real owner state.
+        // Refresh explicitly, now that the card is open, with a resolver keyed
+        // on each fixture's `ownerPIDs` rather than `SessionOwner.resolve`'s
+        // live process table — the result must not depend on what else is
+        // running on the machine this check executes on.
+        let vsCode = OwnerResolution.AppInfo(
+            pid: 1797, bundleID: "com.microsoft.VSCode", name: "Visual Studio Code",
+            isRegular: true)
+        model.refreshOwners { pids in
+            switch pids {
+            case [1797]: return .owner(vsCode)
+            case [4242]: return .gone
+            default: return .unknown
+            }
+        }
 
         model.select("s")
         let sizeWithShort = model.shapeSize
@@ -1511,10 +1582,38 @@ enum SelfTest {
                     >= model.notchGap + 2 * model.leftClusterWidth(for: long),
                 detail: "width=\(sizeWithShort.width)"))
 
+        // The three checks above compare `model.shapeSize`, a hand-tallied
+        // constant sum that reserves one flat `revealRowHeight` no matter what
+        // `ownerCache` holds — it cannot read the row's real content, so no
+        // assignment of owner states could ever make it fail from a
+        // `RevealRow`-specific regression. Render the row for real instead,
+        // the same `NSHostingView` + `fittingSize` technique `cardFitChecks`
+        // uses below to catch `expandedChromeHeight` drifting from the actual
+        // card, aimed here at one row instead of the whole thing.
+        let goneRowHeight = Self.measuredHeight(of: RevealRow(session: short, model: model))
+        let ownerRowHeight = Self.measuredHeight(of: RevealRow(session: long, model: model))
+        checks.append(
+            Check(
+                name: "the reveal row's real height is fixed across owner states",
+                passed: abs(goneRowHeight - IslandViewModel.revealRowHeight) < 0.5
+                    && abs(ownerRowHeight - IslandViewModel.revealRowHeight) < 0.5,
+                detail: "gone=\(goneRowHeight) owner=\(ownerRowHeight) "
+                    + "fixed=\(IslandViewModel.revealRowHeight)"))
+
         model.forcedMode = nil
         model.apply(HUDSnapshot())
 
         await cardFitChecks(&checks, model: model)
+    }
+
+    /// Lays out one view at a width wide enough that only its own natural
+    /// height is in play, and reads that back. The same measurement
+    /// `cardFitChecks` runs on the whole card, aimed at a single row.
+    private static func measuredHeight(of view: some View) -> CGFloat {
+        let host = NSHostingView(rootView: view)
+        host.frame = CGRect(x: 0, y: 0, width: 300, height: 200)
+        host.layoutSubtreeIfNeeded()
+        return host.fittingSize.height
     }
 
     /// The card must never be drawn shorter than its own contents.

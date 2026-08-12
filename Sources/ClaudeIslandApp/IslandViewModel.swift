@@ -78,6 +78,12 @@ final class IslandViewModel {
     private(set) var tick = Date()
     private var tickTimer: Timer?
 
+    /// Whether the shared ticker is currently scheduled. Exposed for
+    /// self-test verification only, mirroring `PipelineHealthStore.isTicking` —
+    /// `tickTimer` itself stays private because nothing outside this file has
+    /// a legitimate reason to touch a `Timer` directly.
+    var isTickerRunning: Bool { tickTimer != nil }
+
     /// The session whose completion is currently being announced, if any.
     /// Cleared by a one-shot timer — a completion is an instant, so nothing here
     /// outlives its own window.
@@ -751,11 +757,20 @@ final class IslandViewModel {
 
     /// Recompute owners for every tracked session. Call on snapshot change and
     /// on tick, both gated on the card being open.
-    func refreshOwners() {
+    ///
+    /// `resolve` defaults to `SessionOwner.resolve`, which reads the live
+    /// process table and running-application list. It is a parameter — not a
+    /// hardcoded call — so a self-test can drive deterministic owner states
+    /// without the result depending on whatever happens to be running on the
+    /// machine the check executes on, the same seam `AppController.rings` uses
+    /// for the frontmost bundle id.
+    func refreshOwners(
+        resolve: ([Int32]) -> OwnerResolution.Outcome = SessionOwner.resolve
+    ) {
         guard mode == .expanded else { return }
         var next: [String: OwnerResolution.Outcome] = [:]
         for session in allSessions {
-            next[session.id] = SessionOwner.resolve(session.ownerPIDs)
+            next[session.id] = resolve(session.ownerPIDs)
         }
         ownerCache = next
     }
@@ -854,9 +869,14 @@ final class IslandViewModel {
     }
 
     /// One shared 1 Hz timer for every elapsed label, running only when
-    /// something is actually elapsing.
+    /// something is actually elapsing — or while the expanded card is pinned
+    /// open, so `refreshOwners()` keeps noticing a terminal that quits while
+    /// someone is browsing finished sessions. `mode == .expanded` is false
+    /// whenever there is no session to show at all (`mode` collapses to
+    /// `.dormant` first), so this cannot start a timer while the card is
+    /// shut — the idle-CPU contract is unaffected.
     private func syncTicker() {
-        let wanted = isEnabled && (snapshot.wantsAnimation || showsResetCountdown)
+        let wanted = isEnabled && (snapshot.wantsAnimation || showsResetCountdown || mode == .expanded)
         if wanted, tickTimer == nil {
             let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
