@@ -68,7 +68,7 @@ General     Status · Show the HUD · Show it on … · Open on hover after …
 Appearance  A live preview of the island, posed at each tier
 Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per cue
 Hooks       Install / update / remove, Copy Hook JSON
-Advanced    Debug log · Debug tint · Pin the HUD to · Reveal Support Folder
+Advanced    Debug log · Pin the HUD to · Reveal Support Folder
 ```
 
 **Show it on** picks the display. The default follows the menu bar, which on a
@@ -463,14 +463,24 @@ the suites port back with a mechanical find-and-replace if Xcode is installed.
 
 Pure `#000` is deliberate — it makes the island read as the physical cutout —
 but it also makes the shape's edges invisible while iterating on layout.
-Settings has **Show debug tint** under Advanced, which fills it indigo with a
-cyan edge so the outline, the corner radii and the notch punch-out are all
-visible. **Pin the HUD to** in the same section holds it at one tier; that
-exists because hover and click cannot be synthesised without Accessibility
-permission — without it the open tiers cannot be looked at at all, and three
-padding bugs in the peek layout survived precisely because they had never been
-seen. Leave it off otherwise: a leftover pin fails most of `--selftest`'s mode
-checks.
+`debugTint` fills it indigo with a cyan edge so the outline, the corner radii
+and the notch punch-out are all visible:
+
+```bash
+touch ~/.claude-island/tint       # folded into settings.json at next launch
+```
+
+There is deliberately no toggle for it in Settings. It is an authoring aid, not
+a preference: switched on by accident it just makes the HUD look broken, and it
+produces nothing you could attach to a bug report that a plain screenshot would
+not. The file covers the one case where somebody else needs it — showing where
+the island actually landed on a display where it landed wrong.
+
+**Pin the HUD to** under Advanced holds the HUD at one tier; that exists because
+hover and click cannot be synthesised without Accessibility permission — without
+it the open tiers cannot be looked at at all, and three padding bugs in the peek
+layout survived precisely because they had never been seen. Leave it off
+otherwise: a leftover pin fails most of `--selftest`'s mode checks.
 
 ## Configuration
 

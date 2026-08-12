@@ -767,6 +767,9 @@ enum SelfTest {
 
         var seeded = IslandSettings()
         seeded.hudEnabled = true
+        // No pane binds this one — it is reachable only by hand-editing the file
+        // or touching the sentinel. See the check below.
+        seeded.debugTint = true
         let store = SettingsStore(seeded, root: root)
 
         var applied: [IslandSettings] = []
@@ -795,6 +798,18 @@ enum SelfTest {
                 passed: !reloaded.hudEnabled && reloaded.doNotDisturb
                     && reloaded.forcedMode == "peek",
                 detail: "\(reloaded)"))
+
+        // `persist()` writes the whole snapshot, so every setting the store does
+        // not hold is a setting the next toggle silently erases. `debugTint` is
+        // the only one with no control bound to it, which makes it the only one
+        // whose property looks unused and invites deletion — and the user who
+        // would lose it is the one who set it in the file precisely because
+        // there is no switch to notice it was gone.
+        checks.append(
+            Check(
+                name: "a setting with no control survives a change made in the window",
+                passed: reloaded.debugTint,
+                detail: "on disk: debugTint=\(reloaded.debugTint)"))
 
         // The pane writes a cue's settings through a subscript rather than to a
         // named property. A subscript setter that assigned to a copy would still

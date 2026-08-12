@@ -541,11 +541,15 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
+    /// `debugTint` deliberately has no row here. It is an authoring aid rather
+    /// than a preference — switched on by accident it just makes the HUD look
+    /// broken — and `touch ~/.claude-island/tint` already covers both uses:
+    /// iterating on the shape, and a bug reporter showing where the island
+    /// actually landed on a display it landed wrong on. See README, "Debug tint".
     private var advancedPane: some View {
         Form {
             Section {
                 Toggle("Write a debug log", isOn: $store.logging)
-                Toggle("Show debug tint", isOn: $store.debugTint)
                 Picker("Pin the HUD to", selection: forcedModeBinding) {
                     Text("Off — follow hover and click").tag("")
                     Text("Compact").tag("compact")
