@@ -3,6 +3,7 @@ import ClaudeIslandCore
 
 /// Binds `OwnerResolution` to the running system, and raises the winner.
 enum SessionOwner {
+    private static let log = IslandLog.fromEnvironment()
 
     /// Resolve against the live process table and application list.
     static func resolve(_ ancestors: [Int32]) -> OwnerResolution.Outcome {
@@ -57,7 +58,18 @@ enum SessionOwner {
             // argv, never a shell. The bundle id comes from LaunchServices
             // rather than any payload, and this keeps that true regardless.
             process.arguments = ["-b", bundleID]
-            try? process.run()
+            do {
+                try process.run()
+            } catch {
+                log.debug("open -b \(bundleID) failed to launch: \(error)")
+                return
+            }
+            // waitUntilExit() is safe here only because this closure already
+            // runs off the main thread — this call blocks until open exits.
+            process.waitUntilExit()
+            if process.terminationStatus != 0 {
+                log.debug("open -b \(bundleID) exited \(process.terminationStatus)")
+            }
         }
         return true
     }
