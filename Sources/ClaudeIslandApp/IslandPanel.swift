@@ -16,7 +16,12 @@ final class IslandPanel: NSPanel {
             defer: false)
 
         isFloatingPanel = true
-        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        // One above screen-saver level, not one above the status bar. Other
+        // notch HUDs sit at 1000 and win the hit test over the island shape,
+        // which costs the click — and a permission prompt you cannot answer is
+        // worse than a HUD drawn higher than it strictly needs to be. 1000 is
+        // the number to beat, so there is no gentler value that still wins.
+        level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         hidesOnDeactivate = false
         collectionBehavior = [
             .canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle,
