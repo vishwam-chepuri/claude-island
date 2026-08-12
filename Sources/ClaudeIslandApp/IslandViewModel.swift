@@ -269,7 +269,21 @@ final class IslandViewModel {
     /// row. Every tier's header is this same row — see `PeekHeader` — so the lip
     /// has to be in here rather than on the shape alone, or the header would
     /// shift by half a point the moment the card opened.
-    var rowHeight: CGFloat { max(notchBandHeight, Self.lineHeight) + Self.compactLip }
+    var rowHeight: CGFloat {
+        // The lip is the band hanging past the *cutout* so its bottom edge does
+        // not stop exactly where the hardware does. With no cutout there is
+        // nothing to hang past, and adding it anyway drew a resting pill one
+        // point taller than the pill the geometry asked for — so changing
+        // `pillSize.height` moved the dormant shape and left the one with
+        // content in it exactly where it was.
+        guard hasNotch else { return max(pillHeight, Self.lineHeight) }
+        return max(notchBandHeight, Self.lineHeight) + Self.compactLip
+    }
+
+    /// The notchless island's own height, which the resting row matches.
+    private var pillHeight: CGFloat {
+        geometry?.islandRect.height ?? NotchGeometryResolver.pillSize.height
+    }
 
     /// How far the resting band hangs below the camera band, giving its bottom
     /// edge a line of its own to end on instead of stopping exactly where the

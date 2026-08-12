@@ -46,7 +46,16 @@ enum NotchGeometryResolver {
 
     /// Fallback pill dimensions on a notchless display. Sized to read like a
     /// notch rather than a floating widget.
-    static let pillSize = CGSize(width: 200, height: 32)
+    static let pillSize = CGSize(width: 200, height: 30)
+
+    /// The hairline of desktop left above the pill on a display that does not
+    /// own the menu bar.
+    ///
+    /// Flush to the bezel is what a cutout does, and a cutout is what this
+    /// shape imitates — but on a borrowed display there is no cutout to imitate,
+    /// and sitting hard against the edge reads as a shape that has been cut off
+    /// by it. One point of desktop is enough to read as deliberate.
+    static let secondaryDisplayTopGap: CGFloat = 1
 
     /// The display the HUD is to be drawn on, and whether that is the one that
     /// was asked for.
@@ -140,20 +149,23 @@ enum NotchGeometryResolver {
             // menu bar. On the one that does, the menu bar is always drawn, so
             // the pill sits below it — overlapping it would cover live content.
             //
-            // On any other display it goes flush against the top edge, where
-            // the notch sits on the built-in. macOS reserves a menu-bar strip
-            // on every display when "Displays have separate Spaces" is on (the
-            // default) — 30pt on the monitor this was found with — but only
-            // *draws* that menu bar while the display is active. Subtracting it
-            // unconditionally left the island floating 36pt below the top with
-            // bare desktop above it, which reads as a misplacement rather than
-            // as a cutout. In the rare moment that display is active and does
-            // draw its menu bar, the island sits in the menu bar band exactly
-            // as the notch does on the built-in, and it is centred where the
-            // bar carries nothing.
+            // On any other display it hangs a hairline below the top edge,
+            // near where the notch sits on the built-in. macOS reserves a
+            // menu-bar strip on every display when "Displays have separate
+            // Spaces" is on (the default) — 30pt on the monitor this was found
+            // with — but only *draws* that menu bar while the display is
+            // active. Subtracting it unconditionally left the island floating
+            // 36pt below the top with bare desktop above it, which reads as a
+            // misplacement rather than as a cutout. In the rare moment that
+            // display is active and does draw its menu bar, the island sits in
+            // the menu bar band exactly as the notch does on the built-in, and
+            // it is centred where the bar carries nothing.
             let ownsMenuBar =
                 menuBarScreen().map { NotchGeometryResolver.displayID(of: $0) == displayID } ?? true
-            let topInset = ownsMenuBar ? (frame.maxY - screen.visibleFrame.maxY) + 6 : 0
+            let topInset =
+                ownsMenuBar
+                ? (frame.maxY - screen.visibleFrame.maxY) + 6
+                : secondaryDisplayTopGap
             island = CGRect(
                 x: frame.midX - pillSize.width / 2,
                 y: frame.maxY - topInset - pillSize.height,

@@ -1688,11 +1688,16 @@ enum SelfTest {
                         detail: "island.maxY=\(g.islandRect.maxY) "
                             + "menuBarBottom=\(screen.frame.maxY - reserved)"))
             } else {
+                // The gap is the whole point: exactly one hairline, not the
+                // reserved menu-bar strip. Asserting the number rather than
+                // "near the top" is what would catch the strip creeping back.
+                let gap = screen.frame.maxY - g.islandRect.maxY
                 checks.append(
                     Check(
-                        name: "the pill on \(name) is pinned to the top edge",
-                        passed: abs(g.islandRect.maxY - screen.frame.maxY) < 0.5,
-                        detail: "island.maxY=\(g.islandRect.maxY) screen=\(screen.frame.maxY) "
+                        name: "the pill on \(name) floats one point below the top edge",
+                        passed: abs(gap - NotchGeometryResolver.secondaryDisplayTopGap) < 0.5,
+                        detail: "gap=\(gap)pt expected="
+                            + "\(NotchGeometryResolver.secondaryDisplayTopGap)pt "
                             + "reserved=\(screen.frame.maxY - screen.visibleFrame.maxY)pt"))
             }
         }
