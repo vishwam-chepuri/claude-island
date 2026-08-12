@@ -36,10 +36,10 @@ enum NotchGeometryResolver {
     static let panelWidth: CGFloat = 980
     /// Tall enough for the largest card the expanded layout can produce: four
     /// session rows, an overflow line, a task block with a current item, the NOW
-    /// row and a full trail comes to ~465pt. At the previous 320 that card was
-    /// silently clipped by the window itself, on top of the separate clipping
-    /// bug in its own height budget.
-    static let panelHeight: CGFloat = 520
+    /// row, a full trail and the reveal row comes to ~522pt. At the previous 320
+    /// that card was silently clipped by the window itself, on top of the
+    /// separate clipping bug in its own height budget.
+    static let panelHeight: CGFloat = 546
 
     /// The expanded card's own width, independent of the container.
     static let cardWidth: CGFloat = 460

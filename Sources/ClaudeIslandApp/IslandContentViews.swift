@@ -359,6 +359,9 @@ struct ExpandedContent: View {
 
                 MetaLine(session: session, tick: model.tick)
 
+                RevealRow(session: session, model: model)
+                    .padding(.top, 5)
+
                 MeterBlock(
                     label: "CONTEXT",
                     value: Format.tokens(session.tokens.contextTokens),
@@ -902,6 +905,63 @@ struct PermissionAnswerBlock: View {
                     showsWholeCommand ? IslandPalette.tertiary : IslandPalette.alert)
             }
         }
+    }
+}
+
+/// The one control on this card that takes you somewhere else.
+///
+/// Always rendered, in every state, and never hidden. The card is sized across
+/// *all* sessions so that browsing the switcher never resizes it — a row that
+/// appeared for one session and vanished for another would reflow the whole HUD
+/// on every click, which is the bug two --selftest checks exist to catch. Hence
+/// a fourth label rather than an absent row.
+struct RevealRow: View {
+    let session: Session
+    @Bindable var model: IslandViewModel
+
+    var body: some View {
+        Group {
+            switch model.owner(for: session) {
+            case .owner(let app):
+                Button {
+                    model.revealOwner(of: session)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.system(size: 8, weight: .bold))
+                        // Names the destination rather than saying "Reveal":
+                        // at app-level granularity that name is the whole
+                        // promise being made.
+                        Text("Reveal in \(app.name)")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(IslandPalette.running))
+                }
+                .buttonStyle(.plain)
+
+            case .noOwningApp:
+                unavailable("background job — no terminal")
+            case .gone:
+                unavailable("terminal has quit")
+            case .unknown:
+                unavailable("terminal unknown")
+            }
+        }
+        .frame(height: IslandViewModel.revealRowHeight, alignment: .leading)
+    }
+
+    /// Disabled with a reason rather than hidden, matching how this card
+    /// already refuses to answer two simultaneous prompts and says why. A
+    /// hidden control and a broken one look identical; a labelled one does not.
+    private func unavailable(_ reason: String) -> some View {
+        Text(reason)
+            .font(.system(size: 8.5))
+            .foregroundStyle(IslandPalette.tertiary)
+            .lineLimit(1)
     }
 }
 

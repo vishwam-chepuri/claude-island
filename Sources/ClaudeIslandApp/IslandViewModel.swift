@@ -192,6 +192,10 @@ final class IslandViewModel {
     /// The chip row and the 7pt gap above it.
     static let chipRowHeight: CGFloat = 7 + 34
 
+    /// Fixed, because the reveal row has four states of differing natural
+    /// height and the card must not resize as the selection moves between them.
+    static let revealRowHeight: CGFloat = 20
+
     /// The answer block's fixed furniture: the gap above it and the button row.
     /// The command area is measured on top of this — see `answerBlockHeight`.
     static let answerBlockChrome: CGFloat = 7 + 26 + 6
@@ -246,6 +250,7 @@ final class IslandViewModel {
         + 12  // "sessions" label row plus its 3pt bottom padding
         + 15  // divider with 7pt above and below
         + 12  // meta line
+        + revealRowHeight + 5  // reveal row, plus its 5pt top padding
         + 27  // context label, its 7pt top padding, and the meter
         + bodyBottomPadding  // 13
     // The chip row (`chipRowHeight` + 4 for the taller emphasised figure) and
@@ -713,6 +718,7 @@ final class IslandViewModel {
     func togglePinned() {
         isPinnedOpen.toggle()
         syncTicker()
+        refreshOwners()
     }
 
     func unpin() {
@@ -726,6 +732,42 @@ final class IslandViewModel {
     func answer(_ ask: PermissionAsk, with decision: PermissionDecision) {
         guard let token = ask.decisionToken else { return }
         onAnswerPermission?(token, decision)
+    }
+
+    /// Resolved owners, keyed by session id.
+    ///
+    /// Cached because the row's *label* names the app, so resolution has to
+    /// happen to draw rather than only to click, and `body` re-runs far too
+    /// often to ask the process table each time.
+    ///
+    /// Refreshed only while the expanded card is open. Idle CPU is 0.000% with
+    /// no sessions and this must not be what changes that — nothing is on
+    /// screen to label when the card is shut.
+    private var ownerCache: [String: OwnerResolution.Outcome] = [:]
+
+    func owner(for session: Session) -> OwnerResolution.Outcome {
+        ownerCache[session.id] ?? .unknown
+    }
+
+    /// Recompute owners for every tracked session. Call on snapshot change and
+    /// on tick, both gated on the card being open.
+    func refreshOwners() {
+        guard mode == .expanded else { return }
+        var next: [String: OwnerResolution.Outcome] = [:]
+        for session in allSessions {
+            next[session.id] = SessionOwner.resolve(session.ownerPIDs)
+        }
+        ownerCache = next
+    }
+
+    /// Raise the session's terminal and dismiss the card.
+    ///
+    /// Dismissing is the point rather than a courtesy: a card left floating
+    /// over the app you just jumped to sits on top of the thing you went there
+    /// to read.
+    func revealOwner(of session: Session) {
+        SessionOwner.reveal(session.ownerPIDs)
+        unpin()
     }
 
     func apply(_ snapshot: HUDSnapshot) {
@@ -750,6 +792,7 @@ final class IslandViewModel {
         }
         noteCompletions(since: previous)
         syncTicker()
+        refreshOwners()
     }
 
     /// Starts a completion pulse for the first session that crossed into `done`.
@@ -816,7 +859,10 @@ final class IslandViewModel {
         let wanted = isEnabled && (snapshot.wantsAnimation || showsResetCountdown)
         if wanted, tickTimer == nil {
             let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.tick = Date() }
+                MainActor.assumeIsolated {
+                    self?.tick = Date()
+                    self?.refreshOwners()
+                }
             }
             // .common so the label keeps counting while a menu is tracking.
             RunLoop.main.add(timer, forMode: .common)

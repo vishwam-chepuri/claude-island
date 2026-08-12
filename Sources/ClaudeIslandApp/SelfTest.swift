@@ -568,6 +568,7 @@ enum SelfTest {
         displayChecks(&checks)
         soundChecks(&checks)
         frontmostMuteChecks(&checks)
+        revealStateChecks(&checks)
         await healthChecks(&checks)
         previewIsolationChecks(&checks, live: model)
     }
@@ -1097,6 +1098,50 @@ enum SelfTest {
     /// What `AppController` would ring for this name, by name — never played.
     private static func resolve(_ name: String, for cue: SoundCue) -> String? {
         AppController.sound(for: cue, named: name)?.name
+    }
+
+    /// The four reveal states, driven through `OwnerResolution` rather than the
+    /// live process table so the result does not depend on what is running
+    /// while the harness does.
+    ///
+    /// Deliberately does not fire a real activation: `open` yanks the frontmost
+    /// app, and the focus checks running beside this one would fail as a direct
+    /// result.
+    private static func revealStateChecks(_ checks: inout [Check]) {
+        let app = OwnerResolution.AppInfo(
+            pid: 1797, bundleID: "com.microsoft.VSCode", name: "Visual Studio Code",
+            isRegular: true)
+        let helper = OwnerResolution.AppInfo(
+            pid: 1927, bundleID: "com.microsoft.VSCode.helper", name: "Code Helper",
+            isRegular: false)
+
+        let owner = OwnerResolution.resolve(
+            [4368, 1927, 1797], isRunning: { _ in true },
+            lookup: { $0 == 1797 ? app : ($0 == 1927 ? helper : nil) })
+        checks.append(
+            Check(
+                name: "reveal resolves past helpers to the app",
+                passed: owner == .owner(app),
+                detail: "\(owner)"))
+
+        let background = OwnerResolution.resolve(
+            [7518], isRunning: { _ in true }, lookup: { _ in nil })
+        checks.append(
+            Check(
+                name: "a background job reports no owning app",
+                passed: background == .noOwningApp, detail: "\(background)"))
+
+        let gone = OwnerResolution.resolve(
+            [4368], isRunning: { _ in false }, lookup: { _ in nil })
+        checks.append(
+            Check(name: "a dead chain reports gone", passed: gone == .gone, detail: "\(gone)"))
+
+        let unknown = OwnerResolution.resolve(
+            [], isRunning: { _ in false }, lookup: { _ in nil })
+        checks.append(
+            Check(
+                name: "no ancestry reports unknown", passed: unknown == .unknown,
+                detail: "\(unknown)"))
     }
 
     /// The edge belongs to a permission prompt, and only a permission prompt.
