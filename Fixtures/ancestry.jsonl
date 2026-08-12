@@ -1,0 +1,5 @@
+{"session_id":"anc-1","hook_event_name":"SessionStart","cwd":"/Users/you/project","_island_pids":[999001,999002,999003]}
+{"session_id":"anc-1","hook_event_name":"UserPromptSubmit","_delayMs":200}
+{"session_id":"anc-1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"swift build"},"_delayMs":400,"_island_pids":[999001,999002,999003]}
+{"session_id":"anc-1","hook_event_name":"PostToolUse","tool_name":"Bash","_delayMs":900}
+{"session_id":"anc-1","hook_event_name":"Stop","_delayMs":300}

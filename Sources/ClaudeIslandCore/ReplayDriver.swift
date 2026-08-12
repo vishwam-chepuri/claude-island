@@ -90,11 +90,21 @@ public struct ReplayDriver: Sendable {
 
 extension HookEnvelope {
     /// Same payload, different arrival time. Replay assigns virtual timestamps.
+    ///
+    /// Every other field is forwarded unchanged — this was, for a while, not
+    /// true of `ancestorPIDs`: the memberwise call here predates that field by
+    /// a lot of history and was never updated when it was added, so a replayed
+    /// envelope silently lost its ancestry on the very first virtual tick. No
+    /// existing fixture carried `_island_pids`, so nothing caught it until one
+    /// did.
     func restamped(_ date: Date) -> HookEnvelope {
         HookEnvelope(
             sessionID: sessionID, event: event, cwd: cwd, transcriptPath: transcriptPath,
             toolName: toolName, toolInput: toolInput, message: message, trigger: trigger,
-            source: source, reason: reason, receivedAt: date)
+            source: source, reason: reason, contextWindowSize: contextWindowSize,
+            linesAdded: linesAdded, linesRemoved: linesRemoved, rateLimit: rateLimit,
+            receivedAt: date, ancestorPIDs: ancestorPIDs, decisionToken: decisionToken,
+            siblingPromptCount: siblingPromptCount)
     }
 }
 

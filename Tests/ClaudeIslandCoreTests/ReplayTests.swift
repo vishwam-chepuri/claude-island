@@ -15,7 +15,7 @@ private func fixtureURL(_ name: String) -> URL? {
 
 private let allFixtures = [
     "basic-session.jsonl", "permission-and-error.jsonl", "multi-session.jsonl",
-    "subagent.jsonl", "hostile.jsonl",
+    "subagent.jsonl", "hostile.jsonl", "ancestry.jsonl",
 ]
 
 func registerReplayTests() {
@@ -126,6 +126,24 @@ func registerReplayTests() {
                         "\(name): overlong detail \(line.detail ?? "")")
                 }
             }
+        }
+
+        test("Process ancestry survives envelopes that omit it") {
+            let url = try await require(fixtureURL("ancestry.jsonl"))
+            let output = try await ReplayDriver().run(fileURL: url)
+
+            // Every payload decodes; nothing here is malformed.
+            await expectEqual(output.skippedCount, 0)
+            await expectEqual(output.decodedCount, 5)
+
+            // Three of the five lines omit `_island_pids` entirely — the
+            // ancestry stamped on SessionStart must still be the one the
+            // session carries at the end. `restamped(_:)` once dropped it on
+            // every virtual tick because it forwarded fields by hand and was
+            // never updated when `ancestorPIDs` was added to `HookEnvelope`;
+            // this is the regression test for that.
+            let final = try await require(output.finalSessions.first { $0.id == "anc-1" })
+            await expectEqual(final.ownerPIDs, [999_001, 999_002, 999_003])
         }
 
         test("An empty log produces an empty trace rather than failing") {
