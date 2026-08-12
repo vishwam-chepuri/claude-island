@@ -537,5 +537,7 @@ Sources/claude-island-notify/ hook client (Darwin only)
 Tests/ClaudeIslandCoreTests/  suites + TinyTest harness
 Fixtures/                     replay logs
 Scripts/bundle.sh             .app assembly + ad-hoc signing
+Scripts/make-icon.swift       draws Resources/AppIcon.icns from the app's shapes
+Resources/AppIcon.icns        committed, so an install renders no pictures
 docs/superpowers/specs/       design document
 ```

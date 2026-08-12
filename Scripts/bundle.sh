@@ -29,6 +29,15 @@ mkdir -p "$MACOS" "$RESOURCES"
 cp "$BIN_DIR/ClaudeIslandApp" "$MACOS/ClaudeIsland"
 cp "$BIN_DIR/claude-island-notify" "$MACOS/claude-island-notify"
 
+# Committed rather than rendered here: Scripts/make-icon.swift draws it, and an
+# install has no reason to run a second Swift compile for a picture that never
+# changes. An icon matters even for an app with no Dock tile — it is what
+# Finder, Spotlight, Login Items and every macOS permission prompt show, and
+# the alternative is the blank generic document.
+if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
+    cp "$ROOT/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
+fi
+
 # The tag is the version. Outside a tagged checkout — a fresh shallow clone
 # before any tag exists, or a branch ahead of one — say so rather than claim a
 # release number that was never cut.
@@ -45,6 +54,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key>           <string>ClaudeIsland</string>
     <key>CFBundleIdentifier</key>            <string>com.claudeisland.hud</string>
     <key>CFBundleExecutable</key>            <string>ClaudeIsland</string>
+    <key>CFBundleIconFile</key>              <string>AppIcon</string>
     <key>CFBundlePackageType</key>           <string>APPL</string>
     <key>CFBundleShortVersionString</key>    <string>$VERSION</string>
     <key>CFBundleVersion</key>               <string>$BUILD</string>
