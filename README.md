@@ -280,6 +280,45 @@ string is the only string the UI can ever hold. Truncation to 60 characters
 happens *after* redaction — truncating first could cut a secret in half and
 leave the leading half on screen.
 
+**Three activation APIs return success and do nothing.** Clicking *Reveal in …*
+raises the session's terminal by spawning `/usr/bin/open -b`, which looks like a
+detour until you try the direct routes. Measured from the HUD's own position —
+an accessory app that is not itself frontmost:
+
+| call | result |
+|---|---|
+| `NSRunningApplication.activate()` | returns `true`, frontmost unchanged |
+| `NSRunningApplication.activate(from:options:)` | frontmost unchanged |
+| `NSWorkspace.openApplication(activates: true)` | completes with no error, frontmost unchanged |
+| `/usr/bin/open -b <bundleID>` | **activates** |
+
+macOS 14's cooperative activation rules stop a background app raising another
+in-process, and every one of those calls reports success anyway. `open` is a
+trusted LaunchServices helper and is honoured. It also needs no Automation or
+Accessibility permission, which is what keeps this app requiring none at all —
+and it is why the jump stops at the app rather than the tab: tab selection means
+AppleScript per terminal and a TCC prompt, for something VS Code's integrated
+terminal could not offer anyway.
+
+Which app a session belongs to comes from process ancestry, not from the hook
+payload: the client walks `getppid()` up to eight hops with `sysctl` and splices
+the chain into the payload as `_island_pids` — a byte-level edit over the
+leading `{`, never a parse, because forwarding the payload verbatim is what
+keeps that binary Foundation-free. The HUD takes the first ancestor that is a
+*regular* application, which steps over helper processes such as VS Code's
+`Code Helper` without needing to know any app by name.
+
+Not every session has a terminal. A `claude daemon run` host has parent pid 1
+and no tty, and so do tmux servers and the far end of an SSH link; those resolve
+to no owning app and the card says so rather than jumping somewhere wrong.
+
+Proving that ancestry survives `--replay` caught a real bug rather than just
+exercising one: the replay clock's per-envelope restamp forwarded `HookEnvelope`
+fields by hand, and `ancestorPIDs` was never added to that list when it was
+introduced, so a replayed session's ancestry silently came back empty on every
+tick. No fixture had ever carried `_island_pids` until `ancestry.jsonl` did,
+which is exactly why nothing had caught it.
+
 ## The notch is a hole, not a region
 
 The single most expensive lesson here. Content drawn inside the notch band is
@@ -339,8 +378,8 @@ animations moved.
 | Compact, animating | 0.2% |
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
-| Tests | 194 total |
-| Self-test | 90 checks passing |
+| Tests | 267 total |
+| Self-test | 150 checks total |
 
 ## Visual language
 
@@ -390,8 +429,9 @@ solid ring and a check.
 context and output tokens, and plan progress with the task currently in flight.
 
 **Expanded** (click) — a switcher. Every active session is listed and
-clickable; selecting one shows its detail below. Click the island again, or
-anywhere outside, to dismiss.
+clickable; selecting one shows its detail below, including a row offering to
+raise the session's terminal — *Reveal in `<App>`*, or one of three reasons it
+cannot. Click the island again, or anywhere outside, to dismiss.
 
 The card is sized across **all** sessions, not the selected one, so browsing
 never resizes it. Sized from the selection, its width followed that session's
@@ -411,7 +451,7 @@ state.
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 252 tests
+swift build && swift run ClaudeIslandTests      # 267 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
@@ -425,17 +465,20 @@ rather than by pulling a cable.
 `--replay` feeds a recorded JSONL log through the full pipeline with no UI, on a
 virtual clock so timed transitions fire deterministically and traces are
 byte-stable. Fixtures in `Fixtures/` cover a normal session, permissions and
-failures, two concurrent sessions, subagents, and deliberately hostile input
-(malformed lines, unknown future events, embedded secrets).
+failures, two concurrent sessions, subagents, deliberately hostile input
+(malformed lines, unknown future events, embedded secrets), and process
+ancestry surviving envelopes that omit it.
 
-`--selftest` is a 135-check harness for what unit tests cannot exercise: that
+`--selftest` is a 150-check harness for what unit tests cannot exercise: that
 the panel never takes focus, that clicks land where they should, that a settings
 change reaches both disk and the running HUD, and dozens of on-screen layout and
 geometry checks besides. Click-through is verified
 against the window server itself via `NSWindow.windowNumber(at:)` rather than
 trusting our own flags. **Run it with the screen unlocked** — a lock
 screen puts a full-screen `loginwindow` layer above everything and those three
-checks are reported as skipped rather than silently passing.
+checks are reported as skipped rather than silently passing. One more check
+needs a second display and skips the same honest way — "only one display
+attached" — when just one is plugged in.
 
 ### Known conflict: other notch HUDs
 
