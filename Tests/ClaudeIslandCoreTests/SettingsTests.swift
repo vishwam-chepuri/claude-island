@@ -131,7 +131,7 @@ func registerSettingsTests() {
             await expect(!s.doNotDisturb, "and nothing was muted globally either")
         }
 
-        test("Each cue's switch and sound round-trip on their own") {
+        test("Each cue's choice round-trips on its own") {
             let root = try tempRoot()
             var s = IslandSettings()
             s[.waiting] = CueSound(enabled: false, name: "Purr")
@@ -147,15 +147,79 @@ func registerSettingsTests() {
                 "the two that were not")
         }
 
-        // Muting a cue must not cost you the sound you picked for it — that is
+        // Silencing a cue must not cost you the sound you picked for it — that is
         // the whole reason the switch and the name are stored side by side
         // rather than as one "off means no sound" field.
-        test("A cue switched off keeps the sound it was set to") {
+        test("A cue set to None keeps the sound it was set to") {
             let root = try tempRoot()
             var s = IslandSettings()
             s[.done] = CueSound(enabled: false, name: "Submarine")
             try s.save(root: root)
             await expectEqual(IslandSettings.load(root: root)[.done].name, "Submarine")
+        }
+
+        // MARK: - None
+
+        // What the picker reads, and the only thing anything should ask when it
+        // wants to know what a cue sounds like: a silenced cue's `name` is a
+        // memory, not a sound, and a caller reaching for it would ring a cue the
+        // user set to None.
+        test("A cue reports its sound, or nothing when it is set to None") {
+            await expectEqual(SoundCue.done.defaultSound.selectedName, "Glass")
+            await expect(
+                CueSound(enabled: false, name: "Submarine").selectedName == nil,
+                "a silenced cue offered up the sound it is holding")
+        }
+
+        // The one rule that makes None safe to pick: it is not a way to lose the
+        // sound you had. Someone silencing a cue for an afternoon has to be able
+        // to put it back without remembering what it was.
+        test("Picking None silences a cue and hands the sound back on the way out") {
+            var sound = CueSound(enabled: true, name: "Submarine")
+            sound.select(nil)
+            await expect(sound.selectedName == nil, "None did not silence it")
+            await expectEqual(sound.name, "Submarine", "None threw away the sound it was set to")
+
+            sound.select("Submarine")
+            await expectEqual(
+                sound.selectedName, "Submarine", "coming back off None did not restore it")
+        }
+
+        test("Picking a sound for a silenced cue turns it back on") {
+            var sound = CueSound(enabled: false, name: "Submarine")
+            sound.select("Hero")
+            await expectEqual(sound.selectedName, "Hero", "the newly picked sound does not ring")
+        }
+
+        // The picker's None row carries an empty tag, so the empty string has to
+        // arrive here meaning None rather than being stored as a sound name that
+        // could never resolve.
+        test("An empty selection counts as None") {
+            var sound = CueSound(enabled: true, name: "Submarine")
+            sound.select("")
+            await expect(sound.selectedName == nil, "an empty tag was taken for a sound")
+            await expectEqual(sound.name, "Submarine", "and it kept the name, as None does")
+        }
+
+        // None is stored as `enabled: false`, which is what every build before it
+        // already wrote for a switched-off cue and what an older build still
+        // understands — the option is new, the file is not.
+        test("None round-trips through the file as a silenced cue") {
+            let root = try tempRoot()
+            var s = IslandSettings()
+            s[.inputRequired].select(nil)
+            try s.save(root: root)
+
+            let text = try String(
+                contentsOf: root.appendingPathComponent("settings.json"), encoding: .utf8)
+            await expect(
+                text.contains(#""enabled" : false"#),
+                "None wrote something an older build would not read as silent")
+
+            let loaded = IslandSettings.load(root: root)
+            await expect(loaded[.inputRequired].selectedName == nil, "None did not come back")
+            await expectEqual(
+                loaded[.inputRequired].name, "Ping", "and the sound to go back to was lost")
         }
 
         // Hand-editing is a documented way to use this file, and half a cue is

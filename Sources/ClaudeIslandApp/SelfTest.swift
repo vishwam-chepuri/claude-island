@@ -830,7 +830,7 @@ enum SelfTest {
 
         // The pane writes a cue's settings through a subscript rather than to a
         // named property. A subscript setter that assigned to a copy would still
-        // move the switch on screen and still lose it by the next launch.
+        // move the picker on screen and still lose it by the next launch.
         store[.waiting] = CueSound(enabled: false, name: "Tink")
         let sounds = IslandSettings.load(root: root)
         checks.append(
@@ -839,6 +839,18 @@ enum SelfTest {
                 passed: sounds[.waiting] == CueSound(enabled: false, name: "Tink")
                     && sounds[.done] == SoundCue.done.defaultSound,
                 detail: "waiting=\(sounds[.waiting]) done=\(sounds[.done])"))
+
+        // Exactly what the picker does when None is chosen: a mutating call
+        // *through* the subscript, which needs both accessors to reach disk. A
+        // getter-only subscript compiles into a copy, mutates that, and throws it
+        // away — the picker would snap back the moment the view redrew.
+        store[.done].select(nil)
+        let silenced = IslandSettings.load(root: root)
+        checks.append(
+            Check(
+                name: "picking None persists, keeping the sound the cue goes back to",
+                passed: silenced[.done].selectedName == nil && silenced[.done].name == "Glass",
+                detail: "done=\(silenced[.done])"))
 
         // The display is stored as a name that may well not be attached, so
         // nothing along the write path is allowed to "helpfully" drop it — the
@@ -1111,15 +1123,15 @@ enum SelfTest {
                 detail: "safari=\(AppController.rings(.done, under: on, frontmost: "com.apple.Safari")) "
                     + "nil=\(AppController.rings(.done, under: on, frontmost: nil))"))
 
-        // The gate only ever subtracts. It cannot un-mute a cue that the switches
-        // above it already turned off, in either order.
+        // The gate only ever subtracts. It cannot un-mute a cue that the mute
+        // above it or the cue's own picker already silenced, in either order.
         var mutedToo = on
         mutedToo.doNotDisturb = true
         var cueOff = on
-        cueOff[.waiting] = CueSound(enabled: false, name: "Pop")
+        cueOff[.waiting].select(nil)
         checks.append(
             Check(
-                name: "the frontmost gate never overrides the mute or a cue's own switch",
+                name: "the frontmost gate never overrides the mute or a cue set to None",
                 passed: !AppController.rings(.done, under: mutedToo, frontmost: "com.apple.Safari")
                     && !AppController.rings(.waiting, under: cueOff, frontmost: "com.apple.Safari"),
                 detail: "muted=\(AppController.rings(.done, under: mutedToo, frontmost: nil)) "

@@ -397,14 +397,19 @@ struct SettingsView: View {
     /// The cue rows are *not* dimmed by the mute above them. Muted is a state
     /// you configure through, and the play button has to keep working while it
     /// is on or it reads as broken; the footer says so instead.
+    ///
+    /// Each row is one control — a picker offering None — rather than a switch
+    /// and a picker that both mean "silent". Two controls for one outcome left a
+    /// row that could read `off / Glass`, where nothing on screen says which of
+    /// the two you are meant to hit, and both of them silence the same cue.
     private var soundsPane: some View {
         Form {
             Section {
                 Toggle("Play sounds", isOn: soundsBinding)
             } footer: {
                 Text(
-                    "Silences every cue at once, without disturbing the switches below — "
-                        + "turning it back on restores what you had."
+                    "Silences every cue at once, without disturbing what the cues below are "
+                        + "set to — turning it back on restores what you had."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -457,36 +462,50 @@ struct SettingsView: View {
     /// button rings whatever any of this says, because a preview answering with
     /// silence is indistinguishable from a broken button, and auditioning a sound
     /// with your terminal in front is precisely when it gets pressed.
+    ///
+    /// Every version opens by saying what None does. It is the one thing in this
+    /// section that is a picker row rather than a switch, so it is the one thing
+    /// somebody looking for a way to skip a single cue can miss.
     private var cuesFooter: String {
-        switch (store.doNotDisturb, store.muteWhileTerminalFrontmost) {
+        let none = "Set a cue to None to skip it."
+        return switch (store.doNotDisturb, store.muteWhileTerminalFrontmost) {
         case (true, _):
-            "None of these will ring while Play sounds is off. Play previews the chosen sound "
-                + "anyway."
-        case (false, true):
-            "None of these will ring while a terminal is frontmost. Play previews the chosen "
+            "\(none) Nothing here rings while Play sounds is off — Play previews the chosen "
                 + "sound anyway."
+        case (false, true):
+            "\(none) Nothing here rings while a terminal is frontmost — Play previews the "
+                + "chosen sound anyway."
         case (false, false):
-            "Play previews the chosen sound, whatever these switches say."
+            "\(none) Play previews the chosen sound, whatever the switches above say."
         }
     }
 
-    /// One cue: what it means in this app's terms, whether it rings, what it
-    /// rings, and a way to hear that without waiting for a session to do it.
+    /// One cue: what it means in this app's terms, what it rings, and a way to
+    /// hear that without waiting for a session to do it.
     ///
-    /// The picker and the play button stay live under an *off* switch on
-    /// purpose. The switch says whether the cue rings, not whether it can be
-    /// set up — auditioning three sounds before deciding to turn a cue on is the
-    /// normal way to use this pane, and a row that goes dead the moment you
-    /// switch it off makes that a two-step dance.
+    /// The title is plain text, not a switch. Whether the cue rings is the same
+    /// question as what it rings — None is an answer to both — and the picker is
+    /// the control that answers it.
+    ///
+    /// Play is the one thing here that goes dead: a cue set to None has no sound
+    /// to preview. It stays live under either global gate, because a preview
+    /// silenced by a switch elsewhere on the pane is indistinguishable from a
+    /// broken button, but silence with nothing chosen is not a gate — it is the
+    /// row saying it has nothing to play, which is the honest answer and the one
+    /// the picker beside it explains.
     private func soundRow(_ cue: SoundCue) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle(cue.settingsTitle, isOn: soundEnabledBinding(cue))
+        let chosen = store[cue].selectedName
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(cue.settingsTitle)
             Text(cue.settingsCaption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Picker("Sound", selection: soundNameBinding(cue)) {
+                    // First, and outside the loop: skipping a cue is a choice
+                    // about the cue rather than one more sound to scroll past.
+                    Text("None").tag(Self.noSound)
                     ForEach(soundOptions(for: cue), id: \.self) { name in
                         Text(name).tag(name)
                     }
@@ -498,6 +517,7 @@ struct SettingsView: View {
                 } label: {
                     Label("Play", systemImage: "play.fill")
                 }
+                .disabled(chosen == nil)
                 // The label reads "Play" for every row, which is fine to look at
                 // and useless to hear: VoiceOver reads the rows one after
                 // another and three identical buttons name nothing.
@@ -516,9 +536,14 @@ struct SettingsView: View {
     /// perfectly well can be absent from it. A `Picker` whose selection matches
     /// no tag draws an empty row, which reads as a setting that was lost rather
     /// than one this build simply does not offer.
+    ///
+    /// A cue sitting on None contributes nothing here: `name` still holds the
+    /// sound it will go back to, and listing that would put an unfamiliar name
+    /// in one row's menu and not the others'.
     private func soundOptions(for cue: SoundCue) -> [String] {
-        let chosen = store[cue].name
-        guard !SystemSound.all.contains(chosen) else { return SystemSound.all }
+        guard let chosen = store[cue].selectedName, !SystemSound.all.contains(chosen) else {
+            return SystemSound.all
+        }
         return [chosen] + SystemSound.all
     }
 
@@ -706,15 +731,23 @@ struct SettingsView: View {
         Binding(get: { !store.doNotDisturb }, set: { store.doNotDisturb = !$0 })
     }
 
-    /// Both halves of a cue write through `SettingsStore`'s subscript, which
-    /// lands on a stored property and persists on the way past — so a switch or
-    /// a picker is on disk before the sound it describes can next fire.
-    private func soundEnabledBinding(_ cue: SoundCue) -> Binding<Bool> {
-        Binding(get: { store[cue].enabled }, set: { store[cue].enabled = $0 })
-    }
+    /// The None row's tag. Empty rather than a word, for the same reason the
+    /// display picker's default row is empty: a tag of `"None"` is a string that
+    /// could also be a sound name, and this one cannot collide with anything.
+    ///
+    /// `CueSound.select(_:)` reads it as None, so nothing here has to translate.
+    private static let noSound = ""
 
+    /// A cue writes through `SettingsStore`'s subscript, which lands on a stored
+    /// property and persists on the way past — so the picker is on disk before
+    /// the sound it describes can next fire.
+    ///
+    /// Read through `selectedName` and written through `select(_:)`, so the
+    /// stored name survives a trip through None: the sound comes back with it.
     private func soundNameBinding(_ cue: SoundCue) -> Binding<String> {
-        Binding(get: { store[cue].name }, set: { store[cue].name = $0 })
+        Binding(
+            get: { store[cue].selectedName ?? Self.noSound },
+            set: { store[cue].select($0) })
     }
 
     /// Not backed by `settings.json` — the real state lives in `SMAppService`,

@@ -97,7 +97,8 @@ The window is a sidebar with one pane per concern:
 General     Status · Show the HUD · Launch at login
 Appearance  A live preview of the island, posed at each tier
             · Show it on … · Open on hover after …
-Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per cue
+Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per
+            cue, or None to skip that one
 Hooks       Install / update / remove, Copy Hook JSON
 Advanced    Debug log · Pin the HUD to · Reveal Support Folder
 ```
@@ -392,8 +393,8 @@ animations moved.
 | Compact, animating | 0.2% |
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
-| Tests | 252 passing |
-| Self-test | 141 checks |
+| Tests | 257 passing |
+| Self-test | 143 checks |
 
 ## Visual language
 
@@ -475,7 +476,7 @@ state.
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 252 tests
+swift build && swift run ClaudeIslandTests      # 257 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
@@ -492,7 +493,7 @@ byte-stable. Fixtures in `Fixtures/` cover a normal session, permissions and
 failures, two concurrent sessions, subagents, and deliberately hostile input
 (malformed lines, unknown future events, embedded secrets).
 
-`--selftest` is a 141-check harness for what unit tests cannot exercise: that
+`--selftest` is a 143-check harness for what unit tests cannot exercise: that
 the panel never takes focus, that clicks land where they should, that a settings
 change reaches both disk and the running HUD, and dozens of on-screen layout and
 geometry checks besides. Click-through is verified
@@ -569,6 +570,10 @@ them rather than writing null.
   "waitingSound": { "enabled": true, "name": "Pop" }
 }
 ```
+
+A cue set to **None** in the window is `"enabled": false` here, with `name` left
+holding the sound it goes back to — picking None silences that one cue without
+costing you the sound you had.
 
 Logging is **off by default**. Turn it on under Advanced, or:
 

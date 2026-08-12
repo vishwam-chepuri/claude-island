@@ -26,14 +26,23 @@ public enum SystemSound {
 
 /// One cue's audio settings: whether it rings at all, and with what.
 ///
-/// The two travel together because they are read together, and because keeping
-/// the name while the switch is off is the point — muting a cue must not lose
-/// the sound that was picked for it.
+/// The settings pane offers these as one control — a picker of sound names with
+/// **None** at the top — but they stay two stored fields, because keeping the
+/// name while the cue is silent is the point: picking None and changing your
+/// mind must not cost you the sound you had. See `select(_:)`.
+///
+/// Two fields is also what every settings.json already on disk holds, and what
+/// an older build reading a file this one wrote still understands: `enabled`
+/// false means silent there exactly as None means silent here. A dedicated
+/// "none" spelling of `name` would have needed a migration in both directions.
 public struct CueSound: Codable, Equatable, Sendable {
     public var enabled: Bool
     /// A name from `SystemSound.all`. Free-form on purpose: the file is meant to
     /// be hand-editable, and a name this build does not list may still resolve
     /// on the machine that wrote it.
+    ///
+    /// Holds the last sound picked even while `enabled` is false, so it is not
+    /// what rings — `selectedName` is.
     public var name: String
 
     public init(enabled: Bool = true, name: String) {
@@ -52,6 +61,33 @@ public struct CueSound: Codable, Equatable, Sendable {
         // belongs to, and every cue has a different one. `IslandSettings` fills
         // the blank in, since it is the only place that knows.
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+    }
+}
+
+extension CueSound {
+    /// What the picker shows, and what would ring: a sound name, or nil for None.
+    ///
+    /// Every reader that wants "the sound this cue makes" wants this rather than
+    /// `name`, which keeps its value through a spell of silence.
+    public var selectedName: String? { enabled ? name : nil }
+
+    /// Takes a picker selection — a sound name, or nil for None.
+    ///
+    /// The whole reason this is a method rather than two assignments at the call
+    /// site: choosing None deliberately leaves `name` alone. Silencing a cue and
+    /// silencing it *and forgetting what it rang* are a keystroke apart in the
+    /// picker, and only one of them is what anybody meant.
+    ///
+    /// An empty name counts as None, because that is the tag SwiftUI needs for a
+    /// picker row that stands for "nothing" — and because a `name` of `""` could
+    /// not resolve to a sound anyway.
+    public mutating func select(_ name: String?) {
+        guard let name, !name.isEmpty else {
+            enabled = false
+            return
+        }
+        self.name = name
+        enabled = true
     }
 }
 
@@ -172,8 +208,8 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// question of what unit it is in where `150` does not.
     public var hoverOpenDelayMilliseconds: Int = HoverDelay.default
     /// Mutes every sound cue without touching the HUD itself, and without
-    /// disturbing the per-cue switches below — one thing to hit when a meeting
-    /// starts, that leaves the configuration to come back to afterwards.
+    /// disturbing what the cues below are set to — one thing to hit when a
+    /// meeting starts, that leaves the configuration to come back to afterwards.
     public var doNotDisturb: Bool = false
     /// Drops sound cues — and only sounds — while a terminal or editor is the
     /// frontmost app, on the theory that a chime tells you nothing you cannot
@@ -274,9 +310,10 @@ public struct IslandSettings: Codable, Equatable, Sendable {
                 return cue.defaultSound
             }
             // An object present but with no name in it — `{"enabled": false}`
-            // from a hand-edit — takes the cue's default too. It would ring the
-            // default anyway once resolved, and leaving the name empty would
-            // draw an empty row in the picker that reads as a lost setting.
+            // from a hand-edit — takes the cue's default too. The cue still
+            // reads as None in the picker, since `enabled` is what decides
+            // that; what the default buys is a sound to go back to when None
+            // is changed, instead of a row that has to be chosen twice.
             if stored.name.isEmpty { stored.name = cue.defaultSoundName }
             return stored
         }
