@@ -8,21 +8,23 @@ import Foundation
 /// gates nothing else. The island still lights up, still pulses, still holds the
 /// permission prompt open; the only thing this can ever take away is a chime.
 ///
-/// **This is a heuristic, and it is worth being blunt about what it cannot do.**
-/// macOS can say which app is frontmost. Nothing says which app a given session
-/// belongs to: the hook client posts a session id, a cwd and a transcript path,
-/// not a terminal window, and there is no supported way back from a process to
-/// the window it was launched in. So "a terminal is in front" is not "you are
-/// looking at *this* session", and both errors are real — a session in a Terminal
-/// tab two spaces away goes quiet while you type in an unrelated terminal, and a
-/// session you are watching over SSH or in a tmux client that is not frontmost
-/// still rings. The setting is off by default because of that, and the errors at
-/// least fall in the harmless direction: a missing chime, never a missing alert.
+/// **This is the fallback, and only the fallback.** A session whose process
+/// ancestry resolved to an app is matched against *that* app exactly — see
+/// `OwnerResolution` and `AppController.rings(_:under:frontmost:owner:)`. This
+/// list is what remains for sessions that have no owning app to resolve: a
+/// daemon-hosted background job, a tmux server, a session on the far end of an
+/// SSH link.
+///
+/// For those it is still a guess, and the guess is still lopsided: a session in
+/// a tmux client that is not frontmost goes on ringing, and an unrelated
+/// terminal in front silences one it has nothing to do with. Both errors fall
+/// in the harmless direction — a missing chime, never a missing alert — and the
+/// setting is off by default.
 ///
 /// Strings rather than `NSRunningApplication`: Core imports no AppKit, and
 /// keeping the classification here is what makes it testable without a window
 /// server. Whoever asks the workspace which app is in front — see
-/// `AppController.rings(_:under:frontmost:)` — passes the id in.
+/// `AppController.rings(_:under:frontmost:owner:)` — passes the id in.
 public enum TerminalApps {
     /// Bundle ids matched exactly.
     ///

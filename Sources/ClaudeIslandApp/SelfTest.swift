@@ -1094,6 +1094,20 @@ enum SelfTest {
                     && !AppController.rings(.waiting, under: cueOff, frontmost: "com.apple.Safari"),
                 detail: "muted=\(AppController.rings(.done, under: mutedToo, frontmost: nil)) "
                     + "cueOff=\(AppController.rings(.waiting, under: cueOff, frontmost: nil))"))
+
+        // The upgrade: a session whose own terminal is in front goes quiet,
+        // while a session running in a *different* terminal still rings. The
+        // old heuristic could not tell those apart and silenced both.
+        checks.append(
+            Check(
+                name: "an owned session mutes only for its own terminal",
+                passed: !AppController.rings(
+                    .done, under: on, frontmost: "com.microsoft.VSCode",
+                    owner: "com.microsoft.VSCode")
+                    && AppController.rings(
+                        .done, under: on, frontmost: "com.apple.Terminal",
+                        owner: "com.microsoft.VSCode"),
+                detail: "own-terminal mute vs other-terminal ring"))
     }
 
     /// What `AppController` would ring for this name, by name — never played.

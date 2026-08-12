@@ -317,7 +317,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             // `rings` last: it is the only clause that asks the system anything,
             // and on a session sitting in `.done` every snapshot reaches here.
             if !firstObservation, model.isEnabled, let cue, lastSoundCue[session.id] != cue,
-                rings(cue)
+                rings(cue, for: session)
             {
                 play(cue)
             }
@@ -328,36 +328,41 @@ final class AppController: NSObject, NSApplicationDelegate {
         lastSoundCue = lastSoundCue.filter { liveIDs.contains($0.key) }
     }
 
-    /// Whether a cue is allowed to ring right now.
+    /// Whether a cue is allowed to ring right now, for this specific session.
     ///
-    /// Asks the workspace which app is in front at ring time rather than tracking
-    /// activation notifications: this runs a handful of times a minute at worst,
-    /// and a cached answer is one more thing that can be stale at the exact
-    /// moment it decides whether you hear something.
-    private func rings(_ cue: SoundCue) -> Bool {
-        Self.rings(
+    /// Resolves the session's owner and asks the workspace which app is in front
+    /// at ring time rather than caching either: this runs a handful of times a
+    /// minute at worst, on the edge into a state, and a cached answer is one more
+    /// thing that can be stale at the exact moment it decides whether you hear
+    /// something.
+    private func rings(_ cue: SoundCue, for session: Session) -> Bool {
+        let owner: String? =
+            if case .owner(let app) = SessionOwner.resolve(session.ownerPIDs) {
+                app.bundleID
+            } else {
+                nil
+            }
+        return Self.rings(
             cue, under: settings.current,
-            frontmost: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+            frontmost: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            owner: owner)
     }
 
-    /// The decision itself, with no live state in it.
+    /// Whether a cue is allowed to ring right now.
     ///
-    /// The global mute outranks the per-cue switch, so one click silences
-    /// everything without editing three switches that then have to be put back.
-    /// All of it lives here rather than inside `play` so the preview button can
-    /// ignore the lot — see `previewSound`.
-    ///
-    /// The frontmost check comes last because it is the only one that is a guess
-    /// (see `TerminalApps`) and the only one that costs a system call. Static, and
-    /// handed the bundle id rather than reading `NSWorkspace` itself, so
-    /// --selftest can drive every combination — including "a terminal is in
-    /// front" — without depending on which app happens to be frontmost while it
-    /// runs.
-    static func rings(_ cue: SoundCue, under settings: IslandSettings, frontmost bundleID: String?)
-        -> Bool
-    {
+    /// `owner` is this session's own app, when the process ancestry resolved to
+    /// one. Given it, the frontmost check stops being a guess: mute exactly
+    /// when you are looking at *this* session's terminal, rather than whenever
+    /// any terminal happens to be in front. Without it — a background job, a
+    /// tmux server, an SSH session — it falls back to the old heuristic, which
+    /// is the best available answer for a session that has no app at all.
+    static func rings(
+        _ cue: SoundCue, under settings: IslandSettings, frontmost bundleID: String?,
+        owner ownerBundleID: String? = nil
+    ) -> Bool {
         guard !settings.doNotDisturb, settings[cue].enabled else { return false }
         guard settings.muteWhileTerminalFrontmost else { return true }
+        if let owner = ownerBundleID { return bundleID != owner }
         return !TerminalApps.matches(bundleID: bundleID)
     }
 
