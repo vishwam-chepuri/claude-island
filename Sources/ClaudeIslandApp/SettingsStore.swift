@@ -23,6 +23,7 @@ final class SettingsStore {
     var doNotDisturb: Bool { didSet { persist() } }
     var logging: Bool { didSet { persist() } }
     var debugTint: Bool { didSet { persist() } }
+    var aboveOtherNotchHUDs: Bool { didSet { persist() } }
     var forcedMode: String? { didSet { persist() } }
     var muteWhileTerminalFrontmost: Bool { didSet { persist() } }
     /// The display's `localizedName`, or nil for the menu bar's. Held even while
@@ -76,6 +77,7 @@ final class SettingsStore {
         doNotDisturb = settings.doNotDisturb
         logging = settings.logging
         debugTint = settings.debugTint
+        aboveOtherNotchHUDs = settings.aboveOtherNotchHUDs
         forcedMode = settings.forcedMode
         muteWhileTerminalFrontmost = settings.muteWhileTerminalFrontmost
         preferredDisplay = settings.preferredDisplay
@@ -91,6 +93,7 @@ final class SettingsStore {
         s.doNotDisturb = doNotDisturb
         s.logging = logging
         s.debugTint = debugTint
+        s.aboveOtherNotchHUDs = aboveOtherNotchHUDs
         s.forcedMode = forcedMode
         s.muteWhileTerminalFrontmost = muteWhileTerminalFrontmost
         s.preferredDisplay = preferredDisplay

@@ -233,6 +233,18 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// Fills the island with a visible colour so its edges can be seen against
     /// the notch, which pure #000 deliberately blends into.
     public var debugTint: Bool = false
+    /// Lifts the HUD above other notch apps, which otherwise win the hit test
+    /// over the island shape and swallow the click that answers a permission
+    /// prompt.
+    ///
+    /// Off by default, and the default is the interesting part. Those apps sit
+    /// *at* screen-saver level, so the only level that beats one is above screen
+    /// saver — there is no gentler value that still wins. On means the HUD is
+    /// drawn higher than it needs to be for everyone who has no such app
+    /// installed, which is most people, and `IslandPanel.level(aboveOtherNotchHUDs:)`
+    /// is where that arithmetic lives. Opting in is for the desk where the notch
+    /// is already taken.
+    public var aboveOtherNotchHUDs: Bool = false
     /// Pins the HUD to one tier — "compact", "alert", "peek", "expanded".
     /// Hover and click cannot be synthesised without Accessibility permission,
     /// so without this the open tiers cannot be inspected at all.
@@ -267,7 +279,7 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// by an older build — or hand-edited down to a single key — still loads,
     /// and gains the new keys the next time anything is saved.
     private enum CodingKeys: String, CodingKey {
-        case hudEnabled, doNotDisturb, logging, debugTint, forcedMode
+        case hudEnabled, doNotDisturb, logging, debugTint, forcedMode, aboveOtherNotchHUDs
         case muteWhileTerminalFrontmost, preferredDisplay, hoverOpenDelayMilliseconds
         case doneSound, inputRequiredSound, waitingSound
     }
@@ -279,6 +291,12 @@ public struct IslandSettings: Codable, Equatable, Sendable {
         logging = try c.decodeIfPresent(Bool.self, forKey: .logging) ?? false
         debugTint = try c.decodeIfPresent(Bool.self, forKey: .debugTint) ?? false
         forcedMode = try c.decodeIfPresent(String.self, forKey: .forcedMode)
+        // Absent means off, which keeps every existing install exactly where it
+        // is in the window order. Raising the level for people who never asked
+        // would trade a conflict they may not have for a HUD above their screen
+        // saver, which is the worse of the two surprises.
+        aboveOtherNotchHUDs =
+            try c.decodeIfPresent(Bool.self, forKey: .aboveOtherNotchHUDs) ?? false
         // Absent means off, which is also the default — so every settings.json
         // written before this option existed keeps ringing exactly as it did.
         // Opting in is the only way to get the quieter behaviour.

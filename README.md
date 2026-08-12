@@ -420,8 +420,8 @@ animations moved.
 | Compact, animating | 0.2% |
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
-| Tests | 257 passing |
-| Self-test | 143 checks |
+| Tests | 260 passing |
+| Self-test | 148 checks passing |
 
 ## Visual language
 
@@ -503,7 +503,7 @@ state.
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 257 tests
+swift build && swift run ClaudeIslandTests      # 260 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
@@ -543,15 +543,23 @@ one proves.
 
 ### Known conflict: other notch HUDs
 
-The panel sits at `.statusBar + 1` (level 26). Some notch apps use far higher
-levels — "Claude Usage" on this machine holds the notch at level **1000** — and
-will render above ClaudeIsland and win the hit test over the island shape. This
-is by design rather than a defect: the level is deliberately conservative so the
-HUD never floats above things it shouldn't.
+The panel sits at `.statusBar + 1` (level 26) by default. Some notch apps use far
+higher levels — "Claude Usage" on this machine holds the notch at level
+**1000** — and will render above ClaudeIsland and win the hit test over the
+island shape, taking with it the click that answers a permission prompt. The
+conservative level is deliberate rather than a defect: the HUD never floats above
+things it shouldn't.
 
-`--selftest` detects this and names the offending app instead of reporting a
-failure. Quit the other app to evaluate that check, or raise the level in
-`IslandPanel.init` if you would rather ClaudeIsland win.
+**Stay above other notch apps** under Advanced lifts the panel past them, and is
+off by default. Those apps sit *at* screen-saver level, so the only level that
+beats one is above the screen saver — there is no gentler value that still wins,
+which is why this is a switch rather than a slider and why it stays off until
+asked for. It applies immediately, with no relaunch.
+
+`--selftest` builds its panel from that setting. With the switch off it detects
+the conflict and names the offending app instead of reporting a failure — quit
+the other app to evaluate that check. With the switch on it measures the level
+you actually run at, and the check passes with the other app still running.
 
 ### Note on the test harness
 
@@ -596,6 +604,7 @@ them rather than writing null.
 
 ```json
 {
+  "aboveOtherNotchHUDs": false,
   "debugTint": false,
   "doNotDisturb": false,
   "doneSound": { "enabled": true, "name": "Glass" },

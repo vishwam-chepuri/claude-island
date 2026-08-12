@@ -7,7 +7,10 @@ import AppKit
 /// island never pulls focus away from the terminal running Claude Code.
 final class IslandPanel: NSPanel {
 
-    init(contentRect: NSRect) {
+    /// `aboveOtherNotchHUDs` defaults to off so a panel built without an opinion
+    /// gets the conservative level — the same one every build before the setting
+    /// existed used.
+    init(contentRect: NSRect, aboveOtherNotchHUDs: Bool = false) {
         super.init(
             contentRect: contentRect,
             // .nonactivatingPanel is what stops a click from activating the app.
@@ -16,12 +19,7 @@ final class IslandPanel: NSPanel {
             defer: false)
 
         isFloatingPanel = true
-        // One above screen-saver level, not one above the status bar. Other
-        // notch HUDs sit at 1000 and win the hit test over the island shape,
-        // which costs the click — and a permission prompt you cannot answer is
-        // worse than a HUD drawn higher than it strictly needs to be. 1000 is
-        // the number to beat, so there is no gentler value that still wins.
-        level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
+        level = Self.level(aboveOtherNotchHUDs: aboveOtherNotchHUDs)
         hidesOnDeactivate = false
         collectionBehavior = [
             .canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle,
@@ -42,6 +40,29 @@ final class IslandPanel: NSPanel {
         // Only the shape is interactive; the rest of the frame is switched to
         // click-through by the mouse monitor.
         ignoresMouseEvents = true
+    }
+
+    /// The window level to draw at, and the whole of the policy behind it.
+    ///
+    /// Off — the default — is `.statusBar + 1`: above the menu bar, and
+    /// deliberately no higher, so the HUD never floats above things it should
+    /// not. It loses the hit test to any notch app sitting higher, which is
+    /// reported by `--selftest` as a conflict rather than a failure.
+    ///
+    /// On is one above screen-saver level, because that is the only thing that
+    /// works: other notch HUDs sit *at* screen-saver level, so 1000 is the
+    /// number to beat and anything that beats it is above the screen saver by
+    /// definition. There is no middle setting to offer, which is why this is a
+    /// switch rather than a slider — and why it is off unless asked for.
+    ///
+    /// A function rather than two literals at the call sites so the arithmetic
+    /// is asserted in one place, and so raising a live panel on a settings
+    /// change cannot drift from what `init` chose.
+    static func level(aboveOtherNotchHUDs: Bool) -> NSWindow.Level {
+        NSWindow.Level(
+            rawValue: aboveOtherNotchHUDs
+                ? NSWindow.Level.screenSaver.rawValue + 1
+                : NSWindow.Level.statusBar.rawValue + 1)
     }
 
     /// Refusing key and main is what makes the panel unable to steal focus.

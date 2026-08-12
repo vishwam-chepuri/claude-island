@@ -97,7 +97,8 @@ final class AppController: NSObject, NSApplicationDelegate {
                 width: NotchGeometryResolver.panelWidth,
                 height: NotchGeometryResolver.panelHeight)
 
-        panel = IslandPanel(contentRect: frame)
+        panel = IslandPanel(
+            contentRect: frame, aboveOtherNotchHUDs: settings.aboveOtherNotchHUDs)
         let host = NSHostingView(rootView: IslandView(model: model))
         host.frame = CGRect(origin: .zero, size: frame.size)
         host.autoresizingMask = [.width, .height]
@@ -476,6 +477,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         // hover, with no relaunch and without disturbing a dwell already
         // counting down under the pointer.
         hoverMonitor.openDelay = HoverDelay.seconds(new.hoverOpenDelayMilliseconds)
+
+        // Above the `hudEnabled` guard for the same reason as the two settings
+        // around it. Assigning the level on a panel that is already on screen is
+        // enough — the window server restacks it immediately, so the switch is
+        // live and does not wait for the panel to be ordered out and back.
+        panel.level = IslandPanel.level(aboveOtherNotchHUDs: new.aboveOtherNotchHUDs)
 
         // Above the `hudEnabled` guard, which returns early on every change that
         // is not the HUD switch itself — a display picked while the HUD is

@@ -29,6 +29,10 @@ func registerSettingsTests() {
             await expect(!s.debugTint, "tint off by default")
             await expect(s.forcedMode == nil, "not pinned by default")
             await expect(
+                !s.aboveOtherNotchHUDs,
+                "the HUD stays below other notch apps until asked — winning means "
+                    + "drawing above the screen saver")
+            await expect(
                 s.preferredDisplay == nil,
                 "no display is pinned by default — the HUD follows the menu bar")
             await expect(
@@ -51,6 +55,7 @@ func registerSettingsTests() {
             s.doNotDisturb = true
             s.logging = true
             s.debugTint = true
+            s.aboveOtherNotchHUDs = true
             s.forcedMode = "peek"
             s.muteWhileTerminalFrontmost = true
             s.preferredDisplay = "DELL P3223QE"
@@ -87,6 +92,12 @@ func registerSettingsTests() {
             await expect(s.logging, "the key that was present won")
             await expect(s.hudEnabled, "a missing hudEnabled still defaults to true, not false")
             await expect(s.forcedMode == nil, "a missing forcedMode is absent, not empty")
+            // The upgrade path that matters for this key: every settings.json
+            // written before the switch existed must keep the level it had, not
+            // silently rise above the screen saver.
+            await expect(
+                !s.aboveOtherNotchHUDs,
+                "a settings.json predating the switch stays below other notch apps")
         }
 
         test("Saving writes readable, stable JSON") {

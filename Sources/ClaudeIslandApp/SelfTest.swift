@@ -73,7 +73,14 @@ enum SelfTest {
             return 1
         }
 
-        let panel = IslandPanel(contentRect: geometry.panelRect)
+        // Built from the stored settings rather than from the defaults, so the
+        // notch-HUD switch is measured as it is actually run. It matters for one
+        // check: with the switch on, click-through is tested at the level the
+        // user has chosen and passes against another notch app, where the
+        // default level can only report the conflict and skip.
+        let stored = IslandSettings.load()
+        let panel = IslandPanel(
+            contentRect: geometry.panelRect, aboveOtherNotchHUDs: stored.aboveOtherNotchHUDs)
         let model = IslandViewModel()
         model.setGeometry(geometry)
         let host = NSHostingViewShim(model: model, size: geometry.panelRect.size)
@@ -106,6 +113,37 @@ enum SelfTest {
                 passed: panel.level.rawValue > NSWindow.Level.statusBar.rawValue,
                 detail:
                     "level=\(panel.level.rawValue) statusBar=\(NSWindow.Level.statusBar.rawValue)"))
+        // The level arithmetic, asserted rather than trusted to a comment. The
+        // off case is what every build before the switch shipped with, and the
+        // on case has to clear screen-saver level or it buys nothing: that is
+        // where the notch apps it exists to beat are sitting.
+        checks.append(
+            Check(
+                name: "with the notch-HUD switch off, the level is the conservative one",
+                passed: IslandPanel.level(aboveOtherNotchHUDs: false).rawValue
+                    == NSWindow.Level.statusBar.rawValue + 1,
+                detail: "off=\(IslandPanel.level(aboveOtherNotchHUDs: false).rawValue) "
+                    + "statusBar=\(NSWindow.Level.statusBar.rawValue)"))
+        checks.append(
+            Check(
+                name: "with the notch-HUD switch on, the level clears where notch apps sit",
+                passed: IslandPanel.level(aboveOtherNotchHUDs: true).rawValue
+                    > NSWindow.Level.screenSaver.rawValue,
+                detail: "on=\(IslandPanel.level(aboveOtherNotchHUDs: true).rawValue) "
+                    + "screenSaver=\(NSWindow.Level.screenSaver.rawValue)"))
+        // Asserted against the policy function rather than against `panel`, whose
+        // level now depends on the stored switch: a check that compared the two
+        // would fail for anyone who had turned it on.
+        checks.append(
+            Check(
+                name: "init honours the switch, and honours its absence",
+                passed: IslandPanel(contentRect: geometry.panelRect, aboveOtherNotchHUDs: true)
+                    .level == IslandPanel.level(aboveOtherNotchHUDs: true)
+                    && IslandPanel(contentRect: geometry.panelRect).level
+                        == IslandPanel.level(aboveOtherNotchHUDs: false),
+                detail: "on="
+                    + "\(IslandPanel(contentRect: geometry.panelRect, aboveOtherNotchHUDs: true).level.rawValue) "
+                    + "omitted=\(IslandPanel(contentRect: geometry.panelRect).level.rawValue)"))
         checks.append(
             Check(
                 name: "collection behavior spans spaces and full screen",
@@ -891,6 +929,19 @@ enum SelfTest {
                 detail: "on disk: \(IslandSettings.load(root: root).hoverOpenDelayMilliseconds) "
                     + "applied: \(applied.last?.hoverOpenDelayMilliseconds ?? -1)"))
         store.hoverOpenDelayMilliseconds = HoverDelay.default
+
+        // The switch has to reach the app as well as the file: the level is read
+        // once at launch and then only ever again through `onChange`, so a value
+        // that persisted but never applied would move nothing until a relaunch.
+        store.aboveOtherNotchHUDs = true
+        checks.append(
+            Check(
+                name: "the notch-HUD switch reaches both the file and the app",
+                passed: IslandSettings.load(root: root).aboveOtherNotchHUDs
+                    && applied.last?.aboveOtherNotchHUDs == true,
+                detail: "on disk: \(IslandSettings.load(root: root).aboveOtherNotchHUDs) "
+                    + "applied: \(applied.last?.aboveOtherNotchHUDs.description ?? "none")"))
+        store.aboveOtherNotchHUDs = false
 
         // The window writes a string; the HUD needs a tier. A typo must leave
         // the HUD unpinned rather than pin it to something arbitrary.

@@ -590,6 +590,21 @@ struct SettingsView: View {
     private var advancedPane: some View {
         Form {
             Section {
+                Toggle("Stay above other notch apps", isOn: $store.aboveOtherNotchHUDs)
+                // Worth a caption in both states rather than only when on: off is
+                // the state where clicks quietly land in another app, and a
+                // switch that explains itself only after you flip it is no help
+                // to the person wondering why the island ignores the pointer.
+                Text(
+                    store.aboveOtherNotchHUDs
+                        ? "The HUD is drawn above the screen saver — the only level that "
+                            + "beats another notch app. Leave this off if you have none."
+                        : "Other notch apps are drawn above the island and take its clicks, "
+                            + "including the one that answers a permission prompt."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 Toggle("Write a debug log", isOn: $store.logging)
                 Text(
                     "Records what the HUD is doing to ~/.claude-island/log, capped at "
