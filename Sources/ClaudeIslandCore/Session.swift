@@ -58,6 +58,14 @@ public struct Session: Sendable, Equatable, Identifiable {
     public var state: SessionState
     public var cwd: String?
     public var transcriptPath: String?
+    /// Ancestor pids of the process that ran this session, nearest first, as
+    /// stamped by the hook client.
+    ///
+    /// Held raw and resolved late. Pids go stale the moment a terminal quits,
+    /// so resolving at click time rather than at capture time means a dead pid
+    /// simply fails to resolve — no invalidation to get wrong. Re-stamped on
+    /// every hook event, so a resumed session heals itself.
+    public var ownerPIDs: [Int32] = []
     /// The `/rename` title, read from the transcript's `custom-title` record.
     public var customTitle: String?
     /// Claude Code's own generated topic label, read from the transcript's
@@ -157,6 +165,9 @@ public enum SessionReducer {
         s.lastEventAt = now
         if let c = envelope.cwd, !c.isEmpty { s.cwd = c }
         if let t = envelope.transcriptPath, !t.isEmpty { s.transcriptPath = t }
+        // Only when the envelope actually carries them. Status-line payloads
+        // carry none and arrive continuously; absent must mean "no news".
+        if !envelope.ancestorPIDs.isEmpty { s.ownerPIDs = envelope.ancestorPIDs }
 
         switch envelope.event {
         case .sessionStart:
