@@ -586,9 +586,6 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Text("Stored in ~/.claude-island/settings.json")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Spacer()
                 Button("Quit ClaudeIsland") { actions.quit() }
             }
