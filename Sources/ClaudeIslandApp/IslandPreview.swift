@@ -298,11 +298,12 @@ struct IslandPreview: View {
         .onAppear { source.show(tier, on: store.preferredDisplay) }
         .onDisappear { source.shutdown() }
         .onChange(of: tier) { _, chosen in source.show(chosen, on: store.preferredDisplay) }
-        // The display picker is a pane away, on General, so this normally
-        // re-poses on the way back here — but the shape is the one thing on this
-        // stage that a *different pane* can change, and a preview showing a notch
-        // for a HUD that is now a pill on an external monitor is worse than no
-        // preview at all.
+        // The display picker sits directly under this stage, so this is what
+        // makes the pane a readout rather than a still: choosing a notchless
+        // display reshapes the island in place, without the pane being left or
+        // the tier being pressed again. It also still covers the picker being
+        // changed from anywhere else — a preview showing a notch for a HUD that
+        // is now a pill on an external monitor is worse than no preview at all.
         .onChange(of: store.preferredDisplay) { _, display in
             source.show(tier, on: display)
         }

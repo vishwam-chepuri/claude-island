@@ -761,6 +761,23 @@ enum SelfTest {
     /// window fails quietly — a toggle that moves on screen, does nothing, and
     /// forgets itself by the next launch looks exactly like one that works.
     private static func settingsChecks(_ checks: inout [Check]) {
+        // The window refuses the toolbar `NavigationSplitView` hangs off it —
+        // a sidebar toggle for a sidebar that is pinned, and a tracking
+        // separator that truncated the window's title to the sidebar's column.
+        // Asserted by handing one over rather than by waiting for SwiftUI to
+        // install its own: the contract is that this window never carries a
+        // toolbar whoever sets it, and a check that watched for SwiftUI's would
+        // pass vacuously on the day SwiftUI stopped installing one.
+        let window = SettingsWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: true)
+        window.toolbar = NSToolbar(identifier: "selftest")
+        checks.append(
+            Check(
+                name: "the settings window refuses a toolbar",
+                passed: window.toolbar == nil,
+                detail: "toolbar=\(window.toolbar.map(\.identifier) ?? "nil")"))
+
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("island-selftest-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

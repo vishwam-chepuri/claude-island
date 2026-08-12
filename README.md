@@ -74,7 +74,7 @@ of the event pipeline — whether the socket is listening, how long ago the last
 hook event arrived, how many sessions are tracked — which is the first place to
 look if the island never appears at all.
 
-![The General pane: the event pipeline strip, Show the HUD, Show it on, Open on hover after, and Launch at login](docs/images/settings-general.png)
+![The General pane: the event pipeline strip, Status, Show the HUD, and Launch at login](docs/images/settings-general.png)
 
 ### Why it builds from source rather than shipping a binary
 
@@ -94,9 +94,9 @@ nothing on screen would say the app had started.
 The window is a sidebar with one pane per concern:
 
 ```
-General     Status · Show the HUD · Show it on … · Open on hover after …
-            · Launch at login
+General     Status · Show the HUD · Launch at login
 Appearance  A live preview of the island, posed at each tier
+            · Show it on … · Open on hover after …
 Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per cue
 Hooks       Install / update / remove, Copy Hook JSON
 Advanced    Debug log · Pin the HUD to · Reveal Support Folder
@@ -104,10 +104,12 @@ Advanced    Debug log · Pin the HUD to · Reveal Support Folder
 
 **Appearance** poses the real island — the same shape, content views and view
 model the HUD draws with — over invented sessions, at whichever tier you press.
-It resolves the shape against the display chosen on General, so it previews the
-one the HUD will actually take.
+The two settings under it are the ones the preview is a picture of: it resolves
+the shape against the display chosen there, so a notched panel previews a notch
+and anything else previews the pill, and the Peek tier is what the hover delay
+stands between the pointer and.
 
-![The Appearance pane showing the expanded card posed over invented sessions, with tier buttons for Compact, Alert, Peek and Expanded](docs/images/settings-appearance.png)
+![The Appearance pane showing the expanded card posed over invented sessions, with tier buttons for Compact, Alert, Peek and Expanded, and the Show it on and Open on hover after rows below](docs/images/settings-appearance.png)
 
 **Show it on** picks the display. The default follows the menu bar, which on a
 notched Mac is where the cutout is; any other display gets the pill instead —
@@ -442,7 +444,7 @@ SwiftUI, for the reason above.
 The name is cut on a word at 18 characters and carries no ellipsis — the pill is
 a label, not a claim to be complete, and the whole title is one hover away.
 
-**Peek** (hover, after the dwell set on General) — adds the live tool target,
+**Peek** (hover, after the dwell set on Appearance) — adds the live tool target,
 the identity line (branch, model, effort, elapsed), context and output tokens,
 lines changed, and plan progress with the task currently in flight.
 

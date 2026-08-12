@@ -39,9 +39,10 @@ struct SettingsView: View {
     /// than going blank.
     @State private var pane: Pane? = .general
 
-    /// Pinned open. This window has no toolbar, so the sidebar toggle that
-    /// normally brings a collapsed column back has nowhere to draw itself; a
-    /// sidebar the user can lose is one they cannot ask for again.
+    /// Pinned open, and the toggle that would unpin it is removed below — a
+    /// sidebar the user can lose is one they cannot ask for again. Five fixed
+    /// panes are the whole of this window's navigation; collapsing them leaves a
+    /// detail column with no way to say which pane it is showing.
     @State private var columns = NavigationSplitViewVisibility.all
 
     /// The displays attached right now, re-read whenever the window learns they
@@ -64,6 +65,14 @@ struct SettingsView: View {
                 detail
             }
             .navigationSplitViewStyle(.balanced)
+            // The toolbar this split view hangs off the window — a sidebar
+            // toggle for a sidebar that is pinned, and a tracking separator that
+            // truncated the window's title to fit the sidebar's column — is
+            // refused by the window itself. `.toolbar(removing:)` and
+            // `.toolbar(.hidden, for: .windowToolbar)` are both no-ops from
+            // inside an `NSHostingView`: photographed against a window with and
+            // without them, the two captures were identical to the byte. See
+            // `SettingsWindow`.
             .frame(maxHeight: .infinity)
             Divider()
             footer
@@ -148,8 +157,6 @@ struct SettingsView: View {
             Section {
                 LabeledContent("Status", value: statusLine)
                 Toggle("Show the HUD", isOn: $store.hudEnabled)
-                displayRow
-                hoverDelayRow
                 if LoginItem.isAvailable {
                     Toggle("Launch at login", isOn: launchAtLoginBinding)
                 }
@@ -166,14 +173,12 @@ struct SettingsView: View {
 
     /// Which display the island draws on.
     ///
-    /// On General, next to "Show the HUD", rather than on Appearance. Both were
-    /// defensible and this one is a judgement call, made on two grounds: this
-    /// setting answers *where the HUD is*, which is the same question as whether
-    /// it is showing at all — someone whose island has vanished onto the laptop
-    /// panel behind a closed lid goes looking in the pane that turns it on, not
-    /// in the one about how it looks. And Appearance is currently a pane that
-    /// writes no settings whatsoever: it is the preview and nothing else, which
-    /// is a property worth keeping.
+    /// On Appearance, directly under the preview, because the preview is this
+    /// row's own answer: it resolves the shape against whichever display is
+    /// chosen here, so a notched panel previews a notch and anything else
+    /// previews the pill. Picking a display on one pane to see what it did on
+    /// another was the arrangement this replaced, and it made the preview look
+    /// like decoration rather than the readout it is.
     ///
     /// The caption only appears when the chosen display is missing. A row that
     /// explained itself at all times would be four lines of prose above "Launch
@@ -211,11 +216,13 @@ struct SettingsView: View {
 
     /// How long the pointer must rest on the island before the card opens.
     ///
-    /// On General with the other two, because it answers the same question they
-    /// do — the island is showing, it is over there, and it takes this long to
-    /// notice you. It is also the row someone comes looking for after the HUD
-    /// popped open while they were reaching for the menu bar, which is not a
-    /// complaint about how it looks.
+    /// On Appearance under the display picker, because the tier it gates is the
+    /// one the preview above puts on screen: Peek is what this delay stands
+    /// between the pointer and, and the segment marked Peek is a click away
+    /// while the slider is being dragged. It is also the row someone comes
+    /// looking for after the card popped open while they were reaching for the
+    /// menu bar — a complaint about the island appearing when it should not,
+    /// which is the pane that shows the island appearing.
     ///
     /// A slider rather than a Short/Medium/Long picker: the range is narrow,
     /// every value in it is usable, and what is being chosen is a feel — judged
@@ -340,13 +347,18 @@ struct SettingsView: View {
     }
 
     /// Second in the sidebar rather than last: it is the one pane that answers a
-    /// question — "what is this thing going to look like on my screen" — instead
-    /// of asking one, and behind the hook plumbing it would only be found by
+    /// question — "what is this thing going to look like on my screen" — as well
+    /// as asking one, and behind the hook plumbing it would only be found by
     /// people who were already looking for it.
     ///
     /// The preview is fed made-up sessions and driven by a view model of its own;
     /// see `IslandPreviewSource` for why that second model is not an optimisation
-    /// but the whole safety property. Nothing on this pane writes a setting.
+    /// but the whole safety property.
+    ///
+    /// The two rows under it are the settings the preview is a picture of — which
+    /// display the island takes its shape from, and how long the pointer waits
+    /// for Peek. Both used to live on General, where changing one meant switching
+    /// panes to see what it had done.
     private var appearancePane: some View {
         Form {
             Section {
@@ -360,6 +372,10 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
+                displayRow
+                hoverDelayRow
             }
         }
         .formStyle(.grouped)

@@ -1,6 +1,35 @@
 import AppKit
 import SwiftUI
 
+/// A window that will not carry a toolbar.
+///
+/// `NavigationSplitView` installs one whether or not anything asked for it, and
+/// this window wants neither half of what it brings. The sidebar toggle offers
+/// to collapse a sidebar that is deliberately pinned — five fixed panes, nothing
+/// to hide, and a detail column with no other way to say which pane it is
+/// showing. The tracking separator that comes with it then lays the window's
+/// title out inside the sidebar's column, so "ClaudeIsland Settings" arrived as
+/// "ClaudeIsland Sett…" in a window with three hundred points of empty title bar
+/// to its right.
+///
+/// Refused here rather than in SwiftUI because SwiftUI cannot refuse it from
+/// inside an `NSHostingView`: `.toolbar(removing: .sidebarToggle)` and
+/// `.toolbar(.hidden, for: .windowToolbar)` both left the button and the
+/// truncation exactly where they were — captures of the window with and without
+/// them were identical to the byte. Those modifiers speak to a SwiftUI-owned
+/// scene, and this window is AppKit's.
+///
+/// Overriding the property rather than nilling it after the fact: SwiftUI sets
+/// this during layout, so anything that cleared it afterwards would be racing
+/// whichever runloop turn that lands on. `--selftest` asserts on the override
+/// directly, by handing one over and reading it back.
+final class SettingsWindow: NSWindow {
+    override var toolbar: NSToolbar? {
+        get { nil }
+        set { _ = newValue }
+    }
+}
+
 /// The settings window, and the invisible main menu that makes it usable.
 ///
 /// The app runs `.accessory` (LSUIElement) and must keep doing so — the HUD
@@ -77,8 +106,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // already shrunk by a fifth. Still only a default: the window resizes,
         // the preview scales to whatever it is given, and `minWidth` is
         // unchanged, so nothing here is load-bearing.
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 580),
+        //
+        // The height went 580 → 700 when the display picker and the hover delay
+        // moved onto Appearance, under the preview. At 580 they opened below the
+        // fold — a pane whose settings you have to scroll to find, sitting under
+        // 350 points of preview that looks like the whole of it. 700 still
+        // clears the shortest display this is likely to meet: the built-in panel
+        // it is drawn for leaves 1130 points between the menu bar and the Dock.
+        let window = SettingsWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
             // Still resizable: the panes scroll, and a fixed height would clip
             // whichever pane happens to be longest today on a short display.
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -90,7 +126,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = NSHostingView(rootView: makeContent())
-        window.setContentSize(NSSize(width: 820, height: 580))
+        window.setContentSize(NSSize(width: 820, height: 700))
         window.center()
         return window
     }
