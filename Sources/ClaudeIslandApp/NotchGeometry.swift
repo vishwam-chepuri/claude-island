@@ -46,7 +46,7 @@ enum NotchGeometryResolver {
 
     /// Fallback pill dimensions on a notchless display. Sized to read like a
     /// notch rather than a floating widget.
-    static let pillSize = CGSize(width: 200, height: 30)
+    static let pillSize = CGSize(width: 200, height: 29)
 
     /// The hairline of desktop left above the pill on a display that does not
     /// own the menu bar.

@@ -276,7 +276,18 @@ final class IslandViewModel {
         // point taller than the pill the geometry asked for — so changing
         // `pillSize.height` moved the dormant shape and left the one with
         // content in it exactly where it was.
-        guard hasNotch else { return max(pillHeight, Self.lineHeight) }
+        // No `lineHeight` floor on a notchless display: the pill's height is a
+        // deliberate choice there, not a fallback, and flooring it silently
+        // ignored a smaller one.
+        //
+        // Nothing automated guards the lower bound. Two attempts were made:
+        // hosting `CompactContent` at the row's height, and hosting it
+        // unbounded — both reported it fitting at a 14pt pill, so both were
+        // checking nothing and were removed rather than left to look like
+        // cover. The label is a fixed-height row that compresses without
+        // complaint, so the only honest test is looking at it. 29pt is verified
+        // by eye; go much below and check by eye again.
+        guard hasNotch else { return pillHeight }
         return max(notchBandHeight, Self.lineHeight) + Self.compactLip
     }
 
