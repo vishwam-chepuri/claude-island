@@ -69,11 +69,23 @@ func runReplay(_ path: String) async -> Int32 {
 /// file of a running app — or unplugging something. Naming a display that is not
 /// attached is a legitimate use of it, not a mistake: the fallback is the
 /// interesting half of this feature and this is how you watch it happen.
+@MainActor
 func probeScreens(override: String?) -> Int32 {
+    // Without this the probe reports geometry the app would never use.
+    // `visibleFrame` only accounts for the menu bar and Dock once AppKit has
+    // connected to the window server, and until then it equals `frame` — so a
+    // probe that skipped this printed a pill flush under the top edge while the
+    // running app drew it a menu bar lower. A diagnostic that disagrees with
+    // the thing it is diagnosing is worse than no diagnostic: it sent this
+    // investigation looking for a bug in the drawing code.
+    _ = NSApplication.shared
+
     for screen in NSScreen.screens {
         let g = NotchGeometryResolver.resolve(for: screen)
         print("\(screen.localizedName)")
         print("  frame        \(screen.frame)")
+        print("  visibleFrame \(screen.visibleFrame)")
+        print("  menu bar     \(screen.frame.maxY - screen.visibleFrame.maxY)pt reserved at top")
         print("  safeArea.top \(screen.safeAreaInsets.top)")
         print("  auxLeft      \(screen.auxiliaryTopLeftArea.map(String.init(describing:)) ?? "nil")")
         print(

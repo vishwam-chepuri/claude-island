@@ -1548,6 +1548,161 @@ enum SelfTest {
         await answerBlockFitChecks(&checks, model: model)
         await branchFitChecks(&checks, model: model)
         await titleFitChecks(&checks, model: model)
+        await notchlessFitChecks(&checks, model: model)
+    }
+
+    /// The same fit budget, on a display with no cutout.
+    ///
+    /// Every other check here runs against whatever screen the test happens to
+    /// be on, which on the machine this was written on has a notch — so the
+    /// notchless card was measured by nothing at all until the HUD learned to
+    /// draw on a second display and someone looked at it. The two paths differ
+    /// in exactly one term: with no cutout there is no camera band to route
+    /// around, so the header's height stops being the band's height and starts
+    /// being a line of text.
+    ///
+    /// Geometry is synthetic rather than borrowed from an attached display: the
+    /// case has to be measurable on notched hardware, or it goes back to being
+    /// covered only when someone happens to plug in the right monitor.
+    private static func notchlessFitChecks(
+        _ checks: inout [Check], model: IslandViewModel
+    ) async {
+        let restore = model.geometry
+        defer { model.setGeometry(restore) }
+
+        let pill = CGRect(
+            x: 1180, y: 1408,
+            width: NotchGeometryResolver.pillSize.width,
+            height: NotchGeometryResolver.pillSize.height)
+        model.setGeometry(
+            NotchGeometry(
+                islandRect: pill,
+                panelRect: CGRect(
+                    x: pill.midX - NotchGeometryResolver.panelWidth / 2,
+                    y: pill.maxY - NotchGeometryResolver.panelHeight,
+                    width: NotchGeometryResolver.panelWidth,
+                    height: NotchGeometryResolver.panelHeight),
+                hasNotch: false,
+                screenID: 0))
+
+        var busy = session(
+            "notchless",
+            state: .running(
+                ToolActivity(
+                    kind: .bash, toolName: "Bash", target: "swift build", startedAt: Date())))
+        busy.gitBranch = "main"
+        busy.model = "claude-opus-5"
+        busy.effort = "xhigh"
+        busy.tokens.contextTokens = 131_100
+        busy.linesAdded = 2_241
+        busy.linesRemoved = 146
+        // A trail and a task block, matching the fixture the notched checks
+        // use. A session with no tools at all is not a state a running one
+        // reaches, and measuring that instead would test an empty-trail edge
+        // case rather than the notchless header this exists for.
+        busy.recentTools =
+            [
+                ToolActivity(
+                    kind: .bash, toolName: "Bash", target: "swift build", startedAt: Date())
+            ]
+            + (0..<5).map {
+                ToolActivity(
+                    kind: .read, toolName: "Read", target: "Sources/Long/File\($0).swift",
+                    startedAt: Date(), endedAt: Date())
+            }
+        busy.tasks = TaskProgress(items: [
+            TaskItem(id: "1", subject: "first", status: .completed),
+            TaskItem(id: "2", subject: "a reasonably long in-flight task", status: .inProgress),
+        ])
+
+        for (mode, label) in [(IslandMode.peek, "peek"), (IslandMode.expanded, "expanded")] {
+            model.apply(HUDSnapshot(primary: busy))
+            model.forcedMode = mode
+            let size = model.shapeSize
+            let host = NSHostingView(
+                rootView: Group {
+                    if mode == .peek {
+                        PeekContent(session: busy, model: model)
+                    } else {
+                        ExpandedContent(session: busy, model: model)
+                    }
+                })
+            host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            let needed = host.fittingSize.height
+            checks.append(
+                Check(
+                    name: "the notchless \(label) card is never shorter than its contents",
+                    passed: needed <= size.height + 0.5,
+                    detail: "content=\(needed) card=\(size.height)"))
+        }
+
+        // The header is the row the card actually draws at its top, so the
+        // budget reserved for it has to be that row's height. When a cutout
+        // exists the two coincide and nothing notices; with no cutout the band
+        // is zero and only this says so.
+        checks.append(
+            Check(
+                name: "the notchless card budgets a full header row, not a zero-height band",
+                passed: model.bodyTopInset >= model.rowHeight - 0.5,
+                detail: "inset=\(model.bodyTopInset) headerRow=\(model.rowHeight) "
+                    + "band=\(model.notchBandHeight)"))
+
+        model.forcedMode = nil
+        model.apply(HUDSnapshot())
+
+        placementChecks(&checks)
+    }
+
+    /// Where the island meets the top of each attached display.
+    ///
+    /// Needs real screens — `resolve(for:)` reads `visibleFrame`, which is the
+    /// whole point: macOS reserves a menu-bar strip on every display when
+    /// "Displays have separate Spaces" is on, and subtracting it on a display
+    /// that only draws that menu bar while it is active left the pill floating
+    /// in bare desktop 36pt down. Reported as skipped rather than faked on a
+    /// one-display machine, because a synthetic `NSScreen` cannot report a
+    /// reserved strip and a check that cannot run must not look like one that
+    /// passed.
+    private static func placementChecks(_ checks: inout [Check]) {
+        let screens = NSScreen.screens
+        guard let menuBarID = NotchGeometryResolver.menuBarScreen()
+            .map({ NotchGeometryResolver.displayID(of: $0) })
+        else { return }
+
+        for screen in screens {
+            let g = NotchGeometryResolver.resolve(for: screen)
+            let name = screen.localizedName
+            if g.hasNotch {
+                checks.append(
+                    Check(
+                        name: "the cutout on \(name) is flush with the top edge",
+                        passed: abs(g.islandRect.maxY - screen.frame.maxY) < 0.5,
+                        detail: "island.maxY=\(g.islandRect.maxY) screen=\(screen.frame.maxY)"))
+            } else if NotchGeometryResolver.displayID(of: screen) == menuBarID {
+                let reserved = screen.frame.maxY - screen.visibleFrame.maxY
+                checks.append(
+                    Check(
+                        name: "the pill on the menu bar's display clears the menu bar",
+                        passed: g.islandRect.maxY <= screen.frame.maxY - reserved + 0.5,
+                        detail: "island.maxY=\(g.islandRect.maxY) "
+                            + "menuBarBottom=\(screen.frame.maxY - reserved)"))
+            } else {
+                checks.append(
+                    Check(
+                        name: "the pill on \(name) is pinned to the top edge",
+                        passed: abs(g.islandRect.maxY - screen.frame.maxY) < 0.5,
+                        detail: "island.maxY=\(g.islandRect.maxY) screen=\(screen.frame.maxY) "
+                            + "reserved=\(screen.frame.maxY - screen.visibleFrame.maxY)pt"))
+            }
+        }
+
+        if screens.count < 2 {
+            checks.append(
+                Check(
+                    name: "a second display's pill is pinned to the top edge",
+                    skipped: "only one display attached"))
+        }
     }
 
     /// The answer block's height is a constant, not a measurement, so the only

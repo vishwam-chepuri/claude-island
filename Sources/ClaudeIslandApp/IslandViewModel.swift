@@ -276,10 +276,18 @@ final class IslandViewModel {
     /// cutout does.
     static let compactLip: CGFloat = 1
 
-    /// Extra rows in peek and expanded start below the camera — and below the
-    /// lip the header row carries, or the card would budget for a header a
-    /// point shorter than the one it draws and lose that point off the trail.
-    var bodyTopInset: CGFloat { notchBandHeight + Self.compactLip }
+    /// Extra rows in peek and expanded start below the header row.
+    ///
+    /// The header's height, not the camera band's. The two are the same number
+    /// on notched hardware — the band is 38pt and a line of text is 30 — which
+    /// is why budgeting the band was wrong for a year without showing it. On a
+    /// display with no cutout the band is zero while the header is still a full
+    /// line, so the card budgeted 1pt for a 31pt row, came out 30pt short of
+    /// its own contents, and — because the content is centred in the shape and
+    /// then clipped to it — lost half a row off the top and half off the
+    /// bottom. That is only reachable since the HUD learned to draw on a second
+    /// display; `notchlessFitChecks` is what now measures it on any hardware.
+    var bodyTopInset: CGFloat { rowHeight }
 
     // MARK: - Flanking widths
     //

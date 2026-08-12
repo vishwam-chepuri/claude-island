@@ -134,12 +134,29 @@ enum NotchGeometryResolver {
                 height: height)
             hasNotch = true
         } else {
-            // Notchless: a pill centred under the menu bar, same visual
-            // language. Sits just below the menu bar rather than under it.
-            let menuBarHeight = frame.maxY - screen.visibleFrame.maxY
+            // Notchless: a pill centred at the top, same visual language.
+            //
+            // How far down it hangs depends on whether this display owns the
+            // menu bar. On the one that does, the menu bar is always drawn, so
+            // the pill sits below it — overlapping it would cover live content.
+            //
+            // On any other display it goes flush against the top edge, where
+            // the notch sits on the built-in. macOS reserves a menu-bar strip
+            // on every display when "Displays have separate Spaces" is on (the
+            // default) — 30pt on the monitor this was found with — but only
+            // *draws* that menu bar while the display is active. Subtracting it
+            // unconditionally left the island floating 36pt below the top with
+            // bare desktop above it, which reads as a misplacement rather than
+            // as a cutout. In the rare moment that display is active and does
+            // draw its menu bar, the island sits in the menu bar band exactly
+            // as the notch does on the built-in, and it is centred where the
+            // bar carries nothing.
+            let ownsMenuBar =
+                menuBarScreen().map { NotchGeometryResolver.displayID(of: $0) == displayID } ?? true
+            let topInset = ownsMenuBar ? (frame.maxY - screen.visibleFrame.maxY) + 6 : 0
             island = CGRect(
                 x: frame.midX - pillSize.width / 2,
-                y: frame.maxY - menuBarHeight - pillSize.height - 6,
+                y: frame.maxY - topInset - pillSize.height,
                 width: pillSize.width,
                 height: pillSize.height)
             hasNotch = false
