@@ -129,23 +129,32 @@ sent*, and at app-level granularity that name is the whole promise being made.
 Clicking it dismisses the expanded card. A card left floating over the app you
 just jumped to is in the way, with the thing you wanted to look at underneath it.
 
-Four states in total — one enabled, three not — distinguished with no extra
-data by asking which ancestors are still alive:
+Four states, distinguished with no extra data by asking which ancestors are
+still alive:
 
 | Condition | Label |
 |---|---|
 | An ancestor resolves to a `.regular` app | `Reveal in <App>`, enabled |
 | Some ancestors alive, none `.regular` | `Background job — no terminal`, disabled |
 | No ancestor alive | `Terminal has quit`, disabled |
-| No ancestry at all | hidden |
+| No ancestry at all | `Terminal unknown`, disabled |
+
+**The row is always rendered, never hidden**, and that is a hard requirement
+rather than a style choice. The card is sized across *all* sessions so that
+browsing the switcher never resizes it — `expandedChromeHeight` is a constant,
+the permission answer block already reserves its height for exactly this
+reason, and two `--selftest` checks guard the invariant. A row present for one
+session and absent for another would reflow the whole HUD on every click, which
+is the bug those checks exist to catch. Hence a fourth label instead of a
+hidden state.
 
 Disabled-with-a-reason rather than hidden, matching how the card already refuses
 to answer two simultaneous prompts and says why. A hidden control and a broken
 one look identical; a labelled one does not.
 
-The third row is the replay and synthetic-event case, not a state a user reaches
-— hooks bake an absolute path to a binary that is replaced wholesale on upgrade,
-so a stale client that omits pids is not reachable in practice.
+The fourth row is the replay and synthetic-event case, not a state a user
+reaches — hooks bake an absolute path to a binary that is replaced wholesale on
+upgrade, so a stale client that omits pids is not reachable in practice.
 
 This falls out correctly for tmux and SSH without special-casing either: a tmux
 server is a daemon with ppid 1, and an SSH session's ancestry is on the remote
