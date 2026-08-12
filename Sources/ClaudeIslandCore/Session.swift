@@ -226,7 +226,14 @@ public enum SessionReducer {
                 // idle reading — doing so lost which tool needed approval,
                 // observed once the HUD started ringing a sound cue per
                 // state and the same prompt rang twice under two labels.
-                if !isPendingUserDecision(s) {
+                //
+                // A finished turn is the same story. The nudge arrives about a
+                // minute after Stop and reports the one fact `done` was set by
+                // a real event to report, so overwriting it changed the cue
+                // from `done` to `waiting` and rang a second time for a single
+                // finish — every turn the user did not answer straight away,
+                // times however many sessions were running.
+                if !isPendingUserDecision(s), s.state != .done {
                     s.state = .idle(waitingOnUser: true)
                 }
             case .other:

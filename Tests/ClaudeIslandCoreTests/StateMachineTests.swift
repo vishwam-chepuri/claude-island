@@ -17,6 +17,27 @@ func env(
         message: message, receivedAt: base.addingTimeInterval(offset))
 }
 
+/// The cues a run of events would actually ring, deduplicated on the edge the
+/// way `AppController.playSoundCues` does it: a cue rings when it differs from
+/// the one the session was last observed in, so staying in a cue is silent and
+/// leaving and re-entering it is not.
+///
+/// Every sequence here starts from a cue-less event, matching the app's other
+/// rule — a session's first appearance seeds the tracking silently rather than
+/// ringing for state it was already in.
+func rungCues(_ events: [HookEnvelope]) -> [SoundCue] {
+    var session: Session?
+    var last: SoundCue?
+    var rung: [SoundCue] = []
+    for event in events {
+        session = SessionReducer.apply(event, to: session).session
+        let cue = session?.state.soundCue
+        if let cue, cue != last { rung.append(cue) }
+        last = cue
+    }
+    return rung
+}
+
 func registerStateMachineTests() {
     suite("Session state machine") {
 
@@ -199,6 +220,55 @@ func registerStateMachineTests() {
                 env(.notification, message: "Claude is waiting for your input", at: 1), to: s
             ).session
             await expectEqual(s.state, .idle(waitingOnUser: true))
+        }
+
+        // A turn is one Stop, however many tools it took to get there: the done
+        // cue is set by Stop and SessionEnd alone, and a tool starting or
+        // finishing lands on `running`/`thinking`, which carry no cue at all.
+        test("Tool calls ring nothing; the turn they belong to rings once") {
+            var turn = [env(.userPromptSubmit)]
+            for i in 0..<20 {
+                let at = TimeInterval(i * 2 + 1)
+                turn.append(env(.preToolUse, tool: "Read", at: at))
+                turn.append(env(.postToolUse, tool: "Read", at: at + 1))
+            }
+            await expectEqual(rungCues(turn), [], "a tool call rang on its own")
+
+            turn.append(env(.stop, at: 100))
+            await expectEqual(rungCues(turn), [.done])
+        }
+
+        // The nudge fires about a minute after a turn ends and says the session
+        // is waiting for input — which `done` already said, from a real event
+        // rather than matched prose. Left to overwrite it, every finished turn
+        // the user did not answer straight away rang twice under two labels:
+        // the finish, then a second chime a minute later carrying no new fact.
+        test("The idle nudge after a finished turn does not ring a second time") {
+            let turn = [
+                env(.userPromptSubmit),
+                env(.preToolUse, tool: "Read", at: 1),
+                env(.postToolUse, tool: "Read", at: 2),
+                env(.stop, at: 3),
+                env(.notification, message: "Claude is waiting for your input", at: 63),
+            ]
+            await expectEqual(rungCues(turn), [.done], "the idle nudge re-rang a finished turn")
+
+            let s = SessionReducer.apply(turn[4], to: SessionReducer.apply(turn[3], to: nil).session)
+                .session
+            await expectEqual(
+                s.state, .done, "a nudge downgraded a finished turn to a generic idle reading")
+        }
+
+        // An interrupted turn fires no Stop at all, so the nudge is the only
+        // thing that will ever settle the session — the case the waiting cue
+        // exists for, and the one the guard above must not take away.
+        test("The idle nudge still rings for a turn that never reported finishing") {
+            let interrupted = [
+                env(.userPromptSubmit),
+                env(.preToolUse, tool: "Bash", at: 1),
+                env(.notification, message: "Claude is waiting for your input", at: 61),
+            ]
+            await expectEqual(rungCues(interrupted), [.waiting])
         }
 
         test("SessionEnd schedules removal after the fade") {
