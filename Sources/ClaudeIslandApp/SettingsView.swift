@@ -591,6 +591,15 @@ struct SettingsView: View {
         Form {
             Section {
                 Toggle("Write a debug log", isOn: $store.logging)
+                Text(
+                    "Records what the HUD is doing to ~/.claude-island/log, capped at "
+                        + "1 MiB. Turn it on, reproduce the problem, then attach the file "
+                        + "to a bug report — it names project directories, never "
+                        + "conversation content."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 Picker("Pin the HUD to", selection: forcedModeBinding) {
                     Text("Off — follow hover and click").tag("")
                     Text("Compact").tag("compact")

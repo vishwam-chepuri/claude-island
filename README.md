@@ -138,6 +138,33 @@ something you have to scroll to find. ⌘Q works too, while the window has focus
 The HUD itself is not an entry point: it is unclickable whenever no session is
 running, which is most of the time.
 
+## Something's wrong
+
+Nothing here phones home, so a bug report has to carry its own evidence.
+
+Start with the two things that explain most of it: **Hooks** in Settings should
+read installed, and a Claude Code session started before the hooks were wired up
+keeps running without them until it restarts. A HUD that never appears at all is
+usually one of those.
+
+Past that, run the self-test — with the screen unlocked, for the reason given
+under [Verification](#verification):
+
+```bash
+/Applications/ClaudeIsland.app/Contents/MacOS/ClaudeIsland --selftest
+```
+
+It covers focus, click-through, geometry and settings round-tripping, and names
+the culprit where it can, including [another notch app sitting above
+ours](#known-conflict-other-notch-huds).
+
+Then turn on **Write a debug log** under Advanced, reproduce the problem, and
+attach `~/.claude-island/log` — **Reveal Support Folder**, at the foot of the
+same pane, opens the directory holding it. That log is where dropped hook
+payloads, sessions that parked in the wrong tier, and displays that went missing
+leave a trace. It records project directory names but never conversation
+content, and is capped at 1 MiB with a single rotation.
+
 ## Uninstall
 
 There's no receipt system, so remove things in this order — reversing it (drag
