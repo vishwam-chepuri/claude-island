@@ -332,40 +332,67 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     /// Whether a cue is allowed to ring right now, for this specific session.
     ///
-    /// Resolves the session's owner and asks the workspace which app is in front
-    /// at ring time rather than caching either: this runs a handful of times a
-    /// minute at worst, on the edge into a state, and a cached answer is one more
-    /// thing that can be stale at the exact moment it decides whether you hear
-    /// something.
+    /// Both answers are resolved at ring time rather than cached: this runs a
+    /// handful of times a minute at worst, on the edge into a state, and a
+    /// cached answer is one more thing that can be stale at the exact moment it
+    /// decides whether you hear something.
+    ///
+    /// Both are also `@autoclosure` arguments, so neither is resolved until the
+    /// decision below actually needs it. That is not tidiness: the ancestry walk
+    /// is up to eight `kill` calls plus eight `NSRunningApplication` lookups on
+    /// the main thread, and `muteWhileTerminalFrontmost` is off by default — so
+    /// eager resolution meant a full process-table walk on every state edge of
+    /// every session on a default install, thrown away one line later.
     private func rings(_ cue: SoundCue, for session: Session) -> Bool {
-        let owner: String? =
-            if case .owner(let app) = SessionOwner.resolve(session.ownerPIDs) {
-                app.bundleID
-            } else {
-                nil
-            }
-        return Self.rings(
+        Self.rings(
             cue, under: settings.current,
             frontmost: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-            owner: owner)
+            owner: Self.ownerBundleID(of: session))
     }
 
-    /// Whether a cue is allowed to ring right now.
+    /// This session's own app, when its process ancestry resolves to one.
+    ///
+    /// Nil covers all three of the other outcomes — a background job, a chain
+    /// that has quit, no ancestry at all — because the mute treats them
+    /// identically: it has no app to compare against and falls back to the
+    /// terminal-list guess.
+    private static func ownerBundleID(of session: Session) -> String? {
+        guard case .owner(let app) = SessionOwner.resolve(session.ownerPIDs) else { return nil }
+        return app.bundleID
+    }
+
+    /// The decision itself, with no live state in it.
+    ///
+    /// The global mute outranks the per-cue switch, so one click silences
+    /// everything without editing three switches that then have to be put back.
+    /// All of it lives here rather than inside `play` so the preview button can
+    /// ignore the lot — see `previewSound`.
+    ///
+    /// The frontmost check comes last because it is the only one that costs
+    /// anything, and both of its inputs are autoclosures so that ordering is a
+    /// real saving rather than a reading order: a cue the switches above already
+    /// silenced, or an install that never turned the mute on, asks the system
+    /// nothing at all. Static, and handed both ids rather than reading
+    /// `NSWorkspace` and the process table itself, so --selftest can drive every
+    /// combination — including "a terminal is in front" — without depending on
+    /// which app happens to be frontmost while it runs.
     ///
     /// `owner` is this session's own app, when the process ancestry resolved to
     /// one. Given it, the frontmost check stops being a guess: mute exactly
     /// when you are looking at *this* session's terminal, rather than whenever
     /// any terminal happens to be in front. Without it — a background job, a
-    /// tmux server, an SSH session — it falls back to the old heuristic, which
-    /// is the best available answer for a session that has no app at all.
+    /// tmux server, an SSH session — it falls back to the old heuristic (see
+    /// `TerminalApps`), which is the best available answer for a session that
+    /// has no app at all.
     static func rings(
-        _ cue: SoundCue, under settings: IslandSettings, frontmost bundleID: String?,
-        owner ownerBundleID: String? = nil
+        _ cue: SoundCue, under settings: IslandSettings,
+        frontmost bundleID: @autoclosure () -> String?,
+        owner ownerBundleID: @autoclosure () -> String? = nil
     ) -> Bool {
         guard !settings.doNotDisturb, settings[cue].enabled else { return false }
         guard settings.muteWhileTerminalFrontmost else { return true }
-        if let owner = ownerBundleID { return bundleID != owner }
-        return !TerminalApps.matches(bundleID: bundleID)
+        if let owner = ownerBundleID() { return bundleID() != owner }
+        return !TerminalApps.matches(bundleID: bundleID())
     }
 
     /// Rings a cue with whatever sound it is set to.
