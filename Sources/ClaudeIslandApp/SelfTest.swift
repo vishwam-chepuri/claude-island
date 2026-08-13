@@ -1553,8 +1553,8 @@ enum SelfTest {
             TaskItem(id: "2", subject: "a reasonably long in-flight task", status: .inProgress),
         ])
 
-        // Five sessions, so the switcher is full and the overflow line shows,
-        // and a 5-hour window so the tallest chrome is the one measured.
+        // Five sessions, so the switcher's viewport is full and one row sits
+        // below the fold, and a 5-hour window so the tallest chrome is measured.
         let others = (0..<4).map { session("other\($0)", state: .thinking) }
         model.apply(
             HUDSnapshot(
@@ -1581,9 +1581,38 @@ enum SelfTest {
                 detail: "card=\(size.height) panel=\(NotchGeometryResolver.panelHeight)"))
         checks.append(
             Check(
-                name: "sessions beyond the switcher's rows are counted, not dropped",
+                name: "sessions beyond the switcher's rows are listed, not dropped",
                 passed: model.sessionOverflowCount == 1,
-                detail: "overflow=\(model.sessionOverflowCount) of \(model.allSessions.count)"))
+                detail: "below the fold=\(model.sessionOverflowCount) of \(model.allSessions.count)"))
+
+        // The viewport is whole rows plus a fixed sliver, so it only lands where
+        // it means to if the budgeted row height matches the row a session
+        // actually draws as. Off by a point and the sliver is a different depth
+        // than the fade drawn over it, four rows down.
+        let rowHost = NSHostingView(
+            rootView: SessionRow(candidate: busy, isShown: true, onSelect: {})
+                .frame(width: model.cardContentWidth))
+        let rowHeight = rowHost.fittingSize.height
+        checks.append(
+            Check(
+                name: "a session row draws at the height the switcher budgets for it",
+                passed: abs(rowHeight - IslandViewModel.sessionRowHeight) <= 0.5,
+                detail: "row=\(rowHeight) budgeted=\(IslandViewModel.sessionRowHeight)"))
+
+        // What scrolling is for: the ninth session costs the card nothing, so a
+        // busy machine does not push the trail off the bottom of the panel.
+        model.apply(
+            HUDSnapshot(
+                primary: busy,
+                others: others + (0..<4).map { session("late\($0)", state: .thinking) },
+                rateLimit: RateLimitWindow(
+                    usedPercentage: 74, resetsAt: Date().addingTimeInterval(4_320))))
+        let withMore = model.shapeSize.height
+        checks.append(
+            Check(
+                name: "sessions past the fourth scroll instead of growing the card",
+                passed: abs(withMore - size.height) <= 0.5,
+                detail: "9 sessions=\(withMore) 5 sessions=\(size.height)"))
 
         model.forcedMode = nil
         model.apply(HUDSnapshot())

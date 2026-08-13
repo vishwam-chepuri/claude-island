@@ -227,9 +227,16 @@ final class IslandViewModel {
     // at once. It undercounted (a tool row is ~18pt, not the 15 it assumed, and
     // it omitted the "recent" label entirely), so the card drew shorter than its
     // own contents and the last row was cut in half.
+    /// How many session rows are in view at rest. More than this still render —
+    /// the switcher scrolls — this only sets the height of its viewport.
     static let maxSessionRows = 4
-    static let sessionRowHeight: CGFloat = 22
-    static let sessionOverflowRowHeight: CGFloat = 14
+    /// Measured, not chosen: the viewport is a multiple of this, so a value that
+    /// disagrees with the row a session draws as puts the list's bottom edge
+    /// through a row instead of between two. Guarded by a fit check.
+    static let sessionRowHeight: CGFloat = 23
+    /// How much of the next session shows below the fourth row, and the depth of
+    /// the fade that covers it.
+    static let sessionPeekHeight: CGFloat = 9
     static let nowRowTopPadding: CGFloat = 9
     static let nowRowHeight: CGFloat = 28
     static let trailTopPadding: CGFloat = 7
@@ -372,8 +379,21 @@ final class IslandViewModel {
         }
     }
 
-    /// Sessions the switcher has no room to list.
+    /// Sessions below the switcher's fold — listed, but reached by scrolling.
     var sessionOverflowCount: Int { max(0, allSessions.count - Self.maxSessionRows) }
+
+    /// The switcher's viewport: whole rows, plus a sliver of the next one when
+    /// there is a next one.
+    ///
+    /// The sliver is the whole affordance. A viewport that ends exactly on a row
+    /// boundary is indistinguishable from a list that ends there, and a fade
+    /// over empty space says nothing — so the fifth session shows a few points
+    /// of itself under the fade, which is the one thing that cannot be read as
+    /// "that was all of them".
+    var sessionListHeight: CGFloat {
+        CGFloat(min(allSessions.count, Self.maxSessionRows)) * Self.sessionRowHeight
+            + (sessionOverflowCount > 0 ? Self.sessionPeekHeight : 0)
+    }
 
     /// Height reserved for the trail, measured across all sessions so browsing
     /// between them cannot resize the card. Zero until some session has
@@ -650,9 +670,6 @@ final class IslandViewModel {
         case .expanded:
             // Every term here is measured across all sessions, so switching
             // between them never changes the card's size.
-            let rows = CGFloat(min(allSessions.count, Self.maxSessionRows))
-            let overflow: CGFloat =
-                sessionOverflowCount > 0 ? Self.sessionOverflowRowHeight : 0
             let taskBlock: CGFloat = anyTasks ? (34 + (anyCurrentTask ? 18 : 0)) : 0
             let chipBlock: CGFloat = anyExpandedChips ? Self.expandedChipRowHeight : 0
             let usageBlock: CGFloat = rateLimit != nil ? Self.usageWindowHeight : 0
@@ -660,7 +677,7 @@ final class IslandViewModel {
             return CGSize(
                 width: shapeWidth,
                 height: bodyTopInset + Self.expandedChromeHeight + usageBlock + answerBlock
-                    + rows * Self.sessionRowHeight + overflow + chipBlock + taskBlock
+                    + sessionListHeight + chipBlock + taskBlock
                     + Self.nowRowTopPadding + Self.nowRowHeight
                     + Self.trailTopPadding + trailBudget)
         }
