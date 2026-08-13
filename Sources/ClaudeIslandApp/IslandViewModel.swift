@@ -755,19 +755,30 @@ final class IslandViewModel {
         ownerCache[session.id] ?? .unknown
     }
 
+    /// How a session's ancestry becomes one of the row's four states.
+    ///
+    /// `SessionOwner.resolve` in the app: the live process table and running
+    /// application list. Settable — not hardcoded — because the Appearance
+    /// preview has no real ancestry to resolve and would otherwise advertise
+    /// "terminal unknown" on the one surface a user inspects the card on. It has
+    /// to be a *property* rather than only an argument to `refreshOwners`, since
+    /// the 1 Hz ticker refreshes on its own and would overwrite anything a
+    /// caller passed a moment earlier.
+    var ownerResolver: ([Int32]) -> OwnerResolution.Outcome = SessionOwner.resolve
+
     /// Recompute owners for every tracked session. Call on snapshot change and
     /// on tick, both gated on the card being open.
     ///
-    /// `resolve` defaults to `SessionOwner.resolve`, which reads the live
-    /// process table and running-application list. It is a parameter — not a
-    /// hardcoded call — so a self-test can drive deterministic owner states
-    /// without the result depending on whatever happens to be running on the
-    /// machine the check executes on, the same seam `AppController.rings` uses
-    /// for the frontmost bundle id.
+    /// `resolve` overrides `ownerResolver` for one pass, which is the seam
+    /// --selftest drives deterministic owner states through — the same trick
+    /// `AppController.rings` uses for the frontmost bundle id, so a check's
+    /// result never depends on what happens to be running on the machine it
+    /// executes on.
     func refreshOwners(
-        resolve: ([Int32]) -> OwnerResolution.Outcome = SessionOwner.resolve
+        resolve: (([Int32]) -> OwnerResolution.Outcome)? = nil
     ) {
         guard mode == .expanded else { return }
+        let resolve = resolve ?? ownerResolver
         var next: [String: OwnerResolution.Outcome] = [:]
         for session in allSessions {
             next[session.id] = resolve(session.ownerPIDs)

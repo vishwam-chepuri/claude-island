@@ -75,8 +75,21 @@ final class IslandPreviewSource {
         // exactly as it does on screen, because it is the same resolution.
         model.setGeometry(Self.geometry(preferredDisplay: preferredDisplay))
         model.forcedMode = tier.mode
+        // The expanded card's reveal row asks who owns each session, and these
+        // sessions were never launched by anything — resolved for real they all
+        // come back `.unknown`, and the preview would permanently advertise
+        // "terminal unknown", the one state the spec says a real user does not
+        // reach. Pin a plausible owner instead. A property rather than an
+        // argument to `refreshOwners` because the ticker refreshes on its own
+        // once a second and would put the real answer back.
+        model.ownerResolver = { _ in .owner(Self.previewOwner) }
         model.apply(IslandPreviewFixtures.snapshot(for: tier))
     }
+
+    /// The app the preview claims its invented sessions are running in.
+    /// Terminal, because it is on every Mac and the name is the entire label.
+    private static let previewOwner = OwnerResolution.AppInfo(
+        pid: 501, bundleID: "com.apple.Terminal", name: "Terminal", isRegular: true)
 
     /// Stops the ticker the fixtures start.
     ///

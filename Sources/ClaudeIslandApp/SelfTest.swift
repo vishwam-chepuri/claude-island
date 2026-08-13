@@ -723,6 +723,22 @@ enum SelfTest {
                 detail: "live=\(live.snapshot.primary?.id ?? "nil") "
                     + "preview=\(preview.model.allSessions.map(\.id))"))
 
+        // The preview's sessions have no ancestry to resolve — nothing here was
+        // launched by anything — so resolved for real the card would offer
+        // "terminal unknown" on the one surface where someone looks the card
+        // over before using it. Asserted for every session, not just the shown
+        // one, because the switcher can select any of the three.
+        let previewOwners = preview.model.allSessions.map { preview.model.owner(for: $0) }
+        let named = previewOwners.compactMap { outcome -> String? in
+            guard case .owner(let app) = outcome else { return nil }
+            return app.name
+        }
+        checks.append(
+            Check(
+                name: "the preview's card offers a reveal rather than an unknown terminal",
+                passed: named.count == previewOwners.count && !named.isEmpty,
+                detail: "\(previewOwners.count) sessions, owners: \(named)"))
+
         // Leaves nothing ticking: every fixture holds a live session, so the
         // preview scheduled a 1 Hz timer the moment it was posed.
         preview.shutdown()
