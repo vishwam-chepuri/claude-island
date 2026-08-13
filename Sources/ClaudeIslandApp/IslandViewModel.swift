@@ -206,6 +206,12 @@ final class IslandViewModel {
     /// The command area is measured on top of this — see `answerBlockHeight`.
     static let answerBlockChrome: CGFloat = 7 + 26 + 6
 
+    /// The stand-in the card draws when the prompt belongs to another session:
+    /// one 8.5pt line naming that fact, and the gap below it. Far shorter than
+    /// the block itself, which is why the card is not sized to a control it is
+    /// not currently offering.
+    static let answerNoticeHeight: CGFloat = 11 + 7
+
     static let commandLineHeight: CGFloat = 12
     /// The font the answer block draws the command in. Measuring with anything
     /// else under-measures and the last line gets clipped.
@@ -225,21 +231,31 @@ final class IslandViewModel {
     static let usageWindowTopPadding: CGFloat = 5
     static let usageWindowBottomPadding: CGFloat = 6
     static let usageWindowHeight: CGFloat =
-        usageWindowTopPadding + 20 + usageWindowBottomPadding
+        usageWindowTopPadding + 21 + usageWindowBottomPadding
     // MARK: Expanded card metrics
     //
-    // A budget, not a contract. The trail at the foot of the card is the one
-    // flexible region — it absorbs whatever height is left over and scrolls
-    // within it — so an error here changes how many rows are visible at rest
-    // and can no longer slice a row against the card's clip shape.
+    // A budget, and now close to a contract: the card is drawn at the height of
+    // the session on screen, so there is no longer a reserve of unused space to
+    // absorb a term that was tallied a few points short. Every number here is
+    // the height `NSHostingView.fittingSize` reports for that block — see the
+    // fit checks in `SelfTest`, which host the real views and are the only thing
+    // that can catch a mis-tally, since any arithmetic version of the check
+    // shares the tally's premise.
     //
     // What these replace was a single opaque `132` covering all of the chrome
     // at once. It undercounted (a tool row is ~18pt, not the 15 it assumed, and
     // it omitted the "recent" label entirely), so the card drew shorter than its
     // own contents and the last row was cut in half.
+    /// How many session rows are in view at rest. More than this still render —
+    /// the switcher scrolls — this only sets the height of its viewport.
     static let maxSessionRows = 4
-    static let sessionRowHeight: CGFloat = 22
-    static let sessionOverflowRowHeight: CGFloat = 14
+    /// Measured, not chosen: the viewport is a multiple of this, so a value that
+    /// disagrees with the row a session draws as puts the list's bottom edge
+    /// through a row instead of between two. Guarded by a fit check.
+    static let sessionRowHeight: CGFloat = 23
+    /// How much of the next session shows below the fourth row, and the depth of
+    /// the fade that covers it.
+    static let sessionPeekHeight: CGFloat = 9
     static let nowRowTopPadding: CGFloat = 9
     static let nowRowHeight: CGFloat = 28
     static let trailTopPadding: CGFloat = 7
@@ -255,13 +271,13 @@ final class IslandViewModel {
         bodyTopPadding  // 7
         + 12  // "sessions" label row plus its 3pt bottom padding
         + 15  // divider with 7pt above and below
-        + 12  // meta line
+        + 13  // meta line
         + revealRowHeight + 5  // reveal row, plus its 5pt top padding
-        + 27  // context label, its 7pt top padding, and the meter
+        + 28  // context label, its 7pt top padding, and the meter
         + bodyBottomPadding  // 13
     // The chip row (`chipRowHeight` + 4 for the taller emphasised figure) and
-    // the 5-hour meter are both conditional, so they are added in `shapeSize`
-    // rather than tallied here.
+    // the 5-hour meter are both conditional, so they are added in
+    // `expandedHeight` rather than tallied here.
     static let expandedChipRowHeight: CGFloat = chipRowHeight + 4
     /// Breathing room between content and the camera cutout.
     static let notchPadding: CGFloat = 12
@@ -370,11 +386,15 @@ final class IslandViewModel {
 
     // MARK: - Stable sizing for the open card
     //
-    // The expanded card must not resize as you browse. Sizing it from the
-    // *selected* session made its width follow that session's name length and
-    // its height follow that session's tool count, so every click reflowed the
-    // whole HUD. Everything below is measured across ALL sessions, so the card
-    // is big enough for any of them and only changes when the session set does.
+    // The expanded card must not change *width* as you browse. Sizing the width
+    // from the selected session made it follow that session's name length, and
+    // because the shape is centred on the camera both edges moved on every
+    // click — the whole HUD reflowed sideways. So every width below is measured
+    // across ALL sessions and only changes when the session set does.
+    //
+    // Height is the exception, and `expandedHeight` says why: measured across
+    // all sessions it left the card padded out with space for blocks the shown
+    // session does not have.
 
     /// Widest flank any session would need, so the header never reflows.
     private var widestFlank: CGFloat {
@@ -383,54 +403,62 @@ final class IslandViewModel {
         }
     }
 
-    /// Sessions the switcher has no room to list.
+    /// Sessions below the switcher's fold — listed, but reached by scrolling.
     var sessionOverflowCount: Int { max(0, allSessions.count - Self.maxSessionRows) }
 
-    /// Height reserved for the trail, measured across all sessions so browsing
-    /// between them cannot resize the card. Zero until some session has
-    /// actually finished a call.
-    private var trailBudget: CGFloat {
-        let rows = min(maxTrailRows, Self.visibleTrailRows)
+    /// The switcher's viewport: whole rows, plus a sliver of the next one when
+    /// there is a next one.
+    ///
+    /// The sliver is the whole affordance. A viewport that ends exactly on a row
+    /// boundary is indistinguishable from a list that ends there, and a fade
+    /// over empty space says nothing — so the fifth session shows a few points
+    /// of itself under the fade, which is the one thing that cannot be read as
+    /// "that was all of them".
+    var sessionListHeight: CGFloat {
+        CGFloat(min(allSessions.count, Self.maxSessionRows)) * Self.sessionRowHeight
+            + (sessionOverflowCount > 0 ? Self.sessionPeekHeight : 0)
+    }
+
+    /// Height the trail needs: its label plus the rows shown at rest. Zero until
+    /// some session has actually finished a call, so a session on its first tool
+    /// call does not sit above an empty "recent" heading.
+    private func trailHeight(sizedFor sessions: [Session]) -> CGFloat {
+        let rows = min(maxTrailRows(in: sessions), Self.visibleTrailRows)
         guard rows > 0 else { return 0 }
         return Self.trailLabelHeight + CGFloat(rows) * Self.trailRowHeight
     }
 
-    /// Most finished calls any session would draw. The in-flight call is
+    /// Most finished calls any of `sessions` would draw. The in-flight call is
     /// excluded — it belongs to the NOW row, not the trail.
-    private var maxTrailRows: Int {
-        allSessions.reduce(0) { most, session in
+    private func maxTrailRows(in sessions: [Session]) -> Int {
+        sessions.reduce(0) { most, session in
             max(most, session.recentTools.filter { $0.endedAt != nil }.count)
         }
     }
 
-    /// Whether any session has a plan, and whether any has one still in flight.
-    private var anyTasks: Bool { allSessions.contains { !$0.tasks.isEmpty } }
-
-    /// The prompt the shown session is blocked on, when this HUD can settle it.
+    /// The prompt one session is blocked on, when this HUD can settle it.
     ///
     /// Nil covers both "not waiting" and "waiting, but not ours to answer" — a
     /// prompt reconstructed from notification prose, replayed from a trace, or
     /// already settled in the terminal. The card must not offer a control it
     /// cannot honour, so every answer affordance hangs off this being non-nil.
-    var answerablePrompt: PermissionAsk? {
-        guard case .awaitingPermission(let ask) = displaySession?.state, ask.isAnswerable
-        else { return nil }
+    static func answerableAsk(_ session: Session) -> PermissionAsk? {
+        guard case .awaitingPermission(let ask) = session.state, ask.isAnswerable else { return nil }
         return ask
     }
 
-    /// Whether any session has a prompt this HUD could settle.
-    ///
-    /// The expanded card sizes itself across every session so that changing the
-    /// selection never resizes it, so the answer block has to be reserved on the
-    /// same terms — see `shapeSize`.
+    /// The same question for the session on screen, which is the one whose
+    /// controls the card draws.
+    var answerablePrompt: PermissionAsk? { displaySession.flatMap(Self.answerableAsk) }
+
+    /// Whether any session has a prompt this HUD could settle. A card showing a
+    /// session that is not the blocked one says so in a line of its own rather
+    /// than leaving the prompt unmentioned — see `ExpandedContent`.
     var anyAnswerablePrompt: Bool { !allAnswerablePrompts.isEmpty }
 
     /// Every prompt this HUD could settle, across all sessions.
     var allAnswerablePrompts: [PermissionAsk] {
-        allSessions.compactMap {
-            guard case .awaitingPermission(let ask) = $0.state, ask.isAnswerable else { return nil }
-            return ask
-        }
+        allSessions.compactMap(Self.answerableAsk)
     }
 
     /// How many lines the command needs at a given column width.
@@ -464,15 +492,13 @@ final class IslandViewModel {
 
     /// Height for the answer block, sized to the tallest command it must show.
     ///
-    /// Takes every prompt it may have to display rather than just the current one:
-    /// the expanded card is measured across all sessions so that changing the
-    /// selection never resizes it mid-decision.
+    /// Takes a list rather than one prompt so the ceiling in `expandedMaxHeight`
+    /// can ask what the tallest command across every session would need.
     func answerBlockHeight(for asks: [PermissionAsk], width: CGFloat? = nil) -> CGFloat {
         guard !asks.isEmpty else { return 0 }
         let lines = asks.map { drawnCommandLines($0, width: width) }.max() ?? 1
         return Self.answerBlockChrome + CGFloat(lines) * Self.commandLineHeight
     }
-    private var anyCurrentTask: Bool { allSessions.contains { $0.tasks.current != nil } }
 
     /// Whether peek's chip row draws anything: lines changed, a cache ratio
     /// worth reporting, or plan progress.
@@ -485,10 +511,6 @@ final class IslandViewModel {
     static func expandedHasChips(_ s: Session) -> Bool {
         s.hasLineChanges || s.tokens.degradedCacheHitRatio != nil
     }
-
-    /// Measured across every session, like the rest of the expanded card's
-    /// budget, so browsing the switcher never resizes it.
-    private var anyExpandedChips: Bool { allSessions.contains(where: Self.expandedHasChips) }
 
     /// What each flank of the resting pill measures: the wider side's width,
     /// taken by both.
@@ -659,22 +681,58 @@ final class IslandViewModel {
                 width: shapeWidth,
                 height: bodyTopInset + Self.peekBodyHeight + chips + taskRow + answer)
         case .expanded:
-            // Every term here is measured across all sessions, so switching
-            // between them never changes the card's size.
-            let rows = CGFloat(min(allSessions.count, Self.maxSessionRows))
-            let overflow: CGFloat =
-                sessionOverflowCount > 0 ? Self.sessionOverflowRowHeight : 0
-            let taskBlock: CGFloat = anyTasks ? (34 + (anyCurrentTask ? 18 : 0)) : 0
-            let chipBlock: CGFloat = anyExpandedChips ? Self.expandedChipRowHeight : 0
-            let usageBlock: CGFloat = rateLimit != nil ? Self.usageWindowHeight : 0
-            let answerBlock = answerBlockHeight(for: allAnswerablePrompts)
+            // The height follows the session on screen; the width does not. See
+            // `expandedHeight` for why those two axes get different answers.
+            let shown = displaySession.map { [$0] } ?? []
             return CGSize(
                 width: shapeWidth,
-                height: bodyTopInset + Self.expandedChromeHeight + usageBlock + answerBlock
-                    + rows * Self.sessionRowHeight + overflow + chipBlock + taskBlock
-                    + Self.nowRowTopPadding + Self.nowRowHeight
-                    + Self.trailTopPadding + trailBudget)
+                height: min(expandedHeight(sizedFor: shown), expandedMaxHeight))
         }
+    }
+
+    /// The tallest the expanded card is ever drawn: what the busiest session's
+    /// blocks come to. The panel is sized against this, and `shapeSize` clamps to
+    /// it, so the flexible height has a stated ceiling rather than an implied one.
+    var expandedMaxHeight: CGFloat { expandedHeight(sizedFor: allSessions) }
+
+    /// Height the expanded card needs to draw `sessions`' blocks without clipping.
+    ///
+    /// Called with the shown session for the card itself, and with every session
+    /// for the ceiling above. It used to only ever be the latter: the card
+    /// reserved every block any session *could* draw, so that browsing the
+    /// switcher never resized it. That cost a session with no plan and no
+    /// finished calls a run of empty black below its NOW row — around 150pt of
+    /// it, held for rows belonging to a session you were not looking at.
+    ///
+    /// Height is the axis that can afford to flex. The card hangs from the
+    /// cutout, so a change to it only moves the bottom edge, and the shrink is
+    /// downward past content you have finished reading. Width still measures
+    /// across every session, because the shape is centred on the camera and a
+    /// width change moves both edges at once — see `shapeWidth`.
+    private func expandedHeight(sizedFor sessions: [Session]) -> CGFloat {
+        // The switcher's viewport and the 5-hour meter describe the whole set
+        // rather than any one session, so they do not move with the selection.
+        let usageBlock: CGFloat = rateLimit != nil ? Self.usageWindowHeight : 0
+
+        let hasTasks = sessions.contains { !$0.tasks.isEmpty }
+        let hasCurrentTask = sessions.contains { $0.tasks.current != nil }
+        let taskBlock: CGFloat = hasTasks ? (34 + (hasCurrentTask ? 18 : 0)) : 0
+        let chipBlock: CGFloat =
+            sessions.contains(where: Self.expandedHasChips) ? Self.expandedChipRowHeight : 0
+
+        // With no prompt of its own the card still draws a line pointing at the
+        // session that has one, so this is never simply absent while something is
+        // blocked — it is the notice's height instead of the block's.
+        let asks = sessions.compactMap(Self.answerableAsk)
+        let answerBlock =
+            asks.isEmpty
+            ? (anyAnswerablePrompt ? Self.answerNoticeHeight : 0)
+            : answerBlockHeight(for: asks)
+
+        return bodyTopInset + Self.expandedChromeHeight + usageBlock + answerBlock
+            + sessionListHeight + chipBlock + taskBlock
+            + Self.nowRowTopPadding + Self.nowRowHeight
+            + Self.trailTopPadding + trailHeight(sizedFor: sessions)
     }
 
     /// The hardware's corner, at every tier. A shape that rounds off further as

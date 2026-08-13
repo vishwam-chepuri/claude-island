@@ -322,21 +322,7 @@ struct ExpandedContent: View {
                 }
                 .padding(.bottom, 3)
 
-                ForEach(model.allSessions.prefix(IslandViewModel.maxSessionRows)) { candidate in
-                    SessionRow(
-                        candidate: candidate,
-                        isShown: candidate.id == session.id,
-                        onSelect: { model.select(candidate.id) })
-                }
-                // Dropping the fifth session silently put the count in the
-                // header at odds with the list directly beneath it.
-                if model.sessionOverflowCount > 0 {
-                    Text("+\(model.sessionOverflowCount) more")
-                        .font(.system(size: 8.5))
-                        .foregroundStyle(IslandPalette.tertiary)
-                        .padding(.leading, 17)
-                        .padding(.top, 2)
-                }
+                SessionSwitcher(shownID: session.id, model: model)
 
                 Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 7)
 
@@ -347,10 +333,11 @@ struct ExpandedContent: View {
                     PermissionAnswerBlock(ask: ask, model: model)
                         .padding(.bottom, 7)
                 } else if model.anyAnswerablePrompt {
-                    // The block's height is reserved across every session so that
-                    // changing the selection never resizes the card. Saying what
-                    // the space is for beats leaving it blank, which reads as the
-                    // card having failed to finish drawing.
+                    // A prompt is the one thing on this card worth acting on, so
+                    // it is named even from a session that is not the blocked
+                    // one. Its height is budgeted too — see `answerNoticeHeight`
+                    // — because a line the card did not measure is a line the
+                    // clip shape cuts in half.
                     Text("another session is waiting on you — pick it above to answer")
                         .font(.system(size: 8.5))
                         .foregroundStyle(IslandPalette.tertiary)
@@ -650,6 +637,125 @@ struct TrailRow: View {
                 .monospacedDigit()
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// Every tracked session, in a viewport exactly `maxSessionRows` rows tall.
+///
+/// The fifth session used to be dropped and summarised as "+1 more", which
+/// named a count you could not act on — and the session you were reaching for
+/// is exactly the one the list had thrown away, since the ranking puts the
+/// quiet ones last. Scrolling costs nothing the card was using: the viewport is
+/// a whole number of rows, so the card's height no longer grows with the
+/// session count, and no row is sliced at rest.
+struct SessionSwitcher: View {
+    /// The session the card is detailing, which this list marks as shown. Not
+    /// the selection: an alert overrides it, and the row that gets the rail is
+    /// the one whose figures are below.
+    let shownID: String
+    @Bindable var model: IslandViewModel
+
+    /// Which edges have something hidden past them, once the list has reported
+    /// its scroll position. Nil until then — and on a system too old to report
+    /// it at all, where the resting state is the only one described.
+    @State private var scrolled: SwitcherEdges?
+
+    private var edges: SwitcherEdges {
+        scrolled ?? SwitcherEdges(top: false, bottom: model.sessionOverflowCount > 0)
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(model.allSessions) { candidate in
+                        SessionRow(
+                            candidate: candidate,
+                            isShown: candidate.id == shownID,
+                            onSelect: { model.select(candidate.id) }
+                        )
+                        .id(candidate.id)
+                    }
+                }
+            }
+            .frame(height: model.sessionListHeight)
+            .scrollBounceBehavior(.basedOnSize)
+            .modifier(SwitcherEdgeReporter { scrolled = $0 })
+            // Same argument as the trail's: a row cut by the viewport edge
+            // looks exactly like a row cut by a layout bug, and a fade reads as
+            // "there is more below" instead. Measured in points rather than as
+            // a fraction of the viewport, so it covers exactly the sliver and
+            // never bites into a whole row — and only on an edge with something
+            // past it, so a list scrolled to its foot dims neither end.
+            //
+            // The two ends fade to different depths on purpose. Nothing is ever
+            // parked against the top edge — scrolling a row into view puts it
+            // at the foot of the list — so that band can go nearly clear and
+            // say "continues above" without argument. The bottom band routinely
+            // holds the row the card just took you to, which has to stay
+            // readable and clickable where it lands.
+            .mask(
+                VStack(spacing: 0) {
+                    LinearGradient(
+                        colors: [.black.opacity(edges.top ? 0.12 : 1), .black],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(height: IslandViewModel.sessionPeekHeight)
+                    Rectangle().fill(.black)
+                    LinearGradient(
+                        colors: [.black, .black.opacity(edges.bottom ? 0.4 : 1)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(height: IslandViewModel.sessionPeekHeight)
+                }
+                // Both bands are always in the mask, so an edge turning honest
+                // is an opacity change rather than a relayout of the mask under
+                // a list that is moving at the time.
+                .animation(.easeOut(duration: 0.15), value: edges)
+            )
+            // A permission prompt can take the display to a session sitting
+            // below the fold, and a card whose rail is nowhere on screen reads
+            // as no session being selected at all. `anchor: nil` scrolls the
+            // least it can, so a row already in view never moves the list.
+            .onAppear { proxy.scrollTo(shownID) }
+            .onChange(of: shownID) { _, id in
+                withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(id) }
+            }
+        }
+    }
+}
+
+/// Which ends of the switcher have sessions past them.
+struct SwitcherEdges: Equatable {
+    var top: Bool
+    var bottom: Bool
+}
+
+/// Reports those edges from the list's scroll position, where the system can
+/// say what it is.
+///
+/// Gated rather than required: the HUD deploys to macOS 14, which has no scroll
+/// geometry to observe. Without it the switcher keeps the resting description —
+/// a fade at the foot whenever the list is longer than its viewport — which is
+/// right until you scroll and then merely stale, and stale in the direction of
+/// claiming there is more below, never of hiding it.
+private struct SwitcherEdgeReporter: ViewModifier {
+    let report: (SwitcherEdges) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.onScrollGeometryChange(for: SwitcherEdges.self) { geometry in
+                let offset = geometry.contentOffset.y
+                let visibleBottom = offset + geometry.containerSize.height
+                return SwitcherEdges(
+                    top: offset > 0.5,
+                    bottom: visibleBottom < geometry.contentSize.height - 0.5)
+            } action: { _, edges in
+                report(edges)
+            }
+        } else {
+            content
+        }
     }
 }
 

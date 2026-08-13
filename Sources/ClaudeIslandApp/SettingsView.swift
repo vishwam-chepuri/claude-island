@@ -39,9 +39,10 @@ struct SettingsView: View {
     /// than going blank.
     @State private var pane: Pane? = .general
 
-    /// Pinned open. This window has no toolbar, so the sidebar toggle that
-    /// normally brings a collapsed column back has nowhere to draw itself; a
-    /// sidebar the user can lose is one they cannot ask for again.
+    /// Pinned open, and the toggle that would unpin it is removed below — a
+    /// sidebar the user can lose is one they cannot ask for again. Five fixed
+    /// panes are the whole of this window's navigation; collapsing them leaves a
+    /// detail column with no way to say which pane it is showing.
     @State private var columns = NavigationSplitViewVisibility.all
 
     /// The displays attached right now, re-read whenever the window learns they
@@ -64,6 +65,14 @@ struct SettingsView: View {
                 detail
             }
             .navigationSplitViewStyle(.balanced)
+            // The toolbar this split view hangs off the window — a sidebar
+            // toggle for a sidebar that is pinned, and a tracking separator that
+            // truncated the window's title to fit the sidebar's column — is
+            // refused by the window itself. `.toolbar(removing:)` and
+            // `.toolbar(.hidden, for: .windowToolbar)` are both no-ops from
+            // inside an `NSHostingView`: photographed against a window with and
+            // without them, the two captures were identical to the byte. See
+            // `SettingsWindow`.
             .frame(maxHeight: .infinity)
             Divider()
             footer
@@ -148,8 +157,6 @@ struct SettingsView: View {
             Section {
                 LabeledContent("Status", value: statusLine)
                 Toggle("Show the HUD", isOn: $store.hudEnabled)
-                displayRow
-                hoverDelayRow
                 if LoginItem.isAvailable {
                     Toggle("Launch at login", isOn: launchAtLoginBinding)
                 }
@@ -166,14 +173,12 @@ struct SettingsView: View {
 
     /// Which display the island draws on.
     ///
-    /// On General, next to "Show the HUD", rather than on Appearance. Both were
-    /// defensible and this one is a judgement call, made on two grounds: this
-    /// setting answers *where the HUD is*, which is the same question as whether
-    /// it is showing at all — someone whose island has vanished onto the laptop
-    /// panel behind a closed lid goes looking in the pane that turns it on, not
-    /// in the one about how it looks. And Appearance is currently a pane that
-    /// writes no settings whatsoever: it is the preview and nothing else, which
-    /// is a property worth keeping.
+    /// On Appearance, directly under the preview, because the preview is this
+    /// row's own answer: it resolves the shape against whichever display is
+    /// chosen here, so a notched panel previews a notch and anything else
+    /// previews the pill. Picking a display on one pane to see what it did on
+    /// another was the arrangement this replaced, and it made the preview look
+    /// like decoration rather than the readout it is.
     ///
     /// The caption only appears when the chosen display is missing. A row that
     /// explained itself at all times would be four lines of prose above "Launch
@@ -211,11 +216,13 @@ struct SettingsView: View {
 
     /// How long the pointer must rest on the island before the card opens.
     ///
-    /// On General with the other two, because it answers the same question they
-    /// do — the island is showing, it is over there, and it takes this long to
-    /// notice you. It is also the row someone comes looking for after the HUD
-    /// popped open while they were reaching for the menu bar, which is not a
-    /// complaint about how it looks.
+    /// On Appearance under the display picker, because the tier it gates is the
+    /// one the preview above puts on screen: Peek is what this delay stands
+    /// between the pointer and, and the segment marked Peek is a click away
+    /// while the slider is being dragged. It is also the row someone comes
+    /// looking for after the card popped open while they were reaching for the
+    /// menu bar — a complaint about the island appearing when it should not,
+    /// which is the pane that shows the island appearing.
     ///
     /// A slider rather than a Short/Medium/Long picker: the range is narrow,
     /// every value in it is usable, and what is being chosen is a feel — judged
@@ -340,13 +347,18 @@ struct SettingsView: View {
     }
 
     /// Second in the sidebar rather than last: it is the one pane that answers a
-    /// question — "what is this thing going to look like on my screen" — instead
-    /// of asking one, and behind the hook plumbing it would only be found by
+    /// question — "what is this thing going to look like on my screen" — as well
+    /// as asking one, and behind the hook plumbing it would only be found by
     /// people who were already looking for it.
     ///
     /// The preview is fed made-up sessions and driven by a view model of its own;
     /// see `IslandPreviewSource` for why that second model is not an optimisation
-    /// but the whole safety property. Nothing on this pane writes a setting.
+    /// but the whole safety property.
+    ///
+    /// The two rows under it are the settings the preview is a picture of — which
+    /// display the island takes its shape from, and how long the pointer waits
+    /// for Peek. Both used to live on General, where changing one meant switching
+    /// panes to see what it had done.
     private var appearancePane: some View {
         Form {
             Section {
@@ -360,6 +372,10 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
+                displayRow
+                hoverDelayRow
             }
         }
         .formStyle(.grouped)
@@ -381,14 +397,19 @@ struct SettingsView: View {
     /// The cue rows are *not* dimmed by the mute above them. Muted is a state
     /// you configure through, and the play button has to keep working while it
     /// is on or it reads as broken; the footer says so instead.
+    ///
+    /// Each row is one control — a picker offering None — rather than a switch
+    /// and a picker that both mean "silent". Two controls for one outcome left a
+    /// row that could read `off / Glass`, where nothing on screen says which of
+    /// the two you are meant to hit, and both of them silence the same cue.
     private var soundsPane: some View {
         Form {
             Section {
                 Toggle("Play sounds", isOn: soundsBinding)
             } footer: {
                 Text(
-                    "Silences every cue at once, without disturbing the switches below — "
-                        + "turning it back on restores what you had."
+                    "Silences every cue at once, without disturbing what the cues below are "
+                        + "set to — turning it back on restores what you had."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -448,36 +469,50 @@ struct SettingsView: View {
     /// button rings whatever any of this says, because a preview answering with
     /// silence is indistinguishable from a broken button, and auditioning a sound
     /// with your terminal in front is precisely when it gets pressed.
+    ///
+    /// Every version opens by saying what None does. It is the one thing in this
+    /// section that is a picker row rather than a switch, so it is the one thing
+    /// somebody looking for a way to skip a single cue can miss.
     private var cuesFooter: String {
-        switch (store.doNotDisturb, store.muteWhileTerminalFrontmost) {
+        let none = "Set a cue to None to skip it."
+        return switch (store.doNotDisturb, store.muteWhileTerminalFrontmost) {
         case (true, _):
-            "None of these will ring while Play sounds is off. Play previews the chosen sound "
-                + "anyway."
+            "\(none) Nothing here rings while Play sounds is off — Play previews the chosen "
+                + "sound anyway."
         case (false, true):
-            "None of these will ring for a session while the app it is running in is frontmost. "
-                + "Play previews the chosen sound anyway."
+            "\(none) Nothing here rings for a session while the app it is running in is "
+                + "frontmost — Play previews the chosen sound anyway."
         case (false, false):
-            "Play previews the chosen sound, whatever these switches say."
+            "\(none) Play previews the chosen sound, whatever the switches above say."
         }
     }
 
-    /// One cue: what it means in this app's terms, whether it rings, what it
-    /// rings, and a way to hear that without waiting for a session to do it.
+    /// One cue: what it means in this app's terms, what it rings, and a way to
+    /// hear that without waiting for a session to do it.
     ///
-    /// The picker and the play button stay live under an *off* switch on
-    /// purpose. The switch says whether the cue rings, not whether it can be
-    /// set up — auditioning three sounds before deciding to turn a cue on is the
-    /// normal way to use this pane, and a row that goes dead the moment you
-    /// switch it off makes that a two-step dance.
+    /// The title is plain text, not a switch. Whether the cue rings is the same
+    /// question as what it rings — None is an answer to both — and the picker is
+    /// the control that answers it.
+    ///
+    /// Play is the one thing here that goes dead: a cue set to None has no sound
+    /// to preview. It stays live under either global gate, because a preview
+    /// silenced by a switch elsewhere on the pane is indistinguishable from a
+    /// broken button, but silence with nothing chosen is not a gate — it is the
+    /// row saying it has nothing to play, which is the honest answer and the one
+    /// the picker beside it explains.
     private func soundRow(_ cue: SoundCue) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle(cue.settingsTitle, isOn: soundEnabledBinding(cue))
+        let chosen = store[cue].selectedName
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(cue.settingsTitle)
             Text(cue.settingsCaption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Picker("Sound", selection: soundNameBinding(cue)) {
+                    // First, and outside the loop: skipping a cue is a choice
+                    // about the cue rather than one more sound to scroll past.
+                    Text("None").tag(Self.noSound)
                     ForEach(soundOptions(for: cue), id: \.self) { name in
                         Text(name).tag(name)
                     }
@@ -489,6 +524,7 @@ struct SettingsView: View {
                 } label: {
                     Label("Play", systemImage: "play.fill")
                 }
+                .disabled(chosen == nil)
                 // The label reads "Play" for every row, which is fine to look at
                 // and useless to hear: VoiceOver reads the rows one after
                 // another and three identical buttons name nothing.
@@ -507,9 +543,14 @@ struct SettingsView: View {
     /// perfectly well can be absent from it. A `Picker` whose selection matches
     /// no tag draws an empty row, which reads as a setting that was lost rather
     /// than one this build simply does not offer.
+    ///
+    /// A cue sitting on None contributes nothing here: `name` still holds the
+    /// sound it will go back to, and listing that would put an unfamiliar name
+    /// in one row's menu and not the others'.
     private func soundOptions(for cue: SoundCue) -> [String] {
-        let chosen = store[cue].name
-        guard !SystemSound.all.contains(chosen) else { return SystemSound.all }
+        guard let chosen = store[cue].selectedName, !SystemSound.all.contains(chosen) else {
+            return SystemSound.all
+        }
         return [chosen] + SystemSound.all
     }
 
@@ -548,11 +589,39 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
+    /// `debugTint` deliberately has no row here. It is an authoring aid rather
+    /// than a preference — switched on by accident it just makes the HUD look
+    /// broken — and `touch ~/.claude-island/tint` already covers both uses:
+    /// iterating on the shape, and a bug reporter showing where the island
+    /// actually landed on a display it landed wrong on. See README, "Debug tint".
     private var advancedPane: some View {
         Form {
             Section {
+                Toggle("Stay above other notch apps", isOn: $store.aboveOtherNotchHUDs)
+                // Worth a caption in both states rather than only when on: off is
+                // the state where clicks quietly land in another app, and a
+                // switch that explains itself only after you flip it is no help
+                // to the person wondering why the island ignores the pointer.
+                Text(
+                    store.aboveOtherNotchHUDs
+                        ? "The HUD is drawn above the screen saver — the only level that "
+                            + "beats another notch app. Leave this off if you have none."
+                        : "Other notch apps are drawn above the island and take its clicks, "
+                            + "including the one that answers a permission prompt."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 Toggle("Write a debug log", isOn: $store.logging)
-                Toggle("Show debug tint", isOn: $store.debugTint)
+                Text(
+                    "Records what the HUD is doing to ~/.claude-island/log, capped at "
+                        + "1 MiB. Turn it on, reproduce the problem, then attach the file "
+                        + "to a bug report — it names project directories, never "
+                        + "conversation content."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 Picker("Pin the HUD to", selection: forcedModeBinding) {
                     Text("Off — follow hover and click").tag("")
                     Text("Compact").tag("compact")
@@ -593,9 +662,6 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Text("Stored in ~/.claude-island/settings.json")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Spacer()
                 Button("Quit ClaudeIsland") { actions.quit() }
             }
@@ -696,15 +762,23 @@ struct SettingsView: View {
         Binding(get: { !store.doNotDisturb }, set: { store.doNotDisturb = !$0 })
     }
 
-    /// Both halves of a cue write through `SettingsStore`'s subscript, which
-    /// lands on a stored property and persists on the way past — so a switch or
-    /// a picker is on disk before the sound it describes can next fire.
-    private func soundEnabledBinding(_ cue: SoundCue) -> Binding<Bool> {
-        Binding(get: { store[cue].enabled }, set: { store[cue].enabled = $0 })
-    }
+    /// The None row's tag. Empty rather than a word, for the same reason the
+    /// display picker's default row is empty: a tag of `"None"` is a string that
+    /// could also be a sound name, and this one cannot collide with anything.
+    ///
+    /// `CueSound.select(_:)` reads it as None, so nothing here has to translate.
+    private static let noSound = ""
 
+    /// A cue writes through `SettingsStore`'s subscript, which lands on a stored
+    /// property and persists on the way past — so the picker is on disk before
+    /// the sound it describes can next fire.
+    ///
+    /// Read through `selectedName` and written through `select(_:)`, so the
+    /// stored name survives a trip through None: the sound comes back with it.
     private func soundNameBinding(_ cue: SoundCue) -> Binding<String> {
-        Binding(get: { store[cue].name }, set: { store[cue].name = $0 })
+        Binding(
+            get: { store[cue].selectedName ?? Self.noSound },
+            set: { store[cue].select($0) })
     }
 
     /// Not backed by `settings.json` — the real state lives in `SMAppService`,

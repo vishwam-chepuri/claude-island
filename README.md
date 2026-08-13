@@ -1,78 +1,124 @@
 # ClaudeIsland
 
+<img src="docs/images/icon.png" width="88" align="right" alt="">
+
 A Dynamic Island-style HUD pinned to the notch that shows, in real time, what
 your running Claude Code sessions are doing.
 
-```
-┌─────────────────────────────────────────────┐
-│  ⌘ Bash  swift build           0:12     o°o │   compact
-└─────────────────────────────────────────────┘
-┌─────────────────────────────────────────────┐
-│  ✋ Allow Write? · claude-island   0:07   ②  │   alert
-│     ~/notch/Sources/IslandPanel.swift        │
-└─────────────────────────────────────────────┘
-```
+![The island resting in the notch: a session glyph, the session name, the elapsed time and the word Working](docs/images/compact.png)
+
+It rests as one line and says which session it is and what that session is doing.
+Every state owns its own word, colour and mark:
+
+![Seven resting states in turn — Sent, Thinking, Working, Compacting, Waiting, Done and Failed — each with a coloured glyph and its own mark](docs/images/states.png)
 
 ## Install
+
+**Requirements:** macOS 14 or later, and Apple's Command Line Tools. No Xcode, no
+dependencies, and no network calls once it is running.
+
+### 1. Run the installer
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vishwam-chepuri/claude-island/main/Scripts/install.sh | bash
 ```
 
-Clones, builds, installs to `/Applications` (falling back to `~/Applications`
-if that isn't writable — hooks bake in whichever absolute path it lands at),
-and offers to wire up the hooks. That offer covers two files, not one: if
-`~/.claude/settings.json` already points `statusLine` at a script, it appends
-one forwarding line to that script too, so the prompt names both. Both are
-backed up first, and it declines whichever one it isn't sure about.
+It clones, builds, and installs to `/Applications` — falling back to
+`~/Applications` if that isn't writable, with the hooks baking in whichever
+absolute path it lands at. The build takes about 40 seconds on Apple Silicon and
+several minutes, silently, on Intel: the script suppresses build output.
 
-Pass `-s -- --dry-run` to see exactly what it would do first — piped into
-`bash`, options have to go after `-s --`, since plain `| bash --dry-run` hands
-`--dry-run` to `bash` itself rather than to the script and fails outright — or
-read it, it is [one file](Scripts/install.sh):
+If the Command Line Tools are missing, or stale after a macOS upgrade, the script
+fires Apple's installer and exits so you can finish that and re-run.
+
+To see exactly what it would do first — or just read it, it is
+[one file](Scripts/install.sh):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vishwam-chepuri/claude-island/main/Scripts/install.sh | bash -s -- --dry-run
 ```
 
-It builds from source rather than downloading a binary, and that is deliberate:
-this project has no Developer ID to sign with, so a downloaded `.app` would
+Piped into `bash`, options have to go after `-s --`, since plain
+`| bash --dry-run` hands `--dry-run` to `bash` itself rather than to the script
+and fails outright.
+
+### 2. Say yes when it offers to wire up the hooks
+
+That offer covers two files, not one. It merges ClaudeIsland's entries into
+`~/.claude/settings.json`, and if `statusLine` there already points at a script,
+it appends one forwarding line to that script too — so the prompt names both.
+Both are backed up first, and it declines whichever one it isn't sure about,
+printing the line to paste by hand instead.
+
+Skipping the status-line half costs only exactness: `context_window_size` is the
+only place Claude Code states the exact window, so without it the limit behind
+the context bar is inferred rather than known. The token counts are exact either
+way.
+
+### 3. Restart any running Claude Code sessions
+
+Hooks are picked up when a session starts, so a session that was already open
+sends nothing. Restart one and the island appears the moment it does anything.
+
+To check the wiring, open Settings — there is no menu bar icon, so you **launch
+the app again**, from Finder, Spotlight or `open -a ClaudeIsland`. It is already
+running, so instead of starting a second copy it brings the window up. Hooks
+should read `Installed`:
+
+![The Hooks pane reading Installed, with Reinstall, Remove and Copy Hook JSON buttons](docs/images/settings-hooks.png)
+
+### 4. Turn on Launch at login
+
+Under General, so the HUD survives a reboot. That pane also carries a live view
+of the event pipeline — whether the socket is listening, how long ago the last
+hook event arrived, how many sessions are tracked — which is the first place to
+look if the island never appears at all.
+
+![The General pane: the event pipeline strip, Status, Show the HUD, and Launch at login](docs/images/settings-general.png)
+
+### Why it builds from source rather than shipping a binary
+
+This project has no Developer ID to sign with, so a downloaded `.app` would
 arrive quarantined and macOS would tell you it could not be verified. Code
 compiled on your own machine never is. Building also means you get a binary for
 your own architecture with no universal-binary machinery.
-
-**Requirements:** macOS 14+, and Command Line Tools — if they're missing, or
-stale after a macOS upgrade, the script fires Apple's installer and exits so
-you can finish it and re-run. No Xcode. No dependencies. About 40 seconds to
-build on Apple Silicon; several minutes, silently, on Intel — the script
-suppresses build output.
-
-Restart any running Claude Code sessions afterwards, and turn on **Launch at
-login** in Settings so it survives a reboot.
 
 Everything is local — the app makes no network calls, ever.
 
 ## Settings
 
-There is no menu bar icon and no Dock icon. To open Settings, **launch the app
-again** — from Finder, Spotlight, or `open -a ClaudeIsland`. It is already
-running, so instead of starting a second copy it brings the window up. On a
-fresh install the window opens by itself, since otherwise nothing on screen
-would say the app had started.
+There is no menu bar icon and no Dock icon. To open Settings, launch the app
+again, as above. On a fresh install the window opens by itself, since otherwise
+nothing on screen would say the app had started.
 
 The window is a sidebar with one pane per concern:
 
 ```
-General     Status · Show the HUD · Show it on … · Open on hover after …
-            · Launch at login
+General     Event pipeline · Status · Show the HUD · Launch at login
 Appearance  A live preview of the island, posed at each tier
-Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per cue
+            · Show it on … · Open on hover after …
+Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per
+            cue, or None to skip that one
 Hooks       Install / update / remove, Copy Hook JSON
-Advanced    Debug log · Debug tint · Pin the HUD to · Reveal Support Folder
+Advanced    Debug log · Pin the HUD to · Reveal Support Folder
 ```
 
+**Appearance** poses the real island — the same shape, content views and view
+model the HUD draws with — over invented sessions, at whichever tier you press.
+The two settings under it are the ones the preview is a picture of: it resolves
+the shape against the display chosen there, so a notched panel previews a notch
+and anything else previews the pill, and the Peek tier is what the hover delay
+stands between the pointer and.
+
+![The Appearance pane showing the expanded card posed over invented sessions, with tier buttons for Compact, Alert, Peek and Expanded, and the Show it on and Open on hover after rows below](docs/images/settings-appearance.png)
+
 **Show it on** picks the display. The default follows the menu bar, which on a
-notched Mac is where the cutout is; any other display gets the pill instead.
+notched Mac is where the cutout is; any other display gets the pill instead —
+floating a hairline below the top edge and rounding its top corners, because
+there is no bezel there to flare into:
+
+![The fallback pill on an external display, floating just below the top edge with rounded top corners](docs/images/pill.png)
+
 The choice is stored by display name and kept even while that display is
 unplugged — the HUD falls back to the menu bar's display for as long as it is
 gone and moves back on its own when it returns. Two identical monitors report
@@ -91,6 +137,33 @@ something you have to scroll to find. ⌘Q works too, while the window has focus
 
 The HUD itself is not an entry point: it is unclickable whenever no session is
 running, which is most of the time.
+
+## Something's wrong
+
+Nothing here phones home, so a bug report has to carry its own evidence.
+
+Start with the two things that explain most of it: **Hooks** in Settings should
+read installed, and a Claude Code session started before the hooks were wired up
+keeps running without them until it restarts. A HUD that never appears at all is
+usually one of those.
+
+Past that, run the self-test — with the screen unlocked, for the reason given
+under [Verification](#verification):
+
+```bash
+/Applications/ClaudeIsland.app/Contents/MacOS/ClaudeIsland --selftest
+```
+
+It covers focus, click-through, geometry and settings round-tripping, and names
+the culprit where it can, including [another notch app sitting above
+ours](#known-conflict-other-notch-huds).
+
+Then turn on **Write a debug log** under Advanced, reproduce the problem, and
+attach `~/.claude-island/log` — **Reveal Support Folder**, at the foot of the
+same pane, opens the directory holding it. That log is where dropped hook
+payloads, sessions that parked in the wrong tier, and displays that went missing
+leave a trace. It records project directory names but never conversation
+content, and is capped at 1 MiB with a single rotation.
 
 ## Uninstall
 
@@ -207,17 +280,25 @@ expires.
 **A permission prompt can be answered from the card.** `PermissionRequest` is a
 *decision* hook, not just a notification, so the client for that one event runs
 with `--await-decision`: it holds its socket open and forwards whatever the HUD
-answers to stdout, where Claude Code reads it. Allow and Deny appear on the peek
-and expanded cards, and the transcript records `Allowed by PermissionRequest
-hook`.
+answers to stdout, where Claude Code reads it.
+
+A waiting prompt takes the island over at rest, edged in pulsing amber:
+
+![The resting island showing a raised-hand glyph, the session name and the words Your turn, edged in amber](docs/images/alert.png)
+
+Allow and Deny appear on the peek and expanded cards, beside the command in
+full. The transcript records `Allowed by PermissionRequest hook`.
+
+![The peek card asking Allow Bash?, showing the whole command with a green Allow and an amber Deny, and the note: or answer in the terminal](docs/images/permission.png)
 
 This races the terminal rather than replacing it. Claude Code paints its own
 dialog *and* waits on the hook at the same time, so whichever is answered first
-wins and nothing is ever taken away from the terminal. Every failure path
-degrades the same way — a dead HUD fails to connect in 50 ms, a wedged one is
-bounded by the client's deadline, and a hook that answers nothing simply leaves
-the dialog where it was. That is the whole safety argument: the worst outcome is
-that you walk back to the terminal, which is where you started.
+wins and nothing is ever taken away from the terminal — which is what the note
+beside the buttons is for. Every failure path degrades the same way: a dead HUD
+fails to connect in 50 ms, a wedged one is bounded by the client's deadline, and
+a hook that answers nothing simply leaves the dialog where it was. That is the
+whole safety argument: the worst outcome is that you walk back to the terminal,
+which is where you started.
 
 Three things it deliberately refuses to do:
 
@@ -378,8 +459,8 @@ animations moved.
 | Compact, animating | 0.2% |
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
-| Tests | 267 total |
-| Self-test | 150 checks total |
+| Tests | 277 passing |
+| Self-test | 167 checks passing |
 
 ## Visual language
 
@@ -416,27 +497,47 @@ status word and mark on the right. It names the session and nothing else: which
 tool is running churns with every call and says less than the status word
 already does, so that detail lives in the peek.
 
-Every tracked session rests as one line, including `Done` and `Your turn`.
-Those two used to collapse to dormant, which hid exactly the states you are most
+Every tracked session rests as one line, including `Done` and `Waiting`. Those
+two used to collapse to dormant, which hid exactly the states you are most
 likely to be waiting on. Only a HUD with no sessions at all goes dark.
 
-The status vocabulary and mark follow the reference design: `Thinking` with a
-spinning ring, `Your turn` with a completed ring that breathes, `Done` with a
-solid ring and a check.
+Every state owns its own mark, and every mark is an animation: a brightness wave
+travelling through three dots for `Thinking`, three balls bouncing on a ground
+line for `Working`, three dots flying in for `Sent`, two bars closing on each
+other for `Compacting`, a blinking caret for `Waiting` and `Your turn`, a check
+for `Done`, a cross for `Failed`. All of them run in Core Animation rather than
+SwiftUI, for the reason above.
 
-**Peek** (hover, after the dwell set on General) — adds the identity line
-(branch, model, effort, elapsed),
-context and output tokens, and plan progress with the task currently in flight.
+The name is cut on a word at 18 characters and carries no ellipsis — the pill is
+a label, not a claim to be complete, and the whole title is one hover away.
+
+**Peek** (hover, after the dwell set on Appearance) — adds the live tool target,
+the identity line (branch, model, effort, elapsed), context and output tokens,
+lines changed, and plan progress with the task currently in flight.
+
+![The peek card: the tool target, then branch, model, effort and elapsed, a context meter reading 148.9k of 200.0k, chips for lines and tasks, and the plan drawn as segments](docs/images/peek.png)
 
 **Expanded** (click) — a switcher. Every active session is listed and
-clickable; selecting one shows its detail below, including a row offering to
-raise the session's terminal — *Reveal in `<App>`*, or one of three reasons it
-cannot. Click the island again, or anywhere outside, to dismiss.
+clickable, each with a state-coloured rail; selecting one shows its detail
+below — including a row offering to raise the session's terminal, *Reveal in
+`<App>`*, or one of three reasons it cannot — and ending in the trail of recent
+tool calls. Click the island again, or anywhere outside, to dismiss.
 
-The card is sized across **all** sessions, not the selected one, so browsing
-never resizes it. Sized from the selection, its width followed that session's
-name length and its height followed that session's tool count and task block, so
-every click reflowed the whole HUD. Two self-test checks guard it.
+![The expanded card: three sessions with coloured rails and their states, then the selected session's detail and a list of recent tool calls](docs/images/expanded.png)
+
+The card's **width** is sized across all sessions, not the selected one. Sized
+from the selection it followed that session's name length, and because the shape
+is centred on the camera both edges moved on every click — the whole HUD
+reflowed sideways.
+
+Its **height** follows the session on screen, and stops at the tallest any of
+them would need. Measured across all sessions that too was stable, but a session
+with no plan and no finished calls was then drawn with room for a busy one's
+trail below it — around 150pt of empty black under its own last row. The card
+hangs from the cutout, so height is the axis that can flex: only the bottom edge
+moves. Five self-test checks guard both halves of this, including that the
+sparse card still fits its own contents — with no reserve left over, a block
+tallied a few points short now clips rather than merely sitting tight.
 
 A permission request always takes over the view, even from an explicit
 selection — missing a prompt is worse than losing your place. The selection is
@@ -451,7 +552,7 @@ state.
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 267 tests
+swift build && swift run ClaudeIslandTests      # 277 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
@@ -469,7 +570,7 @@ failures, two concurrent sessions, subagents, deliberately hostile input
 (malformed lines, unknown future events, embedded secrets), and process
 ancestry surviving envelopes that omit it.
 
-`--selftest` is a 150-check harness for what unit tests cannot exercise: that
+`--selftest` is a 168-check harness for what unit tests cannot exercise: that
 the panel never takes focus, that clicks land where they should, that a settings
 change reaches both disk and the running HUD, and dozens of on-screen layout and
 geometry checks besides. Click-through is verified
@@ -478,19 +579,39 @@ trusting our own flags. **Run it with the screen unlocked** — a lock
 screen puts a full-screen `loginwindow` layer above everything and those three
 checks are reported as skipped rather than silently passing. One more check
 needs a second display and skips the same honest way — "only one display
-attached" — when just one is plugged in.
+attached" — when just one is plugged in. Run through `swift run` rather than
+from the bundle, the launch-at-login check skips for the same reason: there is
+nothing there to register.
+
+Neither reaches the permission contract, which turns on Claude Code's behaviour
+rather than on this code — and `PermissionRequest` fires only on the interactive
+path, so a headless `claude -p` run cannot exercise it at all. `Scripts/verify/`
+holds the harnesses that can: a pty driving a real session, a synthetic suite
+over the real socket, and an accessibility walker that presses the card's
+buttons by title rather than by coordinate. Re-run them when Claude Code
+updates — a broken contract shows up as a button that quietly stopped working,
+and nothing else here would catch it. That folder's own README says what each
+one proves.
 
 ### Known conflict: other notch HUDs
 
-The panel sits at `.statusBar + 1` (level 26). Some notch apps use far higher
-levels — "Claude Usage" on this machine holds the notch at level **1000** — and
-will render above ClaudeIsland and win the hit test over the island shape. This
-is by design rather than a defect: the level is deliberately conservative so the
-HUD never floats above things it shouldn't.
+The panel sits at `.statusBar + 1` (level 26) by default. Some notch apps use far
+higher levels — "Claude Usage" on this machine holds the notch at level
+**1000** — and will render above ClaudeIsland and win the hit test over the
+island shape, taking with it the click that answers a permission prompt. The
+conservative level is deliberate rather than a defect: the HUD never floats above
+things it shouldn't.
 
-`--selftest` detects this and names the offending app instead of reporting a
-failure. Quit the other app to evaluate that check, or raise the level in
-`IslandPanel.init` if you would rather ClaudeIsland win.
+**Stay above other notch apps** under Advanced lifts the panel past them, and is
+off by default. Those apps sit *at* screen-saver level, so the only level that
+beats one is above the screen saver — there is no gentler value that still wins,
+which is why this is a switch rather than a slider and why it stays off until
+asked for. It applies immediately, with no relaunch.
+
+`--selftest` builds its panel from that setting. With the switch off it detects
+the conflict and names the offending app instead of reporting a failure — quit
+the other app to evaluate that check. With the switch on it measures the level
+you actually run at, and the check passes with the other app still running.
 
 ### Note on the test harness
 
@@ -506,14 +627,24 @@ the suites port back with a mechanical find-and-replace if Xcode is installed.
 
 Pure `#000` is deliberate — it makes the island read as the physical cutout —
 but it also makes the shape's edges invisible while iterating on layout.
-Settings has **Show debug tint** under Advanced, which fills it indigo with a
-cyan edge so the outline, the corner radii and the notch punch-out are all
-visible. **Pin the HUD to** in the same section holds it at one tier; that
-exists because hover and click cannot be synthesised without Accessibility
-permission — without it the open tiers cannot be looked at at all, and three
-padding bugs in the peek layout survived precisely because they had never been
-seen. Leave it off otherwise: a leftover pin fails most of `--selftest`'s mode
-checks.
+`debugTint` fills it indigo with a cyan edge so the outline, the corner radii
+and the notch punch-out are all visible:
+
+```bash
+touch ~/.claude-island/tint       # folded into settings.json at next launch
+```
+
+There is deliberately no toggle for it in Settings. It is an authoring aid, not
+a preference: switched on by accident it just makes the HUD look broken, and it
+produces nothing you could attach to a bug report that a plain screenshot would
+not. The file covers the one case where somebody else needs it — showing where
+the island actually landed on a display where it landed wrong.
+
+**Pin the HUD to** under Advanced holds the HUD at one tier; that exists because
+hover and click cannot be synthesised without Accessibility permission — without
+it the open tiers cannot be looked at at all, and three padding bugs in the peek
+layout survived precisely because they had never been seen. Leave it off
+otherwise: a leftover pin fails most of `--selftest`'s mode checks.
 
 ## Configuration
 
@@ -525,6 +656,7 @@ them rather than writing null.
 
 ```json
 {
+  "aboveOtherNotchHUDs": false,
   "debugTint": false,
   "doNotDisturb": false,
   "doneSound": { "enabled": true, "name": "Glass" },
@@ -536,6 +668,10 @@ them rather than writing null.
   "waitingSound": { "enabled": true, "name": "Pop" }
 }
 ```
+
+A cue set to **None** in the window is `"enabled": false` here, with `name` left
+holding the sound it goes back to — picking None silences that one cue without
+costing you the sound you had.
 
 Logging is **off by default**. Turn it on under Advanced, or:
 
@@ -579,8 +715,18 @@ Sources/ClaudeIslandApp/      panel, views, settings window, CLI entry points
 Sources/claude-island-notify/ hook client (Darwin only)
 Tests/ClaudeIslandCoreTests/  suites + TinyTest harness
 Fixtures/                     replay logs
+Scripts/install.sh            the one-file installer: clone, build, wire hooks
 Scripts/bundle.sh             .app assembly + ad-hoc signing
 Scripts/make-icon.swift       draws Resources/AppIcon.icns from the app's shapes
+Scripts/verify/               harnesses for the permission contract
 Resources/AppIcon.icns        committed, so an install renders no pictures
-docs/superpowers/specs/       design document
+docs/images/                  the screenshots above
+docs/superpowers/             design documents and plans
 ```
+
+Every island shot above is the shipping views, drawn by the real panel at the
+real notch geometry, posed over invented sessions under a plainly fake home — the
+way the Appearance pane poses its own preview, and for the same reason: a
+screenshot of a live session would put someone else's directory names in front of
+you. The backdrop stands in for the desktop; the cutout is painted black because
+in life those pixels sit behind the bezel.

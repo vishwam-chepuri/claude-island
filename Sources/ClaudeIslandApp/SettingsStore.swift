@@ -23,6 +23,7 @@ final class SettingsStore {
     var doNotDisturb: Bool { didSet { persist() } }
     var logging: Bool { didSet { persist() } }
     var debugTint: Bool { didSet { persist() } }
+    var aboveOtherNotchHUDs: Bool { didSet { persist() } }
     var forcedMode: String? { didSet { persist() } }
     var muteWhileTerminalFrontmost: Bool { didSet { persist() } }
     /// The display's `localizedName`, or nil for the menu bar's. Held even while
@@ -41,8 +42,11 @@ final class SettingsStore {
     ///
     /// The setter assigns to the stored property rather than to a copy, so the
     /// `didSet` above still fires — a subscript that skipped it would move the
-    /// switch on screen and forget it by the next launch, which is the one
+    /// picker on screen and forget it by the next launch, which is the one
     /// failure mode this whole store exists to prevent.
+    ///
+    /// Both accessors, so `store[cue].select(name)` mutates in place through the
+    /// pair rather than needing a copy at the call site.
     subscript(cue: SoundCue) -> CueSound {
         get {
             switch cue {
@@ -73,6 +77,7 @@ final class SettingsStore {
         doNotDisturb = settings.doNotDisturb
         logging = settings.logging
         debugTint = settings.debugTint
+        aboveOtherNotchHUDs = settings.aboveOtherNotchHUDs
         forcedMode = settings.forcedMode
         muteWhileTerminalFrontmost = settings.muteWhileTerminalFrontmost
         preferredDisplay = settings.preferredDisplay
@@ -88,6 +93,7 @@ final class SettingsStore {
         s.doNotDisturb = doNotDisturb
         s.logging = logging
         s.debugTint = debugTint
+        s.aboveOtherNotchHUDs = aboveOtherNotchHUDs
         s.forcedMode = forcedMode
         s.muteWhileTerminalFrontmost = muteWhileTerminalFrontmost
         s.preferredDisplay = preferredDisplay

@@ -99,7 +99,8 @@ final class AppController: NSObject, NSApplicationDelegate {
                 width: NotchGeometryResolver.panelWidth,
                 height: NotchGeometryResolver.panelHeight)
 
-        panel = IslandPanel(contentRect: frame)
+        panel = IslandPanel(
+            contentRect: frame, aboveOtherNotchHUDs: settings.aboveOtherNotchHUDs)
         let host = NSHostingView(rootView: IslandView(model: model))
         host.frame = CGRect(origin: .zero, size: frame.size)
         host.autoresizingMask = [.width, .height]
@@ -304,7 +305,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// Tracking updates unconditionally even while the HUD is disabled, so
     /// re-enabling it never fires a catch-up sound for a transition that
     /// already happened silently. The same holds for every other reason a cue can
-    /// go unheard — the global mute, the cue's own switch, a terminal being
+    /// go unheard — the global mute, the cue being set to None, a terminal being
     /// frontmost: `lastSoundCue` records the edge either way, so none of them can
     /// leave a backlog that rings late when the condition lifts. A silenced cue
     /// is silenced, not deferred.
@@ -363,10 +364,10 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     /// The decision itself, with no live state in it.
     ///
-    /// The global mute outranks the per-cue switch, so one click silences
-    /// everything without editing three switches that then have to be put back.
-    /// All of it lives here rather than inside `play` so the preview button can
-    /// ignore the lot — see `previewSound`.
+    /// The global mute outranks a cue's own setting, so one click silences
+    /// everything without setting three pickers to None that then have to be put
+    /// back. All of it lives here rather than inside `play` so the preview button
+    /// can ignore the lot — see `previewSound`.
     ///
     /// The frontmost check comes last because it is the only one that costs
     /// anything, and both of its inputs are autoclosures so that ordering is a
@@ -389,19 +390,28 @@ final class AppController: NSObject, NSApplicationDelegate {
         frontmost bundleID: @autoclosure () -> String?,
         owner ownerBundleID: @autoclosure () -> String? = nil
     ) -> Bool {
-        guard !settings.doNotDisturb, settings[cue].enabled else { return false }
+        // `selectedName`, not `enabled`: a cue set to None keeps the name it had,
+        // so `enabled` is not what decides whether anything rings.
+        guard !settings.doNotDisturb, settings[cue].selectedName != nil else { return false }
         guard settings.muteWhileTerminalFrontmost else { return true }
         if let owner = ownerBundleID() { return bundleID() != owner }
         return !TerminalApps.matches(bundleID: bundleID())
     }
 
-    /// Rings a cue with whatever sound it is set to.
+    /// Rings a cue with whatever sound it is set to, and nothing at all if that
+    /// is None.
     ///
     /// Reads the store at ring time rather than through `applySettings`: there
     /// is no live state to keep in step, so a change to a picker takes effect on
     /// the next cue with nothing to apply in between.
+    ///
+    /// The None guard is what makes this safe to call from the preview button,
+    /// which deliberately skips every gate in `rings` — `name` still holds the
+    /// sound a silenced cue will go back to, and that is not a sound anyone asked
+    /// to hear now.
     private func play(_ cue: SoundCue) {
-        Self.sound(for: cue, named: settings[cue].name)?.play()
+        guard let name = settings[cue].selectedName else { return }
+        Self.sound(for: cue, named: name)?.play()
     }
 
     /// Resolves a stored sound name to something that will actually make a
@@ -424,14 +434,17 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     /// Rings a cue on demand, from the settings window's play button.
     ///
-    /// Deliberately ignores every gate in `rings` — the global mute, the cue's
-    /// own switch, and whether a terminal is frontmost: the button was just
-    /// pressed, and a preview that answers with silence because of a switch
-    /// elsewhere on the pane is indistinguishable from a broken button. The
-    /// frontmost gate makes that sharper rather than softer, because the settings
-    /// window is normally opened *from* a terminal and the app that had focus a
-    /// moment ago is exactly the kind this would mute. It is also the only way to
-    /// audition a sound for a cue you have not turned on yet.
+    /// Deliberately ignores both gates in `rings` — the global mute and whether a
+    /// terminal is frontmost: the button was just pressed, and a preview that
+    /// answers with silence because of a switch elsewhere on the pane is
+    /// indistinguishable from a broken button. The frontmost gate makes that
+    /// sharper rather than softer, because the settings window is normally opened
+    /// *from* a terminal and the app that had focus a moment ago is exactly the
+    /// kind this would mute.
+    ///
+    /// A cue set to None is the one thing it cannot preview, because there is
+    /// nothing to play. The pane disables the button rather than leaving it to
+    /// answer with silence — see `soundRow`.
     private func previewSound(_ cue: SoundCue) {
         play(cue)
     }
@@ -500,6 +513,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         // hover, with no relaunch and without disturbing a dwell already
         // counting down under the pointer.
         hoverMonitor.openDelay = HoverDelay.seconds(new.hoverOpenDelayMilliseconds)
+
+        // Above the `hudEnabled` guard for the same reason as the two settings
+        // around it. Assigning the level on a panel that is already on screen is
+        // enough — the window server restacks it immediately, so the switch is
+        // live and does not wait for the panel to be ordered out and back.
+        panel.level = IslandPanel.level(aboveOtherNotchHUDs: new.aboveOtherNotchHUDs)
 
         // Above the `hudEnabled` guard, which returns early on every change that
         // is not the HUD switch itself — a display picked while the HUD is

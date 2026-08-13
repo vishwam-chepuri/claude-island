@@ -73,7 +73,14 @@ enum SelfTest {
             return 1
         }
 
-        let panel = IslandPanel(contentRect: geometry.panelRect)
+        // Built from the stored settings rather than from the defaults, so the
+        // notch-HUD switch is measured as it is actually run. It matters for one
+        // check: with the switch on, click-through is tested at the level the
+        // user has chosen and passes against another notch app, where the
+        // default level can only report the conflict and skip.
+        let stored = IslandSettings.load()
+        let panel = IslandPanel(
+            contentRect: geometry.panelRect, aboveOtherNotchHUDs: stored.aboveOtherNotchHUDs)
         let model = IslandViewModel()
         model.setGeometry(geometry)
         let host = NSHostingViewShim(model: model, size: geometry.panelRect.size)
@@ -106,6 +113,37 @@ enum SelfTest {
                 passed: panel.level.rawValue > NSWindow.Level.statusBar.rawValue,
                 detail:
                     "level=\(panel.level.rawValue) statusBar=\(NSWindow.Level.statusBar.rawValue)"))
+        // The level arithmetic, asserted rather than trusted to a comment. The
+        // off case is what every build before the switch shipped with, and the
+        // on case has to clear screen-saver level or it buys nothing: that is
+        // where the notch apps it exists to beat are sitting.
+        checks.append(
+            Check(
+                name: "with the notch-HUD switch off, the level is the conservative one",
+                passed: IslandPanel.level(aboveOtherNotchHUDs: false).rawValue
+                    == NSWindow.Level.statusBar.rawValue + 1,
+                detail: "off=\(IslandPanel.level(aboveOtherNotchHUDs: false).rawValue) "
+                    + "statusBar=\(NSWindow.Level.statusBar.rawValue)"))
+        checks.append(
+            Check(
+                name: "with the notch-HUD switch on, the level clears where notch apps sit",
+                passed: IslandPanel.level(aboveOtherNotchHUDs: true).rawValue
+                    > NSWindow.Level.screenSaver.rawValue,
+                detail: "on=\(IslandPanel.level(aboveOtherNotchHUDs: true).rawValue) "
+                    + "screenSaver=\(NSWindow.Level.screenSaver.rawValue)"))
+        // Asserted against the policy function rather than against `panel`, whose
+        // level now depends on the stored switch: a check that compared the two
+        // would fail for anyone who had turned it on.
+        checks.append(
+            Check(
+                name: "init honours the switch, and honours its absence",
+                passed: IslandPanel(contentRect: geometry.panelRect, aboveOtherNotchHUDs: true)
+                    .level == IslandPanel.level(aboveOtherNotchHUDs: true)
+                    && IslandPanel(contentRect: geometry.panelRect).level
+                        == IslandPanel.level(aboveOtherNotchHUDs: false),
+                detail: "on="
+                    + "\(IslandPanel(contentRect: geometry.panelRect, aboveOtherNotchHUDs: true).level.rawValue) "
+                    + "omitted=\(IslandPanel(contentRect: geometry.panelRect).level.rawValue)"))
         checks.append(
             Check(
                 name: "collection behavior spans spaces and full screen",
@@ -779,12 +817,32 @@ enum SelfTest {
     /// window fails quietly — a toggle that moves on screen, does nothing, and
     /// forgets itself by the next launch looks exactly like one that works.
     private static func settingsChecks(_ checks: inout [Check]) {
+        // The window refuses the toolbar `NavigationSplitView` hangs off it —
+        // a sidebar toggle for a sidebar that is pinned, and a tracking
+        // separator that truncated the window's title to the sidebar's column.
+        // Asserted by handing one over rather than by waiting for SwiftUI to
+        // install its own: the contract is that this window never carries a
+        // toolbar whoever sets it, and a check that watched for SwiftUI's would
+        // pass vacuously on the day SwiftUI stopped installing one.
+        let window = SettingsWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: true)
+        window.toolbar = NSToolbar(identifier: "selftest")
+        checks.append(
+            Check(
+                name: "the settings window refuses a toolbar",
+                passed: window.toolbar == nil,
+                detail: "toolbar=\(window.toolbar.map(\.identifier) ?? "nil")"))
+
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("island-selftest-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
         var seeded = IslandSettings()
         seeded.hudEnabled = true
+        // No pane binds this one — it is reachable only by hand-editing the file
+        // or touching the sentinel. See the check below.
+        seeded.debugTint = true
         let store = SettingsStore(seeded, root: root)
 
         var applied: [IslandSettings] = []
@@ -814,9 +872,21 @@ enum SelfTest {
                     && reloaded.forcedMode == "peek",
                 detail: "\(reloaded)"))
 
+        // `persist()` writes the whole snapshot, so every setting the store does
+        // not hold is a setting the next toggle silently erases. `debugTint` is
+        // the only one with no control bound to it, which makes it the only one
+        // whose property looks unused and invites deletion — and the user who
+        // would lose it is the one who set it in the file precisely because
+        // there is no switch to notice it was gone.
+        checks.append(
+            Check(
+                name: "a setting with no control survives a change made in the window",
+                passed: reloaded.debugTint,
+                detail: "on disk: debugTint=\(reloaded.debugTint)"))
+
         // The pane writes a cue's settings through a subscript rather than to a
         // named property. A subscript setter that assigned to a copy would still
-        // move the switch on screen and still lose it by the next launch.
+        // move the picker on screen and still lose it by the next launch.
         store[.waiting] = CueSound(enabled: false, name: "Tink")
         let sounds = IslandSettings.load(root: root)
         checks.append(
@@ -825,6 +895,18 @@ enum SelfTest {
                 passed: sounds[.waiting] == CueSound(enabled: false, name: "Tink")
                     && sounds[.done] == SoundCue.done.defaultSound,
                 detail: "waiting=\(sounds[.waiting]) done=\(sounds[.done])"))
+
+        // Exactly what the picker does when None is chosen: a mutating call
+        // *through* the subscript, which needs both accessors to reach disk. A
+        // getter-only subscript compiles into a copy, mutates that, and throws it
+        // away — the picker would snap back the moment the view redrew.
+        store[.done].select(nil)
+        let silenced = IslandSettings.load(root: root)
+        checks.append(
+            Check(
+                name: "picking None persists, keeping the sound the cue goes back to",
+                passed: silenced[.done].selectedName == nil && silenced[.done].name == "Glass",
+                detail: "done=\(silenced[.done])"))
 
         // The display is stored as a name that may well not be attached, so
         // nothing along the write path is allowed to "helpfully" drop it — the
@@ -865,6 +947,19 @@ enum SelfTest {
                 detail: "on disk: \(IslandSettings.load(root: root).hoverOpenDelayMilliseconds) "
                     + "applied: \(applied.last?.hoverOpenDelayMilliseconds ?? -1)"))
         store.hoverOpenDelayMilliseconds = HoverDelay.default
+
+        // The switch has to reach the app as well as the file: the level is read
+        // once at launch and then only ever again through `onChange`, so a value
+        // that persisted but never applied would move nothing until a relaunch.
+        store.aboveOtherNotchHUDs = true
+        checks.append(
+            Check(
+                name: "the notch-HUD switch reaches both the file and the app",
+                passed: IslandSettings.load(root: root).aboveOtherNotchHUDs
+                    && applied.last?.aboveOtherNotchHUDs == true,
+                detail: "on disk: \(IslandSettings.load(root: root).aboveOtherNotchHUDs) "
+                    + "applied: \(applied.last?.aboveOtherNotchHUDs.description ?? "none")"))
+        store.aboveOtherNotchHUDs = false
 
         // The window writes a string; the HUD needs a tier. A typo must leave
         // the HUD unpinned rather than pin it to something arbitrary.
@@ -1097,15 +1192,15 @@ enum SelfTest {
                 detail: "safari=\(AppController.rings(.done, under: on, frontmost: "com.apple.Safari")) "
                     + "nil=\(AppController.rings(.done, under: on, frontmost: nil))"))
 
-        // The gate only ever subtracts. It cannot un-mute a cue that the switches
-        // above it already turned off, in either order.
+        // The gate only ever subtracts. It cannot un-mute a cue that the mute
+        // above it or the cue's own picker already silenced, in either order.
         var mutedToo = on
         mutedToo.doNotDisturb = true
         var cueOff = on
-        cueOff[.waiting] = CueSound(enabled: false, name: "Pop")
+        cueOff[.waiting].select(nil)
         checks.append(
             Check(
-                name: "the frontmost gate never overrides the mute or a cue's own switch",
+                name: "the frontmost gate never overrides the mute or a cue set to None",
                 passed: !AppController.rings(.done, under: mutedToo, frontmost: "com.apple.Safari")
                     && !AppController.rings(.waiting, under: cueOff, frontmost: "com.apple.Safari"),
                 detail: "muted=\(AppController.rings(.done, under: mutedToo, frontmost: nil)) "
@@ -1588,11 +1683,14 @@ enum SelfTest {
         await stableSizeChecks(&checks, model: model)
     }
 
-    /// Browsing the switcher must not resize the card.
+    /// Browsing the switcher must not change the card's width — and must change
+    /// its height.
     ///
-    /// It used to: the card was measured from the *selected* session, so its
-    /// width followed that session's name length and its height followed that
-    /// session's tool count. Every click reflowed the whole HUD.
+    /// The width used to follow the selected session's name length, and because
+    /// the shape is centred on the camera, every click reflowed the whole HUD
+    /// sideways. The height went the other way: measured across all sessions, a
+    /// sparse session was drawn with room for a busy one's trail and plan below
+    /// it. So these two axes are checked in opposite directions on purpose.
     private static func stableSizeChecks(_ checks: inout [Check], model: IslandViewModel) async {
         var short = session("s", state: .thinking)
         short.cwd = "/tmp/ui"
@@ -1649,15 +1747,25 @@ enum SelfTest {
                 detail: "\(sizeWithShort.width) vs \(sizeWithLong.width)"))
         checks.append(
             Check(
-                name: "switcher height does not change when browsing sessions",
-                passed: abs(sizeWithShort.height - sizeWithLong.height) < 0.5,
-                detail: "\(sizeWithShort.height) vs \(sizeWithLong.height)"))
-        checks.append(
-            Check(
                 name: "the card is sized for the widest session, not the shown one",
                 passed: sizeWithShort.width
                     >= model.notchGap + 2 * model.leftClusterWidth(for: long),
                 detail: "width=\(sizeWithShort.width)"))
+        // `long` has three finished calls and a plan; `short` has neither, so a
+        // card measured from the session on screen has to be the shorter one.
+        checks.append(
+            Check(
+                name: "switcher height shrinks to the shown session's own blocks",
+                passed: sizeWithShort.height < sizeWithLong.height - 0.5,
+                detail: "short=\(sizeWithShort.height) long=\(sizeWithLong.height)"))
+        checks.append(
+            Check(
+                name: "no session's card is taller than the stated ceiling",
+                passed: max(sizeWithShort.height, sizeWithLong.height)
+                    <= model.expandedMaxHeight + 0.5,
+                detail:
+                    "short=\(sizeWithShort.height) long=\(sizeWithLong.height) "
+                    + "max=\(model.expandedMaxHeight)"))
 
         // The three checks above compare `model.shapeSize`, a hand-tallied
         // constant sum that reserves one flat `revealRowHeight` no matter what
@@ -1739,8 +1847,8 @@ enum SelfTest {
             TaskItem(id: "2", subject: "a reasonably long in-flight task", status: .inProgress),
         ])
 
-        // Five sessions, so the switcher is full and the overflow line shows,
-        // and a 5-hour window so the tallest chrome is the one measured.
+        // Five sessions, so the switcher's viewport is full and one row sits
+        // below the fold, and a 5-hour window so the tallest chrome is measured.
         let others = (0..<4).map { session("other\($0)", state: .thinking) }
         model.apply(
             HUDSnapshot(
@@ -1763,13 +1871,68 @@ enum SelfTest {
         checks.append(
             Check(
                 name: "the expanded card fits inside its panel",
-                passed: size.height <= NotchGeometryResolver.panelHeight,
-                detail: "card=\(size.height) panel=\(NotchGeometryResolver.panelHeight)"))
+                passed: model.expandedMaxHeight <= NotchGeometryResolver.panelHeight,
+                detail: "tallest=\(model.expandedMaxHeight) panel=\(NotchGeometryResolver.panelHeight)"
+            ))
         checks.append(
             Check(
-                name: "sessions beyond the switcher's rows are counted, not dropped",
+                name: "sessions beyond the switcher's rows are listed, not dropped",
                 passed: model.sessionOverflowCount == 1,
-                detail: "overflow=\(model.sessionOverflowCount) of \(model.allSessions.count)"))
+                detail: "below the fold=\(model.sessionOverflowCount) of \(model.allSessions.count)"))
+
+        // The viewport is whole rows plus a fixed sliver, so it only lands where
+        // it means to if the budgeted row height matches the row a session
+        // actually draws as. Off by a point and the sliver is a different depth
+        // than the fade drawn over it, four rows down.
+        let rowHost = NSHostingView(
+            rootView: SessionRow(candidate: busy, isShown: true, onSelect: {})
+                .frame(width: model.cardContentWidth))
+        let rowHeight = rowHost.fittingSize.height
+        checks.append(
+            Check(
+                name: "a session row draws at the height the switcher budgets for it",
+                passed: abs(rowHeight - IslandViewModel.sessionRowHeight) <= 0.5,
+                detail: "row=\(rowHeight) budgeted=\(IslandViewModel.sessionRowHeight)"))
+
+        // What scrolling is for: the ninth session costs the card nothing, so a
+        // busy machine does not push the trail off the bottom of the panel.
+        model.apply(
+            HUDSnapshot(
+                primary: busy,
+                others: others + (0..<4).map { session("late\($0)", state: .thinking) },
+                rateLimit: RateLimitWindow(
+                    usedPercentage: 74, resetsAt: Date().addingTimeInterval(4_320))))
+        let withMore = model.shapeSize.height
+        checks.append(
+            Check(
+                name: "sessions past the fourth scroll instead of growing the card",
+                passed: abs(withMore - size.height) <= 0.5,
+                detail: "9 sessions=\(withMore) 5 sessions=\(size.height)"))
+
+        // The sparse card is the case the flexible height introduced, and the one
+        // a tally aimed at the busy card can undercount: with no trail, no plan
+        // and no chips there is nothing left over to absorb an error, so a block
+        // measured a few points short is clipped rather than merely tight.
+        model.select("other0")
+        let sparseSize = model.shapeSize
+        if let sparse = model.displaySession {
+            let sparseHost = NSHostingView(rootView: ExpandedContent(session: sparse, model: model))
+            sparseHost.frame = CGRect(origin: .zero, size: sparseSize)
+            sparseHost.layoutSubtreeIfNeeded()
+            let sparseNeeded = sparseHost.fittingSize.height
+
+            checks.append(
+                Check(
+                    name: "a sparse session's card is never shorter than its contents",
+                    passed: sparseNeeded <= sparseSize.height + 0.5,
+                    detail: "content=\(sparseNeeded) card=\(sparseSize.height)"))
+            checks.append(
+                Check(
+                    name: "the black space a busy session needs is not held for a sparse one",
+                    passed: sparseSize.height < size.height - 0.5,
+                    detail: "sparse=\(sparseSize.height) busy=\(size.height)"))
+        }
+        model.select("other0")
 
         model.forcedMode = nil
         model.apply(HUDSnapshot())
@@ -1990,6 +2153,41 @@ enum SelfTest {
                     name: "\(label) with an answer block is never shorter than its contents",
                     passed: needed <= size.height + 0.5,
                     detail: "content=\(needed) card=\(size.height)"))
+        }
+
+        // A card showing a session that is *not* the blocked one draws a line
+        // naming the one that is, and that line has a height of its own. The card
+        // used to reserve the whole answer block here — being sized to the
+        // session on screen, it now reserves only what it draws, so the notice is
+        // a term in the budget rather than a passenger in somebody else's.
+        //
+        // Reaching it takes two blocked sessions: the shown one holds a prompt
+        // this HUD cannot settle (answered in the terminal, so no token), while
+        // the second holds one it can.
+        let terminalAsk = PermissionAsk(
+            toolName: "Edit", kind: .write, target: "/tmp/x", since: Date(), siblingCount: 2)
+        let elsewhere = session("elsewhere", state: .awaitingPermission(terminalAsk))
+        model.apply(HUDSnapshot(primary: elsewhere, others: [waiting]))
+        model.forcedMode = .expanded
+
+        checks.append(
+            Check(
+                name: "a prompt held by another session is named, not silently reserved for",
+                passed: model.answerablePrompt == nil && model.anyAnswerablePrompt,
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+
+        if let shown = model.displaySession {
+            let noticeSize = model.shapeSize
+            let noticeHost = NSHostingView(rootView: ExpandedContent(session: shown, model: model))
+            noticeHost.frame = CGRect(origin: .zero, size: noticeSize)
+            noticeHost.layoutSubtreeIfNeeded()
+            let noticeNeeded = noticeHost.fittingSize.height
+
+            checks.append(
+                Check(
+                    name: "the card fits the line pointing at another session's prompt",
+                    passed: noticeNeeded <= noticeSize.height + 0.5,
+                    detail: "content=\(noticeNeeded) card=\(noticeSize.height)"))
         }
 
         // The point of the block is that you can read what you are approving, so
