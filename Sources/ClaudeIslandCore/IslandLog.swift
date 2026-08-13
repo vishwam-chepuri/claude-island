@@ -43,6 +43,20 @@ public final class IslandLog: @unchecked Sendable {
 
     public static let disabled = IslandLog(enabled: false)
 
+    /// The one log the app writes through.
+    ///
+    /// Shared rather than one per owner because each instance opens its own
+    /// `FileHandle` and counts its own bytes: two of them appending to the same
+    /// file rotate independently, and the one that did not rotate goes on
+    /// writing into `log.1` — the file the next rotation deletes. Sharing is
+    /// also the only way the settings pane's logging switch reaches every
+    /// writer, since `setEnabled` is per instance.
+    ///
+    /// Lazy, like every `static let`, so nothing is read from disk until
+    /// something logs — which matters because `fromEnvironment` reads settings
+    /// and must not run before `IslandSettings.bootstrap()`.
+    public static let shared = fromEnvironment()
+
     private let queue = DispatchQueue(label: "island.log", qos: .utility)
     private var enabled: Bool
     private var handle: FileHandle?

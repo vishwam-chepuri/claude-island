@@ -3,7 +3,10 @@ import ClaudeIslandCore
 
 /// Binds `OwnerResolution` to the running system, and raises the winner.
 enum SessionOwner {
-    private static let log = IslandLog.fromEnvironment()
+    /// `IslandLog.shared`, not a second `fromEnvironment()`: two instances mean
+    /// two file handles on one file, each rotating on its own byte count, and
+    /// the one that did not rotate carries on appending to `log.1`.
+    private static var log: IslandLog { .shared }
 
     /// Resolve against the live process table and application list.
     static func resolve(_ ancestors: [Int32]) -> OwnerResolution.Outcome {

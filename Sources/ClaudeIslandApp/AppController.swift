@@ -4,7 +4,9 @@ import SwiftUI
 
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate {
-    private let log = IslandLog.fromEnvironment()
+    /// The process-wide log, shared with `SessionOwner` — see `IslandLog.shared`.
+    /// `applySettings` drives its switch, so that switch reaches every writer.
+    private let log = IslandLog.shared
 
     private var store: SessionStore!
     private var server: SocketServer!
