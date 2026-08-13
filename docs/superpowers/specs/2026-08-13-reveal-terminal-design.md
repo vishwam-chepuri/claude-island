@@ -206,10 +206,13 @@ Unit tests, in Core, with no window server:
 
 - The splice: normal object, `{}`, leading whitespace, and a non-`{` payload.
   Also a payload that already carries an `_island_pids` key — the spliced copy
-  goes in first, so Foundation's decoder takes the later one and the payload's
-  own value wins. That is acceptable rather than desirable: the key is
-  namespaced and Claude Code does not emit it. The test exists to pin that the
-  collision produces valid JSON and a defined winner rather than a crash.
+  goes in first, and `JSONDecoder` keeps the **first** occurrence of a duplicate
+  key, so the client's real measurement overrides the payload's claim.
+  (Measured, not assumed: `{"_island_pids":[11,22],"_island_pids":[7]}` decodes
+  to `[11,22]`.) That is also the answer to the security question — the key is
+  namespaced and Claude Code does not emit it, so the only way one arrives is
+  something trying to claim an ancestry it does not have, and it loses. The test
+  pins both halves: valid JSON out of the collision, and which value survives.
 - `OwnerResolution.first` against a fake lookup: helper-then-app chains, chains
   with no regular app, empty chains, and dead pids.
 - The mute matrix: resolved-and-matching, resolved-and-not, unresolved-falls-back.

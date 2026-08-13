@@ -509,6 +509,31 @@ func registerSocketPipelineTests() {
             await expectEqual(raw, input, "the client rewrote a payload it did not understand")
         }
 
+        // The key is namespaced and Claude Code does not emit it, so the only
+        // way a payload arrives already carrying one is something trying to
+        // claim an ancestry it does not have. It does not get to: the splice
+        // writes its copy immediately after the `{`, and `JSONDecoder` keeps the
+        // *first* occurrence of a duplicate key, so the client's real
+        // measurement wins over the payload's claim. Pins both halves — that the
+        // collision still produces valid JSON, and which of the two survives it.
+        test("A payload's own ancestry loses to the client's measured chain") {
+            let binary = try await require(notifyBinary(), "claude-island-notify is not built")
+            let raw = try await require(
+                captureRawPayload(
+                    from: binary,
+                    stdin: Data(
+                        #"{"session_id":"dup","hook_event_name":"Stop","_island_pids":[11,22]}"#
+                            .utf8)))
+            let envelope = try await require(try HookEnvelope.decode(raw))
+            await expectEqual(envelope.sessionID, "dup")
+            await expectEqual(
+                envelope.ancestorPIDs.first, ProcessInfo.processInfo.processIdentifier,
+                "the payload's injected ancestry beat the client's own measurement")
+            await expect(
+                !envelope.ancestorPIDs.contains(11) && !envelope.ancestorPIDs.contains(22),
+                "the payload's pids survived into the decoded chain: \(envelope.ancestorPIDs)")
+        }
+
         test("Splicing preserves every original key") {
             let binary = try await require(notifyBinary(), "claude-island-notify is not built")
             let raw = try await require(
