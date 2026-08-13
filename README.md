@@ -94,7 +94,7 @@ nothing on screen would say the app had started.
 The window is a sidebar with one pane per concern:
 
 ```
-General     Status · Show the HUD · Launch at login
+General     Event pipeline · Status · Show the HUD · Launch at login
 Appearance  A live preview of the island, posed at each tier
             · Show it on … · Open on hover after …
 Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per
@@ -504,6 +504,16 @@ checks are reported as skipped rather than silently passing. Run through
 `swift run` rather than from the bundle, the launch-at-login check skips for the
 same reason: there is nothing there to register.
 
+Neither reaches the permission contract, which turns on Claude Code's behaviour
+rather than on this code — and `PermissionRequest` fires only on the interactive
+path, so a headless `claude -p` run cannot exercise it at all. `Scripts/verify/`
+holds the harnesses that can: a pty driving a real session, a synthetic suite
+over the real socket, and an accessibility walker that presses the card's
+buttons by title rather than by coordinate. Re-run them when Claude Code
+updates — a broken contract shows up as a button that quietly stopped working,
+and nothing else here would catch it. That folder's own README says what each
+one proves.
+
 ### Known conflict: other notch HUDs
 
 The panel sits at `.statusBar + 1` (level 26). Some notch apps use far higher
@@ -617,11 +627,13 @@ Sources/ClaudeIslandApp/      panel, views, settings window, CLI entry points
 Sources/claude-island-notify/ hook client (Darwin only)
 Tests/ClaudeIslandCoreTests/  suites + TinyTest harness
 Fixtures/                     replay logs
+Scripts/install.sh            the one-file installer: clone, build, wire hooks
 Scripts/bundle.sh             .app assembly + ad-hoc signing
 Scripts/make-icon.swift       draws Resources/AppIcon.icns from the app's shapes
+Scripts/verify/               harnesses for the permission contract
 Resources/AppIcon.icns        committed, so an install renders no pictures
 docs/images/                  the screenshots above
-docs/superpowers/specs/       design document
+docs/superpowers/             design documents and plans
 ```
 
 Every island shot above is the shipping views, drawn by the real panel at the
