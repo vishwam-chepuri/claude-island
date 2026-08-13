@@ -1630,15 +1630,24 @@ enum SelfTest {
         // the same `NSHostingView` + `fittingSize` technique `cardFitChecks`
         // uses below to catch `expandedChromeHeight` drifting from the actual
         // card, aimed here at one row instead of the whole thing.
-        let goneRowHeight = Self.measuredHeight(of: RevealRow(session: short, model: model))
-        let ownerRowHeight = Self.measuredHeight(of: RevealRow(session: long, model: model))
+        //
+        // `.content`, not the row itself. `RevealRow.body` ends in
+        // `.frame(height: revealRowHeight)`, so measuring the row measures that
+        // frame and nothing else: 40pt text with 30pt of padding inside it still
+        // reports 20, and the check passes while the card clips. Measured with
+        // exactly that content, the unframed row comes to 107 and this fails,
+        // which is the point. Today it is 20.0 for the button and 10.0 for the
+        // disabled text, so the budget holds with room to spare, and anything
+        // that outgrows it fails here instead of being silently cut off.
+        let goneRowHeight = Self.measuredHeight(of: RevealRow(session: short, model: model).content)
+        let ownerRowHeight = Self.measuredHeight(of: RevealRow(session: long, model: model).content)
         checks.append(
             Check(
-                name: "the reveal row's real height is fixed across owner states",
-                passed: abs(goneRowHeight - IslandViewModel.revealRowHeight) < 0.5
-                    && abs(ownerRowHeight - IslandViewModel.revealRowHeight) < 0.5,
+                name: "the reveal row's content fits the height the card reserves",
+                passed: goneRowHeight <= IslandViewModel.revealRowHeight + 0.5
+                    && ownerRowHeight <= IslandViewModel.revealRowHeight + 0.5,
                 detail: "gone=\(goneRowHeight) owner=\(ownerRowHeight) "
-                    + "fixed=\(IslandViewModel.revealRowHeight)"))
+                    + "reserved=\(IslandViewModel.revealRowHeight)"))
 
         model.forcedMode = nil
         model.apply(HUDSnapshot())

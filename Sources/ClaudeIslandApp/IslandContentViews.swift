@@ -920,38 +920,48 @@ struct RevealRow: View {
     @Bindable var model: IslandViewModel
 
     var body: some View {
-        Group {
-            switch model.owner(for: session) {
-            case .owner(let app):
-                Button {
-                    model.revealOwner(of: session)
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.up.forward.app")
-                            .font(.system(size: 8, weight: .bold))
-                        // Names the destination rather than saying "Reveal":
-                        // at app-level granularity that name is the whole
-                        // promise being made.
-                        Text("Reveal in \(app.name)")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(IslandPalette.running))
-                }
-                .buttonStyle(.plain)
+        content
+            .frame(height: IslandViewModel.revealRowHeight, alignment: .leading)
+    }
 
-            case .noOwningApp:
-                unavailable("background job — no terminal")
-            case .gone:
-                unavailable("terminal has quit")
-            case .unknown:
-                unavailable("terminal unknown")
+    /// The row before its height is fixed.
+    ///
+    /// Split out so --selftest can measure what the row *wants* to be. Measuring
+    /// `body` measures the frame above and nothing else: it answers
+    /// `revealRowHeight` for any content at all, including content twice that
+    /// tall being quietly clipped. Two versions of that check shipped before
+    /// anyone noticed it could not fail.
+    @ViewBuilder
+    var content: some View {
+        switch model.owner(for: session) {
+        case .owner(let app):
+            Button {
+                model.revealOwner(of: session)
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.up.forward.app")
+                        .font(.system(size: 8, weight: .bold))
+                    // Names the destination rather than saying "Reveal":
+                    // at app-level granularity that name is the whole
+                    // promise being made.
+                    Text("Reveal in \(app.name)")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.black)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(IslandPalette.running))
             }
+            .buttonStyle(.plain)
+
+        case .noOwningApp:
+            unavailable("background job — no terminal")
+        case .gone:
+            unavailable("terminal has quit")
+        case .unknown:
+            unavailable("terminal unknown")
         }
-        .frame(height: IslandViewModel.revealRowHeight, alignment: .leading)
     }
 
     /// Disabled with a reason rather than hidden, matching how this card
