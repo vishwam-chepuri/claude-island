@@ -1111,6 +1111,27 @@ enum SelfTest {
                 detail: "muted=\(AppController.rings(.done, under: mutedToo, frontmost: nil)) "
                     + "cueOff=\(AppController.rings(.waiting, under: cueOff, frontmost: nil))"))
 
+        // Both ids reach `rings` as autoclosures, and nothing may resolve them
+        // until the switches above have passed. That is the difference between
+        // free and a walk up eight ancestors — `kill` per pid, then
+        // `NSRunningApplication` per pid, on the main thread — on every state
+        // edge of every session, on a default install where this switch is off
+        // and the answer is discarded. Counted rather than argued.
+        var probed = 0
+        func probe() -> String? {
+            probed += 1
+            return "com.apple.Terminal"
+        }
+        _ = AppController.rings(.done, under: off, frontmost: probe(), owner: probe())
+        let probesWithGateOff = probed
+        _ = AppController.rings(.done, under: on, frontmost: probe(), owner: probe())
+        checks.append(
+            Check(
+                name: "the mute asks the system nothing until it can use the answer",
+                passed: probesWithGateOff == 0 && probed > 0,
+                detail: "probes with the gate off=\(probesWithGateOff), "
+                    + "on=\(probed - probesWithGateOff)"))
+
         // The upgrade: a session whose own terminal is in front goes quiet,
         // while a session running in a *different* terminal still rings. The
         // old heuristic could not tell those apart and silenced both.
