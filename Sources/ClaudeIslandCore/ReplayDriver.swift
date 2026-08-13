@@ -91,20 +91,17 @@ public struct ReplayDriver: Sendable {
 extension HookEnvelope {
     /// Same payload, different arrival time. Replay assigns virtual timestamps.
     ///
-    /// Every other field is forwarded unchanged — this was, for a while, not
-    /// true of `ancestorPIDs`: the memberwise call here predates that field by
-    /// a lot of history and was never updated when it was added, so a replayed
-    /// envelope silently lost its ancestry on the very first virtual tick. No
-    /// existing fixture carried `_island_pids`, so nothing caught it until one
-    /// did.
+    /// A copy with one field written, rather than a memberwise call listing the
+    /// other seventeen. That list is how this quietly lost `ancestorPIDs`: the
+    /// call predated the field by a lot of history and nobody updated it when it
+    /// arrived, so a replayed envelope dropped its ancestry on the very first
+    /// virtual tick, and no fixture carried `_island_pids` to catch it. Naming
+    /// every field is a rule the compiler will not enforce; copying is one it
+    /// cannot break, and it is why the eighteenth field cannot repeat the story.
     func restamped(_ date: Date) -> HookEnvelope {
-        HookEnvelope(
-            sessionID: sessionID, event: event, cwd: cwd, transcriptPath: transcriptPath,
-            toolName: toolName, toolInput: toolInput, message: message, trigger: trigger,
-            source: source, reason: reason, contextWindowSize: contextWindowSize,
-            linesAdded: linesAdded, linesRemoved: linesRemoved, rateLimit: rateLimit,
-            receivedAt: date, ancestorPIDs: ancestorPIDs, decisionToken: decisionToken,
-            siblingPromptCount: siblingPromptCount)
+        var copy = self
+        copy.receivedAt = date
+        return copy
     }
 }
 

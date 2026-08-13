@@ -55,6 +55,17 @@ func registerOwnerResolutionTests() {
             await expectEqual(env.ancestorPIDs, [])
         }
 
+        // The ancestry is the one field that arrives over the socket rather than
+        // being measured here, so it is the one that can carry a pid no process
+        // ever had. `kill(0, 0)` and `kill(-1, 0)` are process-group signals,
+        // not liveness probes — both would report an ancestor that is alive.
+        test("Non-positive pids are dropped at the wire") {
+            let json = Data(
+                #"{"session_id":"w","hook_event_name":"Stop","_island_pids":[0,-1,1797]}"#.utf8)
+            let env = try await require(try HookEnvelope.decode(json))
+            await expectEqual(env.ancestorPIDs, [1797])
+        }
+
         // Mirrors the measured chain: claude → zsh → Code Helper → Code. Only
         // the last is a regular app; the helper is deliberately not, which is
         // what makes "first regular ancestor" land on the bundle root without

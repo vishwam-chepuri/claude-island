@@ -119,8 +119,11 @@ public struct HookEnvelope: Sendable, Equatable {
     /// beside the session table instead of one inside each session.
     public let rateLimit: RateLimitWindow?
     /// Wall clock, used for session age and expiry. Injected so tests are
-    /// deterministic.
-    public let receivedAt: Date
+    /// deterministic, and `var` so replay can restamp an envelope onto its
+    /// virtual clock by copying it — see `restamped`, which used to hand-list
+    /// every other field instead and silently dropped the one nobody
+    /// remembered to add.
+    public var receivedAt: Date
     /// Ancestor pids of the hook client, nearest first, as stamped by
     /// `claude-island-notify`. Empty for replayed traces, synthetic events and
     /// status-line payloads — never a reason to clear an ancestry already held.
@@ -128,10 +131,12 @@ public struct HookEnvelope: Sendable, Equatable {
     /// Handle for answering this payload back down the connection it arrived on.
     ///
     /// Stamped by the transport rather than decoded, because it identifies a
-    /// live socket rather than anything in the JSON — which is also why it is
-    /// the only mutable field here. Non-nil only for a `PermissionRequest` whose
-    /// client is still waiting, so `nil` correctly means "not answerable": a
-    /// replayed trace or a fire-and-forget client both land that way.
+    /// live socket rather than anything in the JSON — which is why it is `var`
+    /// while the decoded fields are `let`. `siblingPromptCount` is `var` for
+    /// exactly the same reason; `receivedAt` is one because replay restamps it.
+    /// Non-nil only for a `PermissionRequest` whose client is still waiting, so
+    /// `nil` correctly means "not answerable": a replayed trace or a
+    /// fire-and-forget client both land that way.
     public var decisionToken: UInt64?
     /// How many *other* prompts are live for this session at the moment this one
     /// arrived. Stamped by the transport for the same reason as `decisionToken`:
@@ -343,7 +348,16 @@ extension HookEnvelope {
             delayMs = try? c.decodeIfPresent(Int.self, forKey: .delayMs)
             // `try?` rather than `try`: a malformed `_island_pids` must cost the
             // jump button, not the whole payload.
-            ancestorPIDs = (try? c.decodeIfPresent([Int32].self, forKey: .islandPIDs)) ?? nil
+            //
+            // Filtered to real pids on the way in, because this is the one field
+            // the HUD does not measure for itself — it arrives over the socket,
+            // and `[Int32]` decodes `-1` as happily as `1797`. To `kill(2)` a
+            // non-positive pid is a *process group*: `kill(-1, 0)` addresses
+            // every process the caller may signal and answers yes, so a `[0]` or
+            // `[-1]` on the wire would report a live ancestor that does not
+            // exist. Nothing real is lost — no process has a pid below 1.
+            let pids = (try? c.decodeIfPresent([Int32].self, forKey: .islandPIDs)) ?? nil
+            ancestorPIDs = pids?.filter { $0 > 0 }
         }
     }
 }
