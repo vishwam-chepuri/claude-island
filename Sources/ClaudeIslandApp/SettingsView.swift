@@ -399,18 +399,25 @@ struct SettingsView: View {
                     "Stay quiet while a terminal is frontmost",
                     isOn: $store.muteWhileTerminalFrontmost)
             } footer: {
-                // Says what it does, not what it is for. "Don't interrupt while
-                // I'm watching the session" is the reason to want this and would
-                // be the friendlier label, but it promises something this cannot
-                // know: it sees which app has focus, never which app a session is
-                // running in. The second sentence is the honest half — someone
-                // hitting the false positive should be able to recognise it here
-                // rather than file it as sounds having randomly stopped.
+                // This used to apologise for not knowing which app a session
+                // belonged to. It now does know — the hook client stamps its
+                // process ancestry on every payload, and `OwnerResolution` walks
+                // it to an app — so the mute is exact wherever that resolves,
+                // and the apology only survives for the sessions it cannot
+                // reach. The last sentence is here because this *changed under
+                // people*: anyone who had the switch on will hear cues it used
+                // to swallow, and a setting that quietly starts behaving
+                // differently is worse than one that says so.
                 Text(
-                    "Skips the sound — never the alert on the island — while Terminal, iTerm2, "
-                        + "Ghostty, VS Code, Xcode or another terminal or editor is the app in "
-                        + "front. It can only tell which app you are in, not which one a session "
-                        + "is running in, so a session in a window you cannot see goes quiet too."
+                    "Skips the sound — never the alert on the island — while the app a session "
+                        + "is running in is the app in front. The HUD works that out from the "
+                        + "session's own process ancestry, so only the session you are actually "
+                        + "looking at goes quiet: one running in VS Code keeps ringing while "
+                        + "Terminal is frontmost. A session with no app to resolve — a background "
+                        + "job, a tmux server, one over SSH — falls back to going quiet for any "
+                        + "terminal or editor at all. That fallback used to be the whole rule, so "
+                        + "if you have had this switched on you will now hear cues it swallowed "
+                        + "before."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -447,8 +454,8 @@ struct SettingsView: View {
             "None of these will ring while Play sounds is off. Play previews the chosen sound "
                 + "anyway."
         case (false, true):
-            "None of these will ring while a terminal is frontmost. Play previews the chosen "
-                + "sound anyway."
+            "None of these will ring for a session while the app it is running in is frontmost. "
+                + "Play previews the chosen sound anyway."
         case (false, false):
             "Play previews the chosen sound, whatever these switches say."
         }
