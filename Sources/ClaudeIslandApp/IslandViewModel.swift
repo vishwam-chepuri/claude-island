@@ -775,13 +775,32 @@ final class IslandViewModel {
         ownerCache = next
     }
 
-    /// Raise the session's terminal and dismiss the card.
+    /// Raise the session's terminal and dismiss the card — but only if anything
+    /// was actually raised.
     ///
     /// Dismissing is the point rather than a courtesy: a card left floating
     /// over the app you just jumped to sits on top of the thing you went there
     /// to read.
-    func revealOwner(of session: Session) {
-        SessionOwner.reveal(session.ownerPIDs)
+    ///
+    /// It is also the wrong answer when nothing happened. `reveal` re-resolves
+    /// at click time, so a terminal that quit in the second since the ticker
+    /// last relabelled the row comes back `.gone` and raises nothing. Closing
+    /// the card on that would take the only surface that can explain it off
+    /// screen and leave a click that silently did nothing — the exact failure
+    /// this row exists to prevent, in a card whose position is that a hidden
+    /// control and a broken one look identical. So the card stays, and the
+    /// refresh flips the row to *terminal has quit* under the cursor.
+    ///
+    /// `reveal` is a parameter for the same reason `refreshOwners`' resolver is:
+    /// --selftest has to drive the failing branch, and the real one spawns
+    /// `open`, which would yank the frontmost app out from under the harness.
+    func revealOwner(
+        of session: Session, reveal: ([Int32]) -> Bool = SessionOwner.reveal
+    ) {
+        guard reveal(session.ownerPIDs) else {
+            refreshOwners()
+            return
+        }
         unpin()
     }
 

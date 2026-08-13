@@ -568,7 +568,7 @@ enum SelfTest {
         displayChecks(&checks)
         soundChecks(&checks)
         frontmostMuteChecks(&checks)
-        revealStateChecks(&checks)
+        revealStateChecks(&checks, model: model)
         revealTickerChecks(&checks, model: model)
         await healthChecks(&checks)
         previewIsolationChecks(&checks, live: model)
@@ -1115,14 +1115,15 @@ enum SelfTest {
         AppController.sound(for: cue, named: name)?.name
     }
 
-    /// The four reveal states, driven through `OwnerResolution` rather than the
-    /// live process table so the result does not depend on what is running
-    /// while the harness does.
+    /// The four reveal states, and what the click does with each of its two
+    /// outcomes — driven through `OwnerResolution` and a stubbed raise rather
+    /// than the live process table, so the result does not depend on what is
+    /// running while the harness does.
     ///
     /// Deliberately does not fire a real activation: `open` yanks the frontmost
     /// app, and the focus checks running beside this one would fail as a direct
     /// result.
-    private static func revealStateChecks(_ checks: inout [Check]) {
+    private static func revealStateChecks(_ checks: inout [Check], model: IslandViewModel) {
         let app = OwnerResolution.AppInfo(
             pid: 1797, bundleID: "com.microsoft.VSCode", name: "Visual Studio Code",
             isRegular: true)
@@ -1157,6 +1158,31 @@ enum SelfTest {
             Check(
                 name: "no ancestry reports unknown", passed: unknown == .unknown,
                 detail: "\(unknown)"))
+
+        // The click, with the raise stubbed out — the real one spawns `open` and
+        // would pull the frontmost app away from the checks running beside this.
+        //
+        // A row can be a second out of date: the terminal quits, `reveal`
+        // re-resolves and finds nothing to raise. Dismissing the card there
+        // would leave a click that did nothing with nothing on screen to say so.
+        model.forcedMode = nil
+        model.apply(HUDSnapshot(primary: session("reveal", state: .done)))
+        model.togglePinned()
+        model.revealOwner(of: session("reveal", state: .done)) { _ in false }
+        checks.append(
+            Check(
+                name: "a reveal that raises nothing leaves the card open",
+                passed: model.isPinnedOpen && model.mode == .expanded,
+                detail: "pinned=\(model.isPinnedOpen) mode=\(model.mode)"))
+
+        model.revealOwner(of: session("reveal", state: .done)) { _ in true }
+        checks.append(
+            Check(
+                name: "a reveal that lands dismisses the card",
+                passed: !model.isPinnedOpen,
+                detail: "pinned=\(model.isPinnedOpen)"))
+
+        model.apply(HUDSnapshot())
     }
 
     /// The reveal row's cache can only go stale while the card is open, so the
