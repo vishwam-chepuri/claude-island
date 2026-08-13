@@ -1515,11 +1515,14 @@ enum SelfTest {
         await stableSizeChecks(&checks, model: model)
     }
 
-    /// Browsing the switcher must not resize the card.
+    /// Browsing the switcher must not change the card's width — and must change
+    /// its height.
     ///
-    /// It used to: the card was measured from the *selected* session, so its
-    /// width followed that session's name length and its height followed that
-    /// session's tool count. Every click reflowed the whole HUD.
+    /// The width used to follow the selected session's name length, and because
+    /// the shape is centred on the camera, every click reflowed the whole HUD
+    /// sideways. The height went the other way: measured across all sessions, a
+    /// sparse session was drawn with room for a busy one's trail and plan below
+    /// it. So these two axes are checked in opposite directions on purpose.
     private static func stableSizeChecks(_ checks: inout [Check], model: IslandViewModel) async {
         var short = session("s", state: .thinking)
         short.cwd = "/tmp/ui"
@@ -1551,15 +1554,25 @@ enum SelfTest {
                 detail: "\(sizeWithShort.width) vs \(sizeWithLong.width)"))
         checks.append(
             Check(
-                name: "switcher height does not change when browsing sessions",
-                passed: abs(sizeWithShort.height - sizeWithLong.height) < 0.5,
-                detail: "\(sizeWithShort.height) vs \(sizeWithLong.height)"))
-        checks.append(
-            Check(
                 name: "the card is sized for the widest session, not the shown one",
                 passed: sizeWithShort.width
                     >= model.notchGap + 2 * model.leftClusterWidth(for: long),
                 detail: "width=\(sizeWithShort.width)"))
+        // `long` has three finished calls and a plan; `short` has neither, so a
+        // card measured from the session on screen has to be the shorter one.
+        checks.append(
+            Check(
+                name: "switcher height shrinks to the shown session's own blocks",
+                passed: sizeWithShort.height < sizeWithLong.height - 0.5,
+                detail: "short=\(sizeWithShort.height) long=\(sizeWithLong.height)"))
+        checks.append(
+            Check(
+                name: "no session's card is taller than the stated ceiling",
+                passed: max(sizeWithShort.height, sizeWithLong.height)
+                    <= model.expandedMaxHeight + 0.5,
+                detail:
+                    "short=\(sizeWithShort.height) long=\(sizeWithLong.height) "
+                    + "max=\(model.expandedMaxHeight)"))
 
         model.forcedMode = nil
         model.apply(HUDSnapshot())
@@ -1628,8 +1641,9 @@ enum SelfTest {
         checks.append(
             Check(
                 name: "the expanded card fits inside its panel",
-                passed: size.height <= NotchGeometryResolver.panelHeight,
-                detail: "card=\(size.height) panel=\(NotchGeometryResolver.panelHeight)"))
+                passed: model.expandedMaxHeight <= NotchGeometryResolver.panelHeight,
+                detail: "tallest=\(model.expandedMaxHeight) panel=\(NotchGeometryResolver.panelHeight)"
+            ))
         checks.append(
             Check(
                 name: "sessions beyond the switcher's rows are listed, not dropped",
@@ -1664,6 +1678,31 @@ enum SelfTest {
                 name: "sessions past the fourth scroll instead of growing the card",
                 passed: abs(withMore - size.height) <= 0.5,
                 detail: "9 sessions=\(withMore) 5 sessions=\(size.height)"))
+
+        // The sparse card is the case the flexible height introduced, and the one
+        // a tally aimed at the busy card can undercount: with no trail, no plan
+        // and no chips there is nothing left over to absorb an error, so a block
+        // measured a few points short is clipped rather than merely tight.
+        model.select("other0")
+        let sparseSize = model.shapeSize
+        if let sparse = model.displaySession {
+            let sparseHost = NSHostingView(rootView: ExpandedContent(session: sparse, model: model))
+            sparseHost.frame = CGRect(origin: .zero, size: sparseSize)
+            sparseHost.layoutSubtreeIfNeeded()
+            let sparseNeeded = sparseHost.fittingSize.height
+
+            checks.append(
+                Check(
+                    name: "a sparse session's card is never shorter than its contents",
+                    passed: sparseNeeded <= sparseSize.height + 0.5,
+                    detail: "content=\(sparseNeeded) card=\(sparseSize.height)"))
+            checks.append(
+                Check(
+                    name: "the black space a busy session needs is not held for a sparse one",
+                    passed: sparseSize.height < size.height - 0.5,
+                    detail: "sparse=\(sparseSize.height) busy=\(size.height)"))
+        }
+        model.select("other0")
 
         model.forcedMode = nil
         model.apply(HUDSnapshot())
@@ -1884,6 +1923,41 @@ enum SelfTest {
                     name: "\(label) with an answer block is never shorter than its contents",
                     passed: needed <= size.height + 0.5,
                     detail: "content=\(needed) card=\(size.height)"))
+        }
+
+        // A card showing a session that is *not* the blocked one draws a line
+        // naming the one that is, and that line has a height of its own. The card
+        // used to reserve the whole answer block here — being sized to the
+        // session on screen, it now reserves only what it draws, so the notice is
+        // a term in the budget rather than a passenger in somebody else's.
+        //
+        // Reaching it takes two blocked sessions: the shown one holds a prompt
+        // this HUD cannot settle (answered in the terminal, so no token), while
+        // the second holds one it can.
+        let terminalAsk = PermissionAsk(
+            toolName: "Edit", kind: .write, target: "/tmp/x", since: Date(), siblingCount: 2)
+        let elsewhere = session("elsewhere", state: .awaitingPermission(terminalAsk))
+        model.apply(HUDSnapshot(primary: elsewhere, others: [waiting]))
+        model.forcedMode = .expanded
+
+        checks.append(
+            Check(
+                name: "a prompt held by another session is named, not silently reserved for",
+                passed: model.answerablePrompt == nil && model.anyAnswerablePrompt,
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+
+        if let shown = model.displaySession {
+            let noticeSize = model.shapeSize
+            let noticeHost = NSHostingView(rootView: ExpandedContent(session: shown, model: model))
+            noticeHost.frame = CGRect(origin: .zero, size: noticeSize)
+            noticeHost.layoutSubtreeIfNeeded()
+            let noticeNeeded = noticeHost.fittingSize.height
+
+            checks.append(
+                Check(
+                    name: "the card fits the line pointing at another session's prompt",
+                    passed: noticeNeeded <= noticeSize.height + 0.5,
+                    detail: "content=\(noticeNeeded) card=\(noticeSize.height)"))
         }
 
         // The point of the block is that you can read what you are approving, so

@@ -333,10 +333,11 @@ struct ExpandedContent: View {
                     PermissionAnswerBlock(ask: ask, model: model)
                         .padding(.bottom, 7)
                 } else if model.anyAnswerablePrompt {
-                    // The block's height is reserved across every session so that
-                    // changing the selection never resizes the card. Saying what
-                    // the space is for beats leaving it blank, which reads as the
-                    // card having failed to finish drawing.
+                    // A prompt is the one thing on this card worth acting on, so
+                    // it is named even from a session that is not the blocked
+                    // one. Its height is budgeted too — see `answerNoticeHeight`
+                    // — because a line the card did not measure is a line the
+                    // clip shape cuts in half.
                     Text("another session is waiting on you — pick it above to answer")
                         .font(.system(size: 8.5))
                         .foregroundStyle(IslandPalette.tertiary)

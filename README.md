@@ -421,7 +421,7 @@ animations moved.
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
 | Tests | 260 passing |
-| Self-test | 148 checks passing |
+| Self-test | 153 checks passing |
 
 ## Visual language
 
@@ -485,10 +485,19 @@ anywhere outside, to dismiss.
 
 ![The expanded card: three sessions with coloured rails and their states, then the selected session's detail and a list of recent tool calls](docs/images/expanded.png)
 
-The card is sized across **all** sessions, not the selected one, so browsing
-never resizes it. Sized from the selection, its width followed that session's
-name length and its height followed that session's tool count and task block, so
-every click reflowed the whole HUD. Two self-test checks guard it.
+The card's **width** is sized across all sessions, not the selected one. Sized
+from the selection it followed that session's name length, and because the shape
+is centred on the camera both edges moved on every click — the whole HUD
+reflowed sideways.
+
+Its **height** follows the session on screen, and stops at the tallest any of
+them would need. Measured across all sessions that too was stable, but a session
+with no plan and no finished calls was then drawn with room for a busy one's
+trail below it — around 150pt of empty black under its own last row. The card
+hangs from the cutout, so height is the axis that can flex: only the bottom edge
+moves. Five self-test checks guard both halves of this, including that the
+sparse card still fits its own contents — with no reserve left over, a block
+tallied a few points short now clips rather than merely sitting tight.
 
 A permission request always takes over the view, even from an explicit
 selection — missing a prompt is worse than losing your place. The selection is
@@ -520,7 +529,7 @@ byte-stable. Fixtures in `Fixtures/` cover a normal session, permissions and
 failures, two concurrent sessions, subagents, and deliberately hostile input
 (malformed lines, unknown future events, embedded secrets).
 
-`--selftest` is a 143-check harness for what unit tests cannot exercise: that
+`--selftest` is a 154-check harness for what unit tests cannot exercise: that
 the panel never takes focus, that clicks land where they should, that a settings
 change reaches both disk and the running HUD, and dozens of on-screen layout and
 geometry checks besides. Click-through is verified
