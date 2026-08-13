@@ -29,7 +29,7 @@ whole file apologises for.
 Three findings from a spike, because two of them invalidate the obvious design.
 
 **The pid walk works.** From a live `claude` process the chain is
-`claude → zsh → Code Helper → Visual Studio Code`: four hops to an app that
+`claude → zsh → Code Helper → Code`: four hops to an app that
 `NSRunningApplication(processIdentifier:)` resolves directly. `Code Helper` is
 *not* in `NSWorkspace.runningApplications` as a regular app, so walking to the
 first ancestor with `activationPolicy == .regular` skips helper processes and
@@ -122,9 +122,12 @@ It lives in the expanded card's detail pane. Row click keeps selecting, so
 browsing sessions still works and there is no gesture that yanks you to another
 app by accident.
 
-It reads **`Reveal in Visual Studio Code`** — naming the destination rather than
-saying "Reveal", because the useful information is *where you are about to be
-sent*, and at app-level granularity that name is the whole promise being made.
+It reads **`Reveal in Code`** — naming the destination rather than saying
+"Reveal", because the useful information is *where you are about to be sent*,
+and at app-level granularity that name is the whole promise being made. The
+name is whatever `NSRunningApplication.localizedName` says, which for VS Code
+is `Code`: measured against a real session, after this spec first guessed
+"Visual Studio Code" and was wrong.
 
 Clicking it dismisses the expanded card. A card left floating over the app you
 just jumped to is in the way, with the thing you wanted to look at underneath it.
