@@ -95,6 +95,7 @@ The window is a sidebar with one pane per concern:
 
 ```
 General     Event pipeline · Status · Show the HUD · Launch at login
+            · Find the app each session is running in
 Appearance  A live preview of the island, posed at each tier
             · Show it on … · Open on hover after …
 Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per
@@ -519,9 +520,18 @@ lines changed, and plan progress with the task currently in flight.
 
 **Expanded** (click) — a switcher. Every active session is listed and
 clickable, each with a state-coloured rail; selecting one shows its detail
-below — including a row offering to raise the session's terminal, *Reveal in
-`<App>`*, or one of three reasons it cannot — and ending in the trail of recent
-tool calls. Click the island again, or anywhere outside, to dismiss.
+below — optionally including a row offering to raise the session's terminal,
+*Reveal in `<App>`*, or one of three reasons it cannot — and ending in the trail
+of recent tool calls. Click the island again, or anywhere outside, to dismiss.
+
+That row is **off by default**, behind *Find the app each session is running in*
+in General. It reaches the app and never the tab, so several sessions in one
+editor all land in the same window — and if that editor is already frontmost,
+clicking it moves nothing. Switching it on starts the process-ancestry walk that
+finds the app, rewrites this app's hook commands to match, and sharpens *Stay
+quiet while a terminal is frontmost* from "any terminal" to "this session's own
+app". Upgrading from a build before this setting existed turns the row off,
+because an absent key reads as off.
 
 ![The expanded card: three sessions with coloured rails and their states, then the selected session's detail and a list of recent tool calls](docs/images/expanded.png)
 
@@ -665,6 +675,7 @@ them rather than writing null.
   "inputRequiredSound": { "enabled": true, "name": "Ping" },
   "logging": false,
   "muteWhileTerminalFrontmost": false,
+  "trackSessionApp": false,
   "waitingSound": { "enabled": true, "name": "Pop" }
 }
 ```
