@@ -66,7 +66,14 @@ final class IslandPreviewSource {
     /// figures count from the moment the segment was pressed. A cached one is
     /// still live — the ticker keeps it moving — but it reads "3h 12m" after the
     /// window has sat open all afternoon, which is accurate and useless.
-    func show(_ tier: IslandPreviewTier, on preferredDisplay: String? = nil) {
+    /// `trackSessionApp` is passed in rather than defaulted because this pane's
+    /// whole claim is that it draws the card with the same code the HUD does. A
+    /// preview that offered a reveal row the real card no longer has would be
+    /// advertising a control the user has switched off, on the one surface where
+    /// they go to look the card over.
+    func show(
+        _ tier: IslandPreviewTier, trackSessionApp: Bool, on preferredDisplay: String? = nil
+    ) {
         // Re-resolved per pose rather than once, and against the chosen display
         // rather than always the menu bar's: the two have different shapes — a
         // notch on the built-in panel, the fallback pill on anything else — and
@@ -82,6 +89,7 @@ final class IslandPreviewSource {
         // reach. Pin a plausible owner instead. A property rather than an
         // argument to `refreshOwners` because the ticker refreshes on its own
         // once a second and would put the real answer back.
+        model.trackSessionApp = trackSessionApp
         model.ownerResolver = { _ in .owner(Self.previewOwner) }
         model.apply(IslandPreviewFixtures.snapshot(for: tier))
     }
@@ -308,9 +316,21 @@ struct IslandPreview: View {
             .pickerStyle(.segmented)
             .labelsHidden()
         }
-        .onAppear { source.show(tier, on: store.preferredDisplay) }
+        .onAppear {
+            source.show(
+                tier, trackSessionApp: store.trackSessionApp, on: store.preferredDisplay)
+        }
         .onDisappear { source.shutdown() }
-        .onChange(of: tier) { _, chosen in source.show(chosen, on: store.preferredDisplay) }
+        .onChange(of: tier) { _, chosen in
+            source.show(
+                chosen, trackSessionApp: store.trackSessionApp, on: store.preferredDisplay)
+        }
+        // Same reasoning as the display picker below: the toggle lives one pane
+        // away, and a stage still showing a reveal row after it was switched off
+        // would be a preview of a card that no longer exists.
+        .onChange(of: store.trackSessionApp) { _, tracking in
+            source.show(tier, trackSessionApp: tracking, on: store.preferredDisplay)
+        }
         // The display picker sits directly under this stage, so this is what
         // makes the pane a readout rather than a still: choosing a notchless
         // display reshapes the island in place, without the pane being left or
@@ -318,7 +338,7 @@ struct IslandPreview: View {
         // changed from anywhere else — a preview showing a notch for a HUD that
         // is now a pill on an external monitor is worse than no preview at all.
         .onChange(of: store.preferredDisplay) { _, display in
-            source.show(tier, on: display)
+            source.show(tier, trackSessionApp: store.trackSessionApp, on: display)
         }
         // Read through to the store rather than copied at appear, so throwing the
         // switch in Advanced and coming back here shows the tint already applied

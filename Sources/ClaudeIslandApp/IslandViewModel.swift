@@ -65,6 +65,10 @@ final class IslandViewModel {
     var onAnswerPermission: ((UInt64, PermissionDecision) -> Void)?
     /// Development aid, off by default. See `IslandSettings.debugTint`.
     var debugTint = false
+    /// Whether the card offers a jump to the session's app, and therefore
+    /// whether it reserves the row's height at all. See
+    /// `IslandSettings.trackSessionApp`; off by default, like the setting.
+    var trackSessionApp = false
     /// Development aid: pins the HUD to a tier so peek and expanded can be
     /// inspected without a real cursor. See `IslandSettings.forcedMode`.
     ///
@@ -835,7 +839,13 @@ final class IslandViewModel {
     func refreshOwners(
         resolve: (([Int32]) -> OwnerResolution.Outcome)? = nil
     ) {
-        guard mode == .expanded else { return }
+        // Cleared rather than merely left alone: an entry that outlived the
+        // setting would keep a row labelled for an app the card no longer
+        // reserves space for, and the ticker would not be running to correct it.
+        guard mode == .expanded, trackSessionApp else {
+            ownerCache = [:]
+            return
+        }
         let resolve = resolve ?? ownerResolver
         var next: [String: OwnerResolution.Outcome] = [:]
         for session in allSessions {

@@ -127,13 +127,20 @@ case "--replay":
     exit(await runReplay(arguments[1]))
 
 case "--print-hooks":
-    print(HookInstaller.hookBlockJSON(binaryPath: AppController.notifyBinaryPath()))
+    // Read from disk rather than assuming a default: this prints the block for
+    // someone to paste by hand, so it has to match the block this install would
+    // write — including whether the walk is switched off.
+    print(
+        HookInstaller.hookBlockJSON(
+            binaryPath: AppController.notifyBinaryPath(),
+            trackSessionApp: IslandSettings.load().trackSessionApp))
     exit(0)
 
 case "--install-hooks":
     do {
         let notify = AppController.notifyBinaryPath()
-        let result = try HookInstaller.install(binaryPath: notify)
+        let result = try HookInstaller.install(
+            binaryPath: notify, trackSessionApp: IslandSettings.load().trackSessionApp)
         print("Installed \(result.installedEvents.count) hook events.")
         print("Preserved \(result.preservedOtherHooks) hook(s) belonging to other tools.")
         if let backup = result.backupPath { print("Backup: \(backup)") }

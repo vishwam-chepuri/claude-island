@@ -26,6 +26,10 @@ final class SettingsStore {
     var aboveOtherNotchHUDs: Bool { didSet { persist() } }
     var forcedMode: String? { didSet { persist() } }
     var muteWhileTerminalFrontmost: Bool { didSet { persist() } }
+    /// Whether the hook client walks the process tree. Changing it rewrites the
+    /// hook block in ~/.claude/settings.json — see `AppController.reconcileHooks`,
+    /// which is what makes the walk actually stop rather than merely be ignored.
+    var trackSessionApp: Bool { didSet { persist() } }
     /// The display's `localizedName`, or nil for the menu bar's. Held even while
     /// that display is unplugged — see `IslandSettings.preferredDisplay`.
     var preferredDisplay: String? { didSet { persist() } }
@@ -80,6 +84,7 @@ final class SettingsStore {
         aboveOtherNotchHUDs = settings.aboveOtherNotchHUDs
         forcedMode = settings.forcedMode
         muteWhileTerminalFrontmost = settings.muteWhileTerminalFrontmost
+        trackSessionApp = settings.trackSessionApp
         preferredDisplay = settings.preferredDisplay
         hoverOpenDelayMilliseconds = settings.hoverOpenDelayMilliseconds
         doneSound = settings.doneSound
@@ -96,6 +101,7 @@ final class SettingsStore {
         s.aboveOtherNotchHUDs = aboveOtherNotchHUDs
         s.forcedMode = forcedMode
         s.muteWhileTerminalFrontmost = muteWhileTerminalFrontmost
+        s.trackSessionApp = trackSessionApp
         s.preferredDisplay = preferredDisplay
         // The one setting with a range, so the one place a value can leave here
         // out of it. Clamped on the way to both disk and `onChange`, so nothing

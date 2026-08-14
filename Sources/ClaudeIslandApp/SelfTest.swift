@@ -742,7 +742,7 @@ enum SelfTest {
         live.apply(activeSnapshot())
 
         let preview = IslandPreviewSource()
-        preview.show(.expanded)
+        preview.show(.expanded, trackSessionApp: true)
 
         checks.append(
             Check(
@@ -776,6 +776,18 @@ enum SelfTest {
                 name: "the preview's card offers a reveal rather than an unknown terminal",
                 passed: named.count == previewOwners.count && !named.isEmpty,
                 detail: "\(previewOwners.count) sessions, owners: \(named)"))
+
+        // The pane's claim is that it draws the card with the same code the HUD
+        // does, so it has to lose the row along with the real card. Checked by
+        // re-posing rather than by reading the flag back, because what matters
+        // is that no owner survives into the model the stage renders from.
+        preview.show(.expanded, trackSessionApp: false)
+        let untrackedOwners = preview.model.allSessions.map { preview.model.owner(for: $0) }
+        checks.append(
+            Check(
+                name: "the preview drops the reveal row when the walk is switched off",
+                passed: untrackedOwners.allSatisfy { $0 == .unknown },
+                detail: "owners with tracking off: \(untrackedOwners)"))
 
         // Leaves nothing ticking: every fixture holds a live session, so the
         // preview scheduled a 1 Hz timer the moment it was posed.
@@ -1162,6 +1174,11 @@ enum SelfTest {
         off.muteWhileTerminalFrontmost = false
         var on = IslandSettings()
         on.muteWhileTerminalFrontmost = true
+        // Owner-aware muting only exists while the walk is switched on, and the
+        // walk now ships off — so the two are separate values here rather than
+        // one, and every check below names which of them it is asserting.
+        var tracked = on
+        tracked.trackSessionApp = true
 
         checks.append(
             Check(
@@ -1234,12 +1251,30 @@ enum SelfTest {
             Check(
                 name: "an owned session mutes only for its own terminal",
                 passed: !AppController.rings(
-                    .done, under: on, frontmost: "com.microsoft.VSCode",
+                    .done, under: tracked, frontmost: "com.microsoft.VSCode",
                     owner: "com.microsoft.VSCode")
                     && AppController.rings(
-                        .done, under: on, frontmost: "com.apple.Terminal",
+                        .done, under: tracked, frontmost: "com.apple.Terminal",
                         owner: "com.microsoft.VSCode"),
                 detail: "own-terminal mute vs other-terminal ring"))
+
+        // The safety net that makes the setting authoritative rather than
+        // advisory. Hook commands can be stale, hand-edited, or rewritten by
+        // another tool, so a session can still be carrying a perfectly
+        // resolvable ancestry after the walk has been switched off. What the
+        // app does has to follow the setting, not whichever payload arrived.
+        //
+        // Same inputs as the check above, opposite expectation, which is what
+        // makes this a test of the gate rather than of the fallback: with the
+        // walk on, a session in VS Code rings while Terminal is in front; with
+        // it off, there is no owner to compare and any terminal silences it.
+        checks.append(
+            Check(
+                name: "with the walk switched off the mute ignores a resolved owner",
+                passed: !AppController.rings(
+                    .done, under: on, frontmost: "com.apple.Terminal",
+                    owner: "com.microsoft.VSCode"),
+                detail: "tracked=\(on.trackSessionApp) — expected the terminal-list fallback"))
     }
 
     /// What `AppController` would ring for this name, by name — never played.

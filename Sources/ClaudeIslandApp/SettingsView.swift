@@ -751,7 +751,9 @@ struct SettingsView: View {
     private var hookStatus: HookStatus {
         _ = hookRevision  // Re-reads whenever an install or removal bumps this.
         guard HookInstaller.isInstalled() else { return .absent }
-        return HookInstaller.isCurrent(binaryPath: actions.notifyBinaryPath()) ? .current : .stale
+        return HookInstaller.isCurrent(
+            binaryPath: actions.notifyBinaryPath(), trackSessionApp: store.trackSessionApp)
+            ? .current : .stale
     }
 
     // MARK: - Bindings with side effects
@@ -847,7 +849,8 @@ struct SettingsView: View {
     private func installHooks() {
         let notify = actions.notifyBinaryPath()
         do {
-            let result = try HookInstaller.install(binaryPath: notify)
+            let result = try HookInstaller.install(
+                binaryPath: notify, trackSessionApp: store.trackSessionApp)
             var lines = ["\(result.installedEvents.count) events registered in settings.json."]
             if result.preservedOtherHooks > 0 {
                 lines.append("\(result.preservedOtherHooks) hook(s) from other tools preserved.")
@@ -891,7 +894,9 @@ struct SettingsView: View {
     private func copyHookJSON() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(
-            HookInstaller.hookBlockJSON(binaryPath: actions.notifyBinaryPath()), forType: .string)
+            HookInstaller.hookBlockJSON(
+                binaryPath: actions.notifyBinaryPath(), trackSessionApp: store.trackSessionApp),
+            forType: .string)
         report("Hook JSON copied to the clipboard.", isError: false)
     }
 

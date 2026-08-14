@@ -394,7 +394,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         // so `enabled` is not what decides whether anything rings.
         guard !settings.doNotDisturb, settings[cue].selectedName != nil else { return false }
         guard settings.muteWhileTerminalFrontmost else { return true }
-        if let owner = ownerBundleID() { return bundleID() != owner }
+        // Tracking off means there is no owner to speak of, whatever ancestry a
+        // payload still happens to carry. Collapsing it here rather than at the
+        // call site is what makes the setting authoritative rather than
+        // advisory: hook commands can be stale, hand-edited or rewritten by
+        // another tool, and none of that should change what the app decides.
+        //
+        // It also keeps the whole rule inside the one pure function --selftest
+        // drives, so both states are checked without a settings file on disk.
+        if settings.trackSessionApp, let owner = ownerBundleID() {
+            return bundleID() != owner
+        }
         return !TerminalApps.matches(bundleID: bundleID())
     }
 
@@ -505,6 +515,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         let forcedByEnvironment = ProcessInfo.processInfo.environment["CLAUDE_ISLAND_DEBUG"] == "1"
         log.setEnabled(new.logging || forcedByEnvironment)
         model.debugTint = new.debugTint
+        model.trackSessionApp = new.trackSessionApp
         model.forcedMode = IslandMode(forcedName: new.forcedMode)
         // Above the `hudEnabled` guard, like the display below it, and for the
         // same reason: that guard returns early on every change but the HUD
