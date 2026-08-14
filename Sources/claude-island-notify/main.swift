@@ -271,7 +271,20 @@ signal(SIGPIPE, SIG_IGN)
 
 let raw = readStdin()
 guard !raw.isEmpty, raw.count <= maxPayloadBytes else { exit(0) }
-let payload = splicingAncestry(into: raw, ancestorPIDs())
+// `--no-ancestry` is the whole of the opt-out on this side, and it is argv
+// rather than a file for the same reason everything else here is: this binary
+// reads stdin, connects, writes and exits, linking no Foundation, because it
+// runs on every tool call of every session and is held to a millisecond budget.
+// A sentinel file would cost a syscall per event, and reintroduce exactly the
+// mechanism settings.json was brought in to replace.
+//
+// The walk is skipped, not just the splice. Measuring an ancestry nobody will
+// read would leave the whole cost in place and hide only the result — and the
+// cost is the reason the setting exists.
+let payload =
+    CommandLine.arguments.contains("--no-ancestry")
+    ? raw
+    : splicingAncestry(into: raw, ancestorPIDs())
 guard let path = socketPath(), let fd = connectWithTimeout(path) else { exit(0) }
 
 let length = UInt32(payload.count)

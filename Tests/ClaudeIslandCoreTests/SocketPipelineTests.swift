@@ -100,7 +100,9 @@ private func readFrame(_ fd: Int32, timeout: TimeInterval = 6) -> Data? {
 /// test can assert on what the client actually wrote rather than on what the
 /// decoder made of it. `SocketServer` cannot serve here: it drops anything
 /// without a session id, which is precisely the case the splice can corrupt.
-private func captureRawPayload(from binary: URL, stdin bytes: Data) throws -> Data? {
+private func captureRawPayload(
+    from binary: URL, stdin bytes: Data, arguments: [String] = []
+) throws -> Data? {
     let path = temporarySocketPath()
     let listener = socket(AF_UNIX, SOCK_STREAM, 0)
     guard listener >= 0 else { return nil }
@@ -127,7 +129,7 @@ private func captureRawPayload(from binary: URL, stdin bytes: Data) throws -> Da
 
     let process = Process()
     process.executableURL = binary
-    process.arguments = ["--socket", path]
+    process.arguments = ["--socket", path] + arguments
     let pipe = Pipe()
     process.standardInput = pipe
     try process.run()
@@ -489,6 +491,31 @@ func registerSocketPipelineTests() {
             await expectEqual(
                 envelope.ancestorPIDs.first, ProcessInfo.processInfo.processIdentifier,
                 "the nearest ancestor should be this test runner")
+        }
+
+        // Byte-for-byte, not merely "no pids in the result". The opt-out has to
+        // leave the payload exactly as Claude Code wrote it, because the whole
+        // reason this client splices rather than parses is that it must never be
+        // able to damage a payload it did not understand.
+        test("The hook client forwards the payload untouched when ancestry is off") {
+            let binary = try await require(notifyBinary(), "claude-island-notify is not built")
+            let sent = #"{"session_id":"off","hook_event_name":"Stop"}"#
+            let raw = try await require(
+                captureRawPayload(
+                    from: binary, stdin: Data(sent.utf8), arguments: ["--no-ancestry"]))
+            await expectEqual(String(decoding: raw, as: UTF8.self), sent)
+        }
+
+        // The pair matters more than either half: without this one, a client
+        // that stopped walking altogether would still pass the test above.
+        test("The hook client still stamps ancestry when the flag is absent") {
+            let binary = try await require(notifyBinary(), "claude-island-notify is not built")
+            let sent = #"{"session_id":"on","hook_event_name":"Stop"}"#
+            let raw = try await require(
+                captureRawPayload(from: binary, stdin: Data(sent.utf8)))
+            await expect(
+                String(decoding: raw, as: UTF8.self).contains(#""_island_pids":["#),
+                "expected ancestry without the flag, got \(String(decoding: raw, as: UTF8.self))")
         }
 
         // `{"_island_pids":[…],}` is not valid JSON. Spliced naively onto an
