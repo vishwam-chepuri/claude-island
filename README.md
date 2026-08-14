@@ -580,7 +580,7 @@ failures, two concurrent sessions, subagents, deliberately hostile input
 (malformed lines, unknown future events, embedded secrets), and process
 ancestry surviving envelopes that omit it.
 
-`--selftest` is a 168-check harness for what unit tests cannot exercise: that
+`--selftest` is a 173-check harness for what unit tests cannot exercise: that
 the panel never takes focus, that clicks land where they should, that a settings
 change reaches both disk and the running HUD, and dozens of on-screen layout and
 geometry checks besides. Click-through is verified
