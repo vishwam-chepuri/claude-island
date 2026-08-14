@@ -258,5 +258,50 @@ func registerSessionStoreTests() {
                 TranscriptUpdate(sessionID: "ghost", model: "m", tokens: TokenStats()))
             await expect(await store.allSessions().isEmpty)
         }
+
+        // A background subagent outliving its parent is ordinary here — the
+        // reducer's own notes record one finishing 3m23s after the parent's
+        // Stop. Landing inside the five-second fade must not strand the
+        // session on the HUD until the 30-minute sweep.
+        test("A late event during the fade still removes the ended session") {
+            let clock = ClockBox(now: base)
+            let (store, scheduler) = makeStore(clock)
+            await store.ingest(HookEnvelope(sessionID: "a", event: .sessionEnd, receivedAt: base))
+
+            clock.value = base.addingTimeInterval(1)
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .subagentStop, receivedAt: clock.value))
+
+            clock.value = base.addingTimeInterval(Timings.sessionEndFade + 1)
+            await scheduler.advance(to: clock.value)
+            await expect(
+                await store.session("a") == nil,
+                "ended session survived the fade because a late event bumped the revision")
+        }
+
+        // Once SessionEnd has been honoured the session is over. A stray hook
+        // arriving afterwards has no session to decorate, and the reducer's
+        // `input ?? Session(...)` mints a fresh one — a zombie with no cwd,
+        // model or title that then holds the HUD for a further 30 minutes.
+        test("A stray event after removal does not resurrect the session") {
+            let clock = ClockBox(now: base)
+            let (store, scheduler) = makeStore(clock)
+            await store.ingest(HookEnvelope(sessionID: "a", event: .sessionEnd, receivedAt: base))
+
+            clock.value = base.addingTimeInterval(Timings.sessionEndFade)
+            await scheduler.advance(to: clock.value)
+            await expect(await store.session("a") == nil, "fade did not remove the session")
+
+            clock.value = base.addingTimeInterval(90)
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .notification,
+                    message: "Claude is waiting for your input", receivedAt: clock.value))
+
+            await expect(
+                await store.session("a") == nil,
+                "a stray post-end event resurrected the session as a brand-new one")
+        }
     }
 }
