@@ -28,8 +28,8 @@ public enum HookInstaller {
     }
 
     /// The hook block on its own, for pasting by hand.
-    public static func hookBlockJSON(binaryPath: String) -> String {
-        let block = hooksDictionary(binaryPath: binaryPath)
+    public static func hookBlockJSON(binaryPath: String, trackSessionApp: Bool) -> String {
+        let block = hooksDictionary(binaryPath: binaryPath, trackSessionApp: trackSessionApp)
         let wrapped: [String: Any] = ["hooks": block]
         guard
             let data = try? JSONSerialization.data(
@@ -39,31 +39,49 @@ public enum HookInstaller {
         return text
     }
 
-    static func hooksDictionary(binaryPath: String) -> [String: Any] {
+    static func hooksDictionary(binaryPath: String, trackSessionApp: Bool) -> [String: Any] {
         var result: [String: Any] = [:]
         for event in HookEvent.installable {
-            result[event.name] = [matcher(binaryPath: binaryPath, event: event)]
+            result[event.name] = [
+                matcher(binaryPath: binaryPath, event: event, trackSessionApp: trackSessionApp)
+            ]
         }
         return result
     }
 
     /// The one place an entry of ours is shaped, so the printable block and the
     /// merged install cannot drift apart on arguments or timeouts.
-    private static func matcher(binaryPath: String, event: HookEvent) -> [String: Any] {
+    private static func matcher(
+        binaryPath: String, event: HookEvent, trackSessionApp: Bool
+    ) -> [String: Any] {
         [
             "matcher": "",
             "hooks": [
                 [
                     "type": "command",
-                    "command": command(binaryPath: binaryPath, event: event),
+                    "command": command(
+                        binaryPath: binaryPath, event: event, trackSessionApp: trackSessionApp),
                     "timeout": event.hookTimeoutSeconds,
                 ] as [String: Any]
             ],
         ]
     }
 
-    private static func command(binaryPath: String, event: HookEvent) -> String {
-        ([quoteIfNeeded(binaryPath)] + event.clientArguments).joined(separator: " ")
+    /// Event arguments first, then arguments that apply to every event.
+    ///
+    /// That order is load-bearing rather than tidy: `isCurrent` compares whole
+    /// command strings, so an order that varied between calls would make a
+    /// block read as stale against the build that had just written it, and the
+    /// Hooks pane would offer an update that changed nothing.
+    private static func command(
+        binaryPath: String, event: HookEvent, trackSessionApp: Bool
+    ) -> String {
+        // Passed in rather than read here: Core takes its inputs as parameters
+        // so the suites can drive both states without a settings file on disk,
+        // the same reason `rings` is handed the frontmost bundle id.
+        let global = trackSessionApp ? [] : ["--no-ancestry"]
+        return ([quoteIfNeeded(binaryPath)] + event.clientArguments + global)
+            .joined(separator: " ")
     }
 
     private static func quoteIfNeeded(_ path: String) -> String {
@@ -75,6 +93,7 @@ public enum HookInstaller {
     @discardableResult
     public static func install(
         binaryPath: String,
+        trackSessionApp: Bool,
         settingsURL: URL = IslandPaths.claudeSettings
     ) throws -> Result {
         var settings = try loadSettings(settingsURL)
@@ -96,7 +115,8 @@ public enum HookInstaller {
                 m["hooks"] = kept
                 return m
             }
-            matchers.append(matcher(binaryPath: binaryPath, event: event))
+            matchers.append(
+                matcher(binaryPath: binaryPath, event: event, trackSessionApp: trackSessionApp))
             hooks[event.name] = matchers
         }
 
@@ -169,14 +189,16 @@ public enum HookInstaller {
     /// symptom is an absence — no controls, no explanation — so the app has to be
     /// able to tell the difference and say so.
     public static func isCurrent(
-        binaryPath: String, settingsURL: URL = IslandPaths.claudeSettings
+        binaryPath: String, trackSessionApp: Bool,
+        settingsURL: URL = IslandPaths.claudeSettings
     ) -> Bool {
         guard let settings = try? loadSettings(settingsURL),
             let hooks = settings["hooks"] as? [String: Any]
         else { return false }
 
         for event in HookEvent.installable {
-            let expected = command(binaryPath: binaryPath, event: event)
+            let expected = command(
+                binaryPath: binaryPath, event: event, trackSessionApp: trackSessionApp)
             let entries = ((hooks[event.name] as? [[String: Any]]) ?? [])
                 .flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] }
                 .filter(isOurs)

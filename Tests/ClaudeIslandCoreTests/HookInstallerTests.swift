@@ -43,9 +43,59 @@ private let notifyPath = "/opt/bin/claude-island-notify"
 func registerHookInstallerTests() {
     suite("Hook installer") {
 
+        test("The opt-out flag is written only when the walk is switched off") {
+            let off = try tempSettings(nil)
+            try HookInstaller.install(
+                binaryPath: notifyPath, trackSessionApp: false, settingsURL: off)
+            let offCommand = hookEntries(try readJSON(off), event: "Stop")
+                .compactMap { $0["command"] as? String }.first
+            await expect(
+                offCommand?.contains("--no-ancestry") == true,
+                "expected the flag with tracking off, got \(offCommand ?? "nothing")")
+
+            let on = try tempSettings(nil)
+            try HookInstaller.install(
+                binaryPath: notifyPath, trackSessionApp: true, settingsURL: on)
+            let onCommand = hookEntries(try readJSON(on), event: "Stop")
+                .compactMap { $0["command"] as? String }.first
+            await expect(
+                onCommand?.contains("--no-ancestry") == false,
+                "expected no flag with tracking on, got \(onCommand ?? "nothing")")
+        }
+
+        // Event arguments first, then global ones. The order is load-bearing
+        // rather than cosmetic: `isCurrent` compares whole command strings, so
+        // an order that varied by call would make a block read as stale against
+        // the very build that had just written it.
+        test("Global arguments follow event arguments in the command") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(
+                binaryPath: notifyPath, trackSessionApp: false, settingsURL: url)
+            let command = hookEntries(try readJSON(url), event: "PermissionRequest")
+                .compactMap { $0["command"] as? String }.first
+            await expectEqual(command, "\(notifyPath) --await-decision --no-ancestry")
+        }
+
+        // What makes the setting reach the client at all: a block written for
+        // one state has to read as stale in the other, or nothing would ever
+        // rewrite it and the walk would carry on after being switched off.
+        test("A block written for one tracking state reads as stale in the other") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(
+                binaryPath: notifyPath, trackSessionApp: false, settingsURL: url)
+            await expectEqual(
+                HookInstaller.isCurrent(
+                    binaryPath: notifyPath, trackSessionApp: false, settingsURL: url),
+                true, "the block it just wrote should be current")
+            await expectEqual(
+                HookInstaller.isCurrent(
+                    binaryPath: notifyPath, trackSessionApp: true, settingsURL: url),
+                false, "the same block should be stale for the other state")
+        }
+
         test("Installing preserves unrelated hooks and unrelated settings keys") {
             let url = try tempSettings(existingSettings)
-            let result = try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            let result = try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             let after = try readJSON(url)
 
             await expectEqual(after["theme"] as? String, "dark")
@@ -69,7 +119,7 @@ func registerHookInstallerTests() {
 
         test("Every installable event is written") {
             let url = try tempSettings(nil)
-            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             let hooks = (try readJSON(url)["hooks"] as? [String: Any]) ?? [:]
             for event in HookEvent.installable {
                 await expect(hooks[event.name] != nil, "missing \(event.name)")
@@ -80,7 +130,7 @@ func registerHookInstallerTests() {
         test("Reinstalling repeatedly does not duplicate our entries") {
             let url = try tempSettings(existingSettings)
             for _ in 0..<3 {
-                try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+                try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             }
             let ours = hookEntries(try readJSON(url), event: "Stop")
                 .filter { ($0["command"] as? String)?.contains("claude-island-notify") == true }
@@ -89,8 +139,8 @@ func registerHookInstallerTests() {
 
         test("Reinstalling at a new path replaces the old entry") {
             let url = try tempSettings(nil)
-            try HookInstaller.install(binaryPath: "/old/claude-island-notify", settingsURL: url)
-            try HookInstaller.install(binaryPath: "/new/claude-island-notify", settingsURL: url)
+            try HookInstaller.install(binaryPath: "/old/claude-island-notify", trackSessionApp: true, settingsURL: url)
+            try HookInstaller.install(binaryPath: "/new/claude-island-notify", trackSessionApp: true, settingsURL: url)
 
             let commands = hookEntries(try readJSON(url), event: "Stop")
                 .compactMap { $0["command"] as? String }
@@ -102,6 +152,7 @@ func registerHookInstallerTests() {
             try HookInstaller.install(
                 binaryPath:
                     "/Users/dev/my apps/ClaudeIsland.app/Contents/MacOS/claude-island-notify",
+                trackSessionApp: true,
                 settingsURL: url)
             let command = try await require(
                 hookEntries(try readJSON(url), event: "Stop").first?["command"] as? String)
@@ -110,7 +161,7 @@ func registerHookInstallerTests() {
 
         test("Uninstall removes only our entries") {
             let url = try tempSettings(existingSettings)
-            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             await expect(HookInstaller.isInstalled(settingsURL: url))
 
             try HookInstaller.uninstall(settingsURL: url)
@@ -123,7 +174,7 @@ func registerHookInstallerTests() {
 
         test("A backup is written before any change") {
             let url = try tempSettings(existingSettings)
-            let result = try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            let result = try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             let backup = try await require(result.backupPath)
             await expect(FileManager.default.fileExists(atPath: backup))
 
@@ -135,14 +186,14 @@ func registerHookInstallerTests() {
         test("A missing settings.json is created from scratch") {
             let url = try tempSettings(nil)
             await expect(!FileManager.default.fileExists(atPath: url.path))
-            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             await expect(HookInstaller.isInstalled(settingsURL: url))
         }
 
         test("Non-object settings are refused rather than overwritten") {
             let url = try tempSettings("[1, 2, 3]")
             await expectThrows("installing into a JSON array should throw") {
-                try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+                try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             }
             let after = try String(contentsOf: url, encoding: .utf8)
             await expectEqual(after, "[1, 2, 3]")
@@ -150,7 +201,7 @@ func registerHookInstallerTests() {
 
         test("The permission hook is installed in await mode") {
             let url = try tempSettings(nil)
-            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             let command = try await require(
                 hookEntries(try readJSON(url), event: "PermissionRequest").first?["command"]
                     as? String)
@@ -161,7 +212,7 @@ func registerHookInstallerTests() {
 
         test("No other event waits for a decision") {
             let url = try tempSettings(nil)
-            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             let settings = try readJSON(url)
             for event in HookEvent.installable where event != .permissionRequest {
                 let commands = hookEntries(settings, event: event.name)
@@ -177,7 +228,7 @@ func registerHookInstallerTests() {
         // to be the longer of the two.
         test("The permission hook outlasts the client's own deadline") {
             let url = try tempSettings(nil)
-            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             let timeout = try await require(
                 hookEntries(try readJSON(url), event: "PermissionRequest").first?["timeout"]
                     as? Int)
@@ -189,7 +240,7 @@ func registerHookInstallerTests() {
 
         test("Every other event keeps the short backstop") {
             let url = try tempSettings(nil)
-            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
             let settings = try readJSON(url)
             for event in HookEvent.installable where event != .permissionRequest {
                 let timeout = hookEntries(settings, event: event.name).first?["timeout"] as? Int
@@ -202,6 +253,7 @@ func registerHookInstallerTests() {
             try HookInstaller.install(
                 binaryPath:
                     "/Users/dev/my apps/ClaudeIsland.app/Contents/MacOS/claude-island-notify",
+                trackSessionApp: true,
                 settingsURL: url)
             let command = try await require(
                 hookEntries(try readJSON(url), event: "PermissionRequest").first?["command"]
@@ -214,8 +266,8 @@ func registerHookInstallerTests() {
 
         test("A freshly installed block reports as current") {
             let url = try tempSettings(nil)
-            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
-            await expect(HookInstaller.isCurrent(binaryPath: notifyPath, settingsURL: url))
+            try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
+            await expect(HookInstaller.isCurrent(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url))
         }
 
         // The case this exists for: an install from before the permission hook
@@ -223,7 +275,7 @@ func registerHookInstallerTests() {
         // silently cannot answer a prompt.
         test("A block predating --await-decision reports as stale") {
             let url = try tempSettings(nil)
-            try HookInstaller.install(binaryPath: notifyPath, settingsURL: url)
+            try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)
 
             var settings =
                 (try JSONSerialization.jsonObject(with: try Data(contentsOf: url))
@@ -241,18 +293,18 @@ func registerHookInstallerTests() {
             await expect(
                 HookInstaller.isInstalled(settingsURL: url), "still installed, just old")
             await expect(
-                !HookInstaller.isCurrent(binaryPath: notifyPath, settingsURL: url),
+                !HookInstaller.isCurrent(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url),
                 "a hook that cannot answer prompts reported as current")
         }
 
         test("A block installed for a different binary reports as stale") {
             let url = try tempSettings(nil)
-            try HookInstaller.install(binaryPath: "/old/claude-island-notify", settingsURL: url)
-            await expect(!HookInstaller.isCurrent(binaryPath: notifyPath, settingsURL: url))
+            try HookInstaller.install(binaryPath: "/old/claude-island-notify", trackSessionApp: true, settingsURL: url)
+            await expect(!HookInstaller.isCurrent(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url))
         }
 
         test("The printable block is valid JSON covering every event") {
-            let text = HookInstaller.hookBlockJSON(binaryPath: notifyPath)
+            let text = HookInstaller.hookBlockJSON(binaryPath: notifyPath, trackSessionApp: true)
             let parsed =
                 (try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]) ?? [:]
             let hooks = (parsed["hooks"] as? [String: Any]) ?? [:]
