@@ -167,6 +167,27 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            Section {
+                Toggle("Find the app each session is running in", isOn: $store.trackSessionApp)
+            } footer: {
+                // Names what it costs as well as what it does. The row it adds
+                // is the visible half; the walk it starts runs on every tool
+                // call of every session, and the mute it sharpens is a setting
+                // on another pane, so all three belong here rather than in the
+                // one place someone happens to look.
+                Text(
+                    "Reads each session's process ancestry, so the expanded card can offer a "
+                        + "jump to the app that session is running in, and so \"Stay quiet "
+                        + "while a terminal is frontmost\" can tell your session's own app "
+                        + "from any terminal. The jump reaches the app and never the tab, so "
+                        + "several sessions in one editor all land in the same window. "
+                        + "Switching this rewrites this app's hook commands in "
+                        + "~/.claude/settings.json."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .formStyle(.grouped)
     }
@@ -429,16 +450,27 @@ struct SettingsView: View {
                 // people*: anyone who had the switch on will hear cues it used
                 // to swallow, and a setting that quietly starts behaving
                 // differently is worse than one that says so.
+                // Two captions, because the promise genuinely changes. The
+                // per-session version is only true while the walk is on, and the
+                // walk ships off — describing an exactness the app is not
+                // delivering would be worse than describing the cruder rule it
+                // actually applies.
                 Text(
-                    "Skips the sound — never the alert on the island — while the app a session "
-                        + "is running in is the app in front. The HUD works that out from the "
-                        + "session's own process ancestry, so only the session you are actually "
-                        + "looking at goes quiet: one running in VS Code keeps ringing while "
-                        + "Terminal is frontmost. A session with no app to resolve — a background "
-                        + "job, a tmux server, one over SSH — falls back to going quiet for any "
-                        + "terminal or editor at all. That fallback used to be the whole rule, so "
-                        + "if you have had this switched on you will now hear cues it swallowed "
-                        + "before."
+                    store.trackSessionApp
+                        ? "Skips the sound — never the alert on the island — while the app a "
+                            + "session is running in is the app in front. The HUD works that out "
+                            + "from the session's own process ancestry, so only the session you "
+                            + "are actually looking at goes quiet: one running in VS Code keeps "
+                            + "ringing while Terminal is frontmost. A session with no app to "
+                            + "resolve — a background job, a tmux server, one over SSH — falls "
+                            + "back to going quiet for any terminal or editor at all. That "
+                            + "fallback used to be the whole rule, so if you have had this "
+                            + "switched on you will now hear cues it swallowed before."
+                        : "Skips the sound — never the alert on the island — while any terminal "
+                            + "or editor is the app in front, whichever session the cue belongs "
+                            + "to. Switch on \"Find the app each session is running in\" under "
+                            + "General to narrow this to the session's own app, so one running "
+                            + "in VS Code keeps ringing while Terminal is in front."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
