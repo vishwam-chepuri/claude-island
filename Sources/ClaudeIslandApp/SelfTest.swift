@@ -961,6 +961,20 @@ enum SelfTest {
                     + "applied: \(applied.last?.aboveOtherNotchHUDs.description ?? "none")"))
         store.aboveOtherNotchHUDs = false
 
+        // Same argument as the switch above, with a sharper edge: this one is
+        // read by the card's height budget, so a value that persisted without
+        // reaching the app would leave the trail hidden on the next launch and
+        // drawn on this one — the setting looking broken rather than absent.
+        store.showToolTrace = false
+        checks.append(
+            Check(
+                name: "the tool-trace switch reaches both the file and the app",
+                passed: !IslandSettings.load(root: root).showToolTrace
+                    && applied.last?.showToolTrace == false,
+                detail: "on disk: \(IslandSettings.load(root: root).showToolTrace) "
+                    + "applied: \(applied.last?.showToolTrace.description ?? "none")"))
+        store.showToolTrace = true
+
         // The window writes a string; the HUD needs a tier. A typo must leave
         // the HUD unpinned rather than pin it to something arbitrary.
         checks.append(
@@ -1853,6 +1867,69 @@ enum SelfTest {
         return host.fittingSize.height
     }
 
+    /// Switching the tool trace off must empty the section *and* give back its
+    /// height.
+    ///
+    /// The failure this is aimed at is the cheap implementation of the setting:
+    /// hide the view, leave the budget alone, and the card keeps ~98pt of empty
+    /// black under its last row — which is the exact complaint the flexible
+    /// height was introduced to fix, reintroduced by a checkbox. The other
+    /// direction matters just as much: a budget that shrinks further than the
+    /// content does clips the NOW row instead.
+    ///
+    /// Takes the busy fixture rather than building one, so it is measuring the
+    /// same card the fit checks above just measured with the trace on.
+    private static func toolTraceChecks(
+        _ checks: inout [Check], model: IslandViewModel, busy: Session, others: [Session]
+    ) async {
+        let snapshot = HUDSnapshot(
+            primary: busy, others: others,
+            rateLimit: RateLimitWindow(
+                usedPercentage: 74, resetsAt: Date().addingTimeInterval(4_320)))
+        model.apply(snapshot)
+        model.select(busy.id)
+        let shown = model.shapeSize.height
+
+        model.showToolTrace = false
+        let hidden = model.shapeSize.height
+
+        // Five finished calls in the fixture, which is exactly what the card
+        // budgets for at rest — so the whole block goes, label included.
+        let expected = IslandViewModel.trailLabelHeight
+            + CGFloat(IslandViewModel.visibleTrailRows) * IslandViewModel.trailRowHeight
+        checks.append(
+            Check(
+                name: "hiding the tool trace gives back exactly the trail's height",
+                passed: abs((shown - hidden) - expected) <= 0.5,
+                detail: "shown=\(shown) hidden=\(hidden) trail=\(expected)"))
+
+        let host = NSHostingView(rootView: ExpandedContent(session: busy, model: model))
+        host.frame = CGRect(origin: .zero, size: model.shapeSize)
+        host.layoutSubtreeIfNeeded()
+        checks.append(
+            Check(
+                name: "a card with the tool trace off is never shorter than its contents",
+                passed: host.fittingSize.height <= hidden + 0.5,
+                detail: "content=\(host.fittingSize.height) card=\(hidden)"))
+
+        // Measured directly, because a section that still drew its "recent"
+        // heading over nothing would leave the two height checks above passing
+        // and the card visibly wrong.
+        let drawn = measuredHeight(of: TrailSection(session: busy, showing: false))
+        checks.append(
+            Check(
+                name: "the trail draws nothing at all once it is switched off",
+                passed: drawn <= 0.5,
+                detail: "height=\(drawn)"))
+
+        model.showToolTrace = true
+        checks.append(
+            Check(
+                name: "the trail and its height come back when the switch does",
+                passed: abs(model.shapeSize.height - shown) <= 0.5,
+                detail: "restored=\(model.shapeSize.height) before=\(shown)"))
+    }
+
     /// The card must never be drawn shorter than its own contents.
     ///
     /// It was. `expandedChromeHeight` was a single hand-tallied constant, it
@@ -1976,6 +2053,8 @@ enum SelfTest {
                     detail: "sparse=\(sparseSize.height) busy=\(size.height)"))
         }
         model.select("other0")
+
+        await toolTraceChecks(&checks, model: model, busy: busy, others: others)
 
         model.forcedMode = nil
         model.apply(HUDSnapshot())

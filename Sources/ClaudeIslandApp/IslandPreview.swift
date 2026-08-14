@@ -276,9 +276,11 @@ enum IslandPreviewFixtures {
 /// real view model — posed with fake sessions on a backdrop that makes it
 /// visible indoors.
 struct IslandPreview: View {
-    /// Read, never written. The only setting the preview reflects is the debug
-    /// tint, and it reflects it rather than offering it: the switch stays in
-    /// Advanced, beside the rest of the development aids.
+    /// Read, never written. Two settings reach the preview's own model this way:
+    /// the debug tint, which it reflects rather than offers — that switch stays
+    /// in Advanced with the rest of the development aids — and the tool trace,
+    /// whose switch is the row directly below this stage and whose whole reason
+    /// for being on this pane is that the preview answers it.
     let store: SettingsStore
 
     @State private var source = IslandPreviewSource()
@@ -326,6 +328,17 @@ struct IslandPreview: View {
         // ever split.
         .onChange(of: store.debugTint, initial: true) { _, tinted in
             source.model.debugTint = tinted
+        }
+        // The row under this stage. `initial: true` matters more here than for
+        // the tint: with the trace already off, a preview that started out
+        // showing it would put the trail back every time the pane was opened and
+        // only drop it when the switch was touched.
+        //
+        // The card is measured from the model, so this both removes the section
+        // and shortens the shape — and the stage re-fits, because the scale is
+        // computed from `shapeSize` on every pass.
+        .onChange(of: store.showToolTrace, initial: true) { _, showing in
+            source.model.showToolTrace = showing
         }
     }
 

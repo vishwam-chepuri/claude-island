@@ -65,6 +65,15 @@ final class IslandViewModel {
     var onAnswerPermission: ((UInt64, PermissionDecision) -> Void)?
     /// Development aid, off by default. See `IslandSettings.debugTint`.
     var debugTint = false
+    /// Whether the expanded card ends in its trail of finished calls. Seeded
+    /// from `IslandSettings.showToolTrace` by `AppController`.
+    ///
+    /// Read by the height budget as well as by the view, which is the whole
+    /// reason it lives on the model rather than being read from the store down
+    /// in `ExpandedContent`: a card that hid the trail without dropping its
+    /// height would leave exactly the reserve of empty black the budget exists
+    /// to prevent.
+    var showToolTrace = true
     /// Development aid: pins the HUD to a tier so peek and expanded can be
     /// inspected without a real cursor. See `IslandSettings.forcedMode`.
     ///
@@ -482,7 +491,13 @@ final class IslandViewModel {
     /// Height the trail needs: its label plus the rows shown at rest. Zero until
     /// some session has actually finished a call, so a session on its first tool
     /// call does not sit above an empty "recent" heading.
+    ///
+    /// Zero too when the trail is switched off, which is what makes that a
+    /// setting rather than a way to hide a section and keep its hole. The card
+    /// then measures exactly as a card whose sessions have finished nothing yet
+    /// — a state the fit checks already cover.
     private func trailHeight(sizedFor sessions: [Session]) -> CGFloat {
+        guard showToolTrace else { return 0 }
         let rows = min(maxTrailRows(in: sessions), Self.visibleTrailRows)
         guard rows > 0 else { return 0 }
         return Self.trailLabelHeight + CGFloat(rows) * Self.trailRowHeight

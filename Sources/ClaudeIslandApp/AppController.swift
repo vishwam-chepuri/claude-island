@@ -506,6 +506,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         log.setEnabled(new.logging || forcedByEnvironment)
         model.debugTint = new.debugTint
         model.forcedMode = IslandMode(forcedName: new.forcedMode)
+        // Resizes the card as well as emptying its last section, so a card open
+        // under the pointer while this is thrown springs to its new height the
+        // same way it does when a session finishes a call.
+        model.showToolTrace = new.showToolTrace
         // Above the `hudEnabled` guard, like the display below it, and for the
         // same reason: that guard returns early on every change but the HUD
         // switch itself. The monitor object outlives every start/stop cycle, so

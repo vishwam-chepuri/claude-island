@@ -42,6 +42,10 @@ func registerSettingsTests() {
                 s.hoverOpenDelayMilliseconds, 150,
                 "a fresh install waits out a pointer passing across the notch")
             await expect(
+                s.showToolTrace,
+                "the trail of finished calls is on by default — it is the card's answer to "
+                    + "what the session has been doing")
+            await expect(
                 s[.done] == CueSound(enabled: true, name: "Glass")
                     && s[.inputRequired] == CueSound(enabled: true, name: "Ping")
                     && s[.waiting] == CueSound(enabled: true, name: "Pop"),
@@ -60,6 +64,7 @@ func registerSettingsTests() {
             s.muteWhileTerminalFrontmost = true
             s.preferredDisplay = "DELL P3223QE"
             s.hoverOpenDelayMilliseconds = 300
+            s.showToolTrace = false
             s.doneSound = CueSound(enabled: false, name: "Hero")
             s.inputRequiredSound = CueSound(enabled: true, name: "Sosumi")
             s.waitingSound = CueSound(enabled: false, name: "Tink")
@@ -439,6 +444,56 @@ func registerSettingsTests() {
             await expect(
                 HoverDelay.minimum == 0,
                 "instant has to remain reachable — it is what every earlier build did")
+        }
+
+        // MARK: - The tool trace
+
+        // Off is the whole point of the setting, and a false that reads back as
+        // "unset" would come back on at the next launch — the failure the
+        // sentinel files had, and the reason this file exists.
+        test("A trace switched off stays off across a reload") {
+            let root = try tempRoot()
+            var s = IslandSettings()
+            s.showToolTrace = false
+            try s.save(root: root)
+
+            let loaded = IslandSettings.load(root: root)
+            await expect(!loaded.showToolTrace, "the trail came back switched on")
+            await expect(loaded == s, "and nothing else moved when it was written")
+        }
+
+        // The upgrade path. Every settings.json written before this key existed
+        // came from a build with no way to hide the trail, so an absent key has
+        // to mean shown: an update that quietly removed a section of the card
+        // would read as the card having lost it, not as a default changing.
+        test("A settings file written before the trace switch still shows the trail") {
+            let root = try tempRoot()
+            try write(
+                """
+                {
+                  "debugTint" : false,
+                  "doNotDisturb" : false,
+                  "hoverOpenDelayMilliseconds" : 275,
+                  "hudEnabled" : true,
+                  "logging" : false,
+                  "preferredDisplay" : "DELL P3223QE"
+                }
+                """, "settings.json", in: root)
+
+            let s = IslandSettings.load(root: root)
+            await expect(s.showToolTrace, "an absent key hid the trail instead of showing it")
+            await expectEqual(s.hoverOpenDelayMilliseconds, 275, "and the rest of the file loaded")
+            await expectEqual(s.preferredDisplay, "DELL P3223QE", "including the key beside it")
+        }
+
+        // Hand-editing is documented, and this is the edit someone makes when
+        // they have found the key in the file rather than the switch in the pane.
+        test("The trace key is honoured from a hand-edited file") {
+            let root = try tempRoot()
+            try write(#"{"showToolTrace": false}"#, "settings.json", in: root)
+            await expect(!IslandSettings.load(root: root).showToolTrace, "the hand-edit was ignored")
+            try write(#"{"showToolTrace": true}"#, "settings.json", in: root)
+            await expect(IslandSettings.load(root: root).showToolTrace, "true did not survive either")
         }
 
         // MARK: - Migration off the sentinel files

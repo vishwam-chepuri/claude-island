@@ -207,6 +207,28 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// this file is meant to be read and hand-edited, and `0.15` invites the
     /// question of what unit it is in where `150` does not.
     public var hoverOpenDelayMilliseconds: Int = HoverDelay.default
+    /// Whether the expanded card ends in the trail of finished tool calls — the
+    /// section it labels **recent**.
+    ///
+    /// Last of the four questions this group asks: whether the island shows,
+    /// where, how eagerly it opens, and how much of the turn it recounts.
+    ///
+    /// On by default, because the trail is the answer to "what has it been
+    /// doing" and switching it off for everyone would take that away to fix a
+    /// complaint most people do not have. Off is for the reading of the card
+    /// that finds a scrolling list of Read/Grep/Edit to be noise: the state, the
+    /// context meter and the call in flight say what the session is doing, and
+    /// the history behind it is the part you can only act on by scrolling.
+    ///
+    /// Scoped to the trail alone. The NOW row still names the call in flight and
+    /// peek still shows its target, because those are the present tense — a HUD
+    /// that stopped saying what is running right now would be a different
+    /// setting, and the one people mean by "hide the tool trace" is this list.
+    ///
+    /// Not merely a hidden view: the card is measured from its contents, so the
+    /// trail's height leaves the budget with it and the card ends where its last
+    /// row does. See `IslandViewModel.trailHeight(sizedFor:)`.
+    public var showToolTrace: Bool = true
     /// Mutes every sound cue without touching the HUD itself, and without
     /// disturbing what the cues below are set to — one thing to hit when a
     /// meeting starts, that leaves the configuration to come back to afterwards.
@@ -281,6 +303,7 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case hudEnabled, doNotDisturb, logging, debugTint, forcedMode, aboveOtherNotchHUDs
         case muteWhileTerminalFrontmost, preferredDisplay, hoverOpenDelayMilliseconds
+        case showToolTrace
         case doneSound, inputRequiredSound, waitingSound
     }
 
@@ -319,6 +342,11 @@ public struct IslandSettings: Codable, Equatable, Sendable {
         hoverOpenDelayMilliseconds = HoverDelay.clamped(
             try c.decodeIfPresent(Int.self, forKey: .hoverOpenDelayMilliseconds)
                 ?? HoverDelay.default)
+        // Absent means shown — every settings.json written before this key
+        // existed came from a build that had no way not to draw the trail, and
+        // an upgrade that silently removed a section of the card would read as
+        // the card having lost it rather than as a default having changed.
+        showToolTrace = try c.decodeIfPresent(Bool.self, forKey: .showToolTrace) ?? true
 
         // The upgrade path that matters: every settings.json written before
         // these keys existed has none of them, and must come back ringing

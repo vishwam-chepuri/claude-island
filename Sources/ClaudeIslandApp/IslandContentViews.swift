@@ -402,7 +402,7 @@ struct ExpandedContent: View {
                 // A Spacer with minLength 0 collapses to nothing under pressure
                 // and lets everything above it overflow the card, which is how
                 // the last recent row came to be sliced in half.
-                TrailSection(session: session)
+                TrailSection(session: session, showing: model.showToolTrace)
                     .padding(.top, 7)
                     .frame(maxHeight: .infinity, alignment: .top)
             }
@@ -569,13 +569,22 @@ struct NowRow: View {
 /// after the fixed chrome and scrolls within it, so an error in the height
 /// budget shrinks the visible list instead of slicing a row in half against the
 /// card's clip shape.
+///
+/// Switched off — `showing` false — it draws nothing at all, heading included,
+/// and `IslandViewModel.trailHeight(sizedFor:)` stops budgeting for it in the
+/// same breath. The empty view stays in the tree rather than being dropped at
+/// the call site because it is also what absorbs the card's slack; a card that
+/// removed its one flexible region would centre everything above it.
 struct TrailSection: View {
     let session: Session
+    /// Whether the trail is wanted at all. See `IslandSettings.showToolTrace`.
+    let showing: Bool
 
     private var finished: [ToolActivity] {
+        guard showing else { return [] }
         // The in-flight call lives in `recentTools` at index 0 as well as in the
         // NOW row above; without this it would appear twice.
-        session.recentTools.filter { $0.endedAt != nil }
+        return session.recentTools.filter { $0.endedAt != nil }
     }
 
     var body: some View {
