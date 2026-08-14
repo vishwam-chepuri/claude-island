@@ -38,6 +38,10 @@ func registerSettingsTests() {
             await expect(
                 !s.muteWhileTerminalFrontmost,
                 "the frontmost-terminal gate is opt-in — it changes what an install already does")
+            await expect(
+                !s.trackSessionApp,
+                "the walk back to the terminal is opt-in — it reaches the app and never the "
+                    + "tab, so it is a no-op for anyone running several sessions in one editor")
             await expectEqual(
                 s.hoverOpenDelayMilliseconds, 150,
                 "a fresh install waits out a pointer passing across the notch")
@@ -58,6 +62,7 @@ func registerSettingsTests() {
             s.aboveOtherNotchHUDs = true
             s.forcedMode = "peek"
             s.muteWhileTerminalFrontmost = true
+            s.trackSessionApp = true
             s.preferredDisplay = "DELL P3223QE"
             s.hoverOpenDelayMilliseconds = 300
             s.doneSound = CueSound(enabled: false, name: "Hero")
@@ -66,6 +71,22 @@ func registerSettingsTests() {
             try s.save(root: root)
 
             await expect(IslandSettings.load(root: root) == s, "loaded settings match what was saved")
+        }
+
+        // The upgrade path, and the one place this default is load-bearing:
+        // every settings.json written before this key existed belongs to an
+        // install that has been showing the reveal row. Reading absent as off
+        // takes it away from them, which is the intended trade — the walk costs
+        // a process-tree read on every tool call of every session, and the row
+        // it draws cannot reach a tab.
+        test("A settings file written before this key decodes with the walk switched off") {
+            let decoded = try JSONDecoder().decode(
+                IslandSettings.self, from: Data("{\"hudEnabled\":true}".utf8))
+            await expect(!decoded.trackSessionApp, "absent means off")
+
+            let asked = try JSONDecoder().decode(
+                IslandSettings.self, from: Data("{\"trackSessionApp\":true}".utf8))
+            await expect(asked.trackSessionApp, "present and true means on")
         }
 
         // The whole reason this replaced the sentinel files: a HUD switched off

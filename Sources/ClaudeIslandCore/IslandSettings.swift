@@ -245,6 +245,22 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// is where that arithmetic lives. Opting in is for the desk where the notch
     /// is already taken.
     public var aboveOtherNotchHUDs: Bool = false
+    /// Whether the hook client walks the process tree — and therefore whether
+    /// the card offers a jump to the session's app at all.
+    ///
+    /// Off by default, and the default is the interesting part. The jump reaches
+    /// the *app*, never the tab: `open -b` is the only call macOS honours from a
+    /// background app, and it takes you no further than the bundle. On the setup
+    /// this was built for — several sessions inside one editor that is already
+    /// frontmost — it raises an app that is already in front, and nothing moves.
+    /// Shipping it on would spend a process-tree read on every tool call of
+    /// every session to draw a button that, measured, does nothing there.
+    ///
+    /// It also governs how exactly `muteWhileTerminalFrontmost` can aim, which
+    /// is why the two captions point at each other: switching this off drops
+    /// that mute back to "any terminal is in front", the rule it had before any
+    /// of this existed.
+    public var trackSessionApp: Bool = false
     /// Pins the HUD to one tier — "compact", "alert", "peek", "expanded".
     /// Hover and click cannot be synthesised without Accessibility permission,
     /// so without this the open tiers cannot be inspected at all.
@@ -280,7 +296,8 @@ public struct IslandSettings: Codable, Equatable, Sendable {
     /// and gains the new keys the next time anything is saved.
     private enum CodingKeys: String, CodingKey {
         case hudEnabled, doNotDisturb, logging, debugTint, forcedMode, aboveOtherNotchHUDs
-        case muteWhileTerminalFrontmost, preferredDisplay, hoverOpenDelayMilliseconds
+        case muteWhileTerminalFrontmost, trackSessionApp, preferredDisplay
+        case hoverOpenDelayMilliseconds
         case doneSound, inputRequiredSound, waitingSound
     }
 
@@ -302,6 +319,15 @@ public struct IslandSettings: Codable, Equatable, Sendable {
         // Opting in is the only way to get the quieter behaviour.
         muteWhileTerminalFrontmost =
             try c.decodeIfPresent(Bool.self, forKey: .muteWhileTerminalFrontmost) ?? false
+        // Absent means off, and here that is not the harmless direction: every
+        // settings.json written before this key belongs to an install that has
+        // been showing the reveal row, and this takes it away from them. That
+        // is the intended trade rather than an oversight — the row cannot reach
+        // a tab, so it is a no-op wherever sessions share an editor, and the
+        // walk behind it runs on every tool call whether or not anyone clicks.
+        // Anyone who wants it back has one switch to find, and the caption in
+        // General says what it costs.
+        trackSessionApp = try c.decodeIfPresent(Bool.self, forKey: .trackSessionApp) ?? false
         // Absent — every settings.json written before the HUD could be moved —
         // means the menu-bar display, which is where those builds always drew.
         // Normalised on the way in so a hand-edited `""` reads as "no
