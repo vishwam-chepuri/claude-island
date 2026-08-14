@@ -364,6 +364,29 @@ struct IslandPreview: View {
                     // which the clip below trims.
                     IslandView(model: source.model)
                         .scaleEffect(scale(in: geo.size), anchor: .top)
+                        // Not optional. The card underneath is four different
+                        // layouts crossfading into each other, and every leaf in
+                        // it resolves its own position against this scale. Left
+                        // to do that independently, a browse through the tiers
+                        // followed by a relayout — a resize, a pane switch —
+                        // lands some of those leaves with nothing drawn in them
+                        // at all: the chips keep their plates but lose their
+                        // figures, and the meter's total, the status word and
+                        // the current task go with them, while every bar, glyph
+                        // and ticking figure carries on drawing. It is stable
+                        // once it happens, because those strings never change
+                        // again and so nothing asks for them to be redrawn —
+                        // which is why it reads as damage rather than as a
+                        // flicker. Grouping the geometry resolves the
+                        // whole card against one transform instead, which is
+                        // what makes the scale a property of the card rather
+                        // than of each label inside it.
+                        //
+                        // `geometryGroup` rather than `compositingGroup`: both
+                        // fix it, and only this one leaves the type rendering at
+                        // the scale it is drawn at instead of downsampling a
+                        // flattened 1:1 image of the card.
+                        .geometryGroup()
                         // A picture, not a control. Every gesture the island
                         // carries would land on the preview's own model — a tap
                         // toggles a pin that `forcedMode` already outranks, a
