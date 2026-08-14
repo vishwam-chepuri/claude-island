@@ -93,6 +93,26 @@ func registerHookInstallerTests() {
                 false, "the same block should be stale for the other state")
         }
 
+        // What lets `AppController.reconcileHooks` rewrite the block without
+        // asking: it only does so when the installed commands are exactly what
+        // this build would write for the *other* tracking state, which means the
+        // flag is the only difference. Drift of any other kind must fail that
+        // test in both states, so it is left for the "Update Hooks" button
+        // rather than silently applied to the user's file.
+        test("Drift other than the flag is not current in either tracking state") {
+            let url = try tempSettings(nil)
+            try HookInstaller.install(
+                binaryPath: "/old/claude-island-notify", trackSessionApp: true, settingsURL: url)
+            await expectEqual(
+                HookInstaller.isCurrent(
+                    binaryPath: notifyPath, trackSessionApp: true, settingsURL: url),
+                false, "a moved binary is not current")
+            await expectEqual(
+                HookInstaller.isCurrent(
+                    binaryPath: notifyPath, trackSessionApp: false, settingsURL: url),
+                false, "and flipping the flag must not make it look current either")
+        }
+
         test("Installing preserves unrelated hooks and unrelated settings keys") {
             let url = try tempSettings(existingSettings)
             let result = try HookInstaller.install(binaryPath: notifyPath, trackSessionApp: true, settingsURL: url)

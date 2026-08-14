@@ -493,6 +493,41 @@ final class AppController: NSObject, NSApplicationDelegate {
         applySettings(settings.current)
     }
 
+    /// Brings the installed hook block into line with `trackSessionApp`, so the
+    /// walk actually stops rather than merely being ignored.
+    ///
+    /// Runs from `applySettings`, which is both the toggle's path and the launch
+    /// path — and the launch path is the one that matters most. The setting
+    /// defaults to off, so every install that upgrades into this build has hook
+    /// commands that lack the flag and a setting that says the walk should not
+    /// run. Without this they would sit in the Hooks pane's "stale" state until
+    /// somebody visited a pane they had no reason to visit, walking the process
+    /// tree on every tool call the whole time.
+    ///
+    /// Deliberately narrow. It rewrites only when the installed block is exactly
+    /// what this build would write for the *other* tracking state, which means
+    /// the flag is the only difference. Any other drift — a moved binary, a
+    /// missing event, an edited timeout — is left alone for the "Update Hooks"
+    /// button, because those are changes the user should be shown rather than
+    /// have applied to a file behind their back.
+    ///
+    /// A failure needs no alert of its own: leaving the block alone leaves
+    /// `isCurrent` false, which is precisely the state the Hooks pane already
+    /// renders as "Update Hooks" with a real error behind it.
+    private func reconcileHooks(with new: IslandSettings) {
+        let binary = Self.notifyBinaryPath()
+        guard HookInstaller.isInstalled(),
+            !HookInstaller.isCurrent(binaryPath: binary, trackSessionApp: new.trackSessionApp),
+            HookInstaller.isCurrent(binaryPath: binary, trackSessionApp: !new.trackSessionApp)
+        else { return }
+        do {
+            try HookInstaller.install(binaryPath: binary, trackSessionApp: new.trackSessionApp)
+            log.debug("rewrote the hook block for trackSessionApp=\(new.trackSessionApp)")
+        } catch {
+            log.debug("could not rewrite the hook block: \(error)")
+        }
+    }
+
     private func openSettings() {
         settingsWindow.show()
         let state = settingsWindow.diagnostics
@@ -516,6 +551,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         log.setEnabled(new.logging || forcedByEnvironment)
         model.debugTint = new.debugTint
         model.trackSessionApp = new.trackSessionApp
+        reconcileHooks(with: new)
         model.forcedMode = IslandMode(forcedName: new.forcedMode)
         // Above the `hudEnabled` guard, like the display below it, and for the
         // same reason: that guard returns early on every change but the HUD
