@@ -1,9 +1,18 @@
 import ClaudeIslandCore
 import Foundation
 
-private func makeStore(_ clock: ClockBox) -> (SessionStore, VirtualScheduler) {
+/// Owners are reported alive unless a test says otherwise, so no case here
+/// depends on which pids happen to exist on the machine running it.
+private func makeStore(
+    _ clock: ClockBox,
+    isProcessAlive: @escaping @Sendable (Int32) -> Bool = { _ in true }
+) -> (SessionStore, VirtualScheduler) {
     let scheduler = VirtualScheduler()
-    return (SessionStore(scheduler: scheduler, now: { clock.value }), scheduler)
+    return (
+        SessionStore(
+            scheduler: scheduler, now: { clock.value }, isProcessAlive: isProcessAlive),
+        scheduler
+    )
 }
 
 func registerSessionStoreTests() {
@@ -302,6 +311,84 @@ func registerSessionStoreTests() {
             await expect(
                 await store.session("a") == nil,
                 "a stray post-end event resurrected the session as a brand-new one")
+        }
+
+        // The other half of the fade guard: reuse of the id is exactly what
+        // /clear and --resume do, and that must still cancel the removal.
+        test("A session restarted during the fade keeps its place") {
+            let clock = ClockBox(now: base)
+            let (store, scheduler) = makeStore(clock)
+            await store.ingest(HookEnvelope(sessionID: "a", event: .sessionEnd, receivedAt: base))
+
+            clock.value = base.addingTimeInterval(1)
+            await store.ingest(
+                HookEnvelope(sessionID: "a", event: .sessionStart, receivedAt: clock.value))
+
+            clock.value = base.addingTimeInterval(Timings.sessionEndFade + 1)
+            await scheduler.advance(to: clock.value)
+            await expect(await store.session("a") != nil, "a restarted session was removed anyway")
+        }
+
+        test("A session whose owner has exited is swept without the idle wait") {
+            let clock = ClockBox(now: base)
+            let (store, _) = makeStore(clock, isProcessAlive: { _ in false })
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .preToolUse, toolName: "Read", receivedAt: base,
+                    ancestorPIDs: [4242]))
+
+            clock.value = base.addingTimeInterval(Timings.expirySweepInterval)
+            await store.expireStale()
+            await expect(await store.session("a") == nil, "a dead owner's session survived")
+        }
+
+        test("A session whose owner is still running is left alone") {
+            let clock = ClockBox(now: base)
+            let (store, _) = makeStore(clock, isProcessAlive: { _ in true })
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .preToolUse, toolName: "Read", receivedAt: base,
+                    ancestorPIDs: [4242]))
+
+            clock.value = base.addingTimeInterval(Timings.expirySweepInterval)
+            await store.expireStale()
+            await expect(await store.session("a") != nil, "a live session was swept")
+        }
+
+        // Replayed traces and synthetic events carry no ancestry. Unknown must
+        // not be read as dead, or --replay sweeps its own fixtures.
+        test("A session with no known owner is never swept for liveness") {
+            let clock = ClockBox(now: base)
+            let (store, _) = makeStore(clock, isProcessAlive: { _ in false })
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .preToolUse, toolName: "Read", receivedAt: base))
+
+            clock.value = base.addingTimeInterval(Timings.expirySweepInterval)
+            await store.expireStale()
+            await expect(
+                await store.session("a") != nil, "a session with no ancestry was swept as dead")
+        }
+
+        // Idle expiry is not an ending. The next hook for a swept session means
+        // the user came back to a terminal that was open all along, so it has to
+        // be re-adopted rather than refused as a ghost.
+        test("An idle-swept session is re-adopted when it speaks again") {
+            let clock = ClockBox(now: base)
+            let (store, _) = makeStore(clock)
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .preToolUse, toolName: "Read", receivedAt: base))
+
+            clock.value = base.addingTimeInterval(Timings.sessionExpiry + 1)
+            await store.expireStale()
+            await expect(await store.session("a") == nil, "the idle session was not swept")
+
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .userPromptSubmit, receivedAt: clock.value))
+            await expect(
+                await store.session("a") != nil, "a returning user's session was refused")
         }
     }
 }
