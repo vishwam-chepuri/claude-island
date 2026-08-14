@@ -100,6 +100,31 @@ final class IslandViewModel {
     /// The switcher selection. Nil means "follow automatic priority".
     private(set) var selectedSessionID: String?
 
+    /// Prompts you have already stepped past by clicking elsewhere in the
+    /// switcher. They keep their rank, their rail and their place in the
+    /// attention count — they just stop taking the display.
+    ///
+    /// Keyed by the prompt rather than by its session, so answering one and
+    /// raising another from the same session counts as a new question and is
+    /// allowed to take over again.
+    private var steppedPastPrompts: Set<PromptKey> = []
+
+    /// Identity for a single permission prompt.
+    ///
+    /// `since` is stamped once, when the ask is built from the hook event, and
+    /// survives every later mutation of it — `withdrawDecision` rebuilds the
+    /// state around the same ask. So it tells two prompts apart without ever
+    /// telling a prompt apart from itself, which a token or a tool name would.
+    private struct PromptKey: Hashable {
+        let sessionID: String
+        let since: Date
+    }
+
+    private static func promptKey(_ session: Session) -> PromptKey? {
+        guard case .awaitingPermission(let ask) = session.state else { return nil }
+        return PromptKey(sessionID: session.id, since: ask.since)
+    }
+
     var mode: IslandMode {
         guard isEnabled, let shown = displaySession else { return .dormant }
         if let forcedMode { return forcedMode }
@@ -138,16 +163,24 @@ final class IslandViewModel {
 
     /// The session whose details are on screen.
     ///
-    /// A permission prompt always takes over, even from an explicit selection —
-    /// missing one is worse than losing your place. The selection is kept, not
-    /// cleared, so the view returns to it once the prompt is answered.
+    /// A permission prompt takes over when it arrives, even from an explicit
+    /// selection — missing one is worse than losing your place. It does not hold
+    /// you there, though: clicking any other session steps past that prompt and
+    /// the card goes where you sent it. The prompt keeps its rank at the top of
+    /// the switcher, its alert rail and its place in the attention count, and
+    /// the next *new* prompt takes over again — so stepping past one is a
+    /// decision about one question, not a standing instruction to ignore the
+    /// rest.
+    ///
+    /// Held the other way, the switcher was a control that looked broken: the
+    /// click landed and was recorded, and the card showed the prompt regardless.
     ///
     /// A session announcing its completion takes over too, but only briefly and
     /// only if you are not already reading something: hover and pin both hold
     /// the display where it is, because losing your place mid-read costs more
     /// than a completion notice is worth.
     var displaySession: Session? {
-        if let alerting = allSessions.first(where: { $0.state.isAlert }) { return alerting }
+        if let alerting = allSessions.first(where: { takesOver($0) }) { return alerting }
         if let id = completionPulseID, !isHovered, !isPinnedOpen,
             let finished = allSessions.first(where: { $0.id == id })
         {
@@ -168,8 +201,35 @@ final class IslandViewModel {
         return allSessions.filter { $0.id != shown.id && $0.state.needsUser }.count
     }
 
+    /// Whether this session's prompt still gets to take the display.
+    private func takesOver(_ session: Session) -> Bool {
+        guard let key = Self.promptKey(session) else { return false }
+        return !steppedPastPrompts.contains(key)
+    }
+
     func select(_ id: String) {
-        selectedSessionID = (selectedSessionID == id) ? nil : id
+        // Clicking the row that is already on screen hands the display back to
+        // automatic priority — which a prompt leads, so this is also how you
+        // return to one you stepped past.
+        //
+        // Keyed on what is shown as well as on what is stored: while a prompt
+        // has taken over, the highlighted row is the prompt's and the stored
+        // selection is somewhere else in the list. Toggling on the stored id
+        // alone made clicking that row clear a selection the human could not
+        // see, instead of stepping past the prompt they could.
+        if selectedSessionID == id, displaySession?.id == id {
+            selectedSessionID = nil
+            steppedPastPrompts.removeAll()
+            return
+        }
+        selectedSessionID = id
+        // Picking a session is a decision about where to look, so every prompt
+        // standing between you and it has been seen and stepped past. All of
+        // them, not just the one on screen: with two prompts up, dropping only
+        // the first would hand the display straight to the second and the click
+        // would still appear to do nothing.
+        steppedPastPrompts.formUnion(
+            allSessions.filter { $0.id != id }.compactMap(Self.promptKey))
     }
 
     var isOverriddenByAlert: Bool {
@@ -887,6 +947,10 @@ final class IslandViewModel {
         {
             selectedSessionID = nil
         }
+        // Forget prompts that are over. The set is then never larger than the
+        // number of prompts actually up, and a session that asks again cannot
+        // inherit the dismissal of the question it asked last time.
+        steppedPastPrompts.formIntersection(allSessions.compactMap(Self.promptKey))
         lastStates = Dictionary(
             allSessions.map { ($0.id, $0.state) }, uniquingKeysWith: { _, latest in latest })
         // A session that has gone away takes its pulse with it.
@@ -939,6 +1003,7 @@ final class IslandViewModel {
         if !enabled {
             isPinnedOpen = false
             selectedSessionID = nil
+            steppedPastPrompts.removeAll()
             endCompletionPulse()
         }
         syncTicker()

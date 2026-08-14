@@ -1623,7 +1623,9 @@ enum SelfTest {
     }
 
     /// The session switcher, including the rule that a permission prompt takes
-    /// over from an explicit selection but does not discard it.
+    /// over from an explicit selection but neither discards it nor holds you
+    /// there: the click that steps past a prompt has to land, and the next new
+    /// prompt still has to be able to interrupt.
     private static func switcherChecks(_ checks: inout [Check], model: IslandViewModel) async {
         model.apply(twoSessionSnapshot(alerting: false))
         checks.append(
@@ -1645,7 +1647,8 @@ enum SelfTest {
                 detail: "shown=\(model.displaySession?.id ?? "nil")"))
 
         // Alpha raises a permission prompt while beta is selected.
-        model.apply(twoSessionSnapshot(alerting: true))
+        let firstPrompt = Date()
+        model.apply(twoSessionSnapshot(alerting: true, promptAt: firstPrompt))
         checks.append(
             Check(
                 name: "a permission prompt takes over from the selection",
@@ -1656,6 +1659,46 @@ enum SelfTest {
                 name: "the takeover is signalled rather than silent",
                 passed: model.isOverriddenByAlert,
                 detail: "overridden=\(model.isOverriddenByAlert)"))
+
+        // Clicking another row while the prompt is up. This used to be recorded
+        // and then ignored, so the switcher looked broken exactly when it was
+        // most wanted.
+        model.select("beta")
+        checks.append(
+            Check(
+                name: "clicking a session steps past a prompt that took over",
+                passed: model.displaySession?.id == "beta",
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+        checks.append(
+            Check(
+                name: "a stepped-past prompt keeps its rank and its count",
+                passed: model.allSessions.first?.id == "alpha" && model.attentionCount == 1,
+                detail: "ranked=\(model.allSessions.map(\.id)) attention=\(model.attentionCount)"))
+        checks.append(
+            Check(
+                name: "stepping past is not undone by the takeover notice",
+                passed: !model.isOverriddenByAlert,
+                detail: "overridden=\(model.isOverriddenByAlert)"))
+
+        // The same prompt, republished — every later event in that session
+        // carries it along. Re-reading it as new would drag the card back and
+        // make the click impossible to hold.
+        model.apply(twoSessionSnapshot(alerting: true, promptAt: firstPrompt))
+        checks.append(
+            Check(
+                name: "republishing the same prompt does not take over again",
+                passed: model.displaySession?.id == "beta",
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
+
+        // A second, different question. Stepping past one prompt says nothing
+        // about the next, so this one interrupts.
+        model.apply(
+            twoSessionSnapshot(alerting: true, promptAt: firstPrompt.addingTimeInterval(1)))
+        checks.append(
+            Check(
+                name: "a new prompt takes over even after one was stepped past",
+                passed: model.displaySession?.id == "alpha",
+                detail: "shown=\(model.displaySession?.id ?? "nil")"))
 
         // Prompt answered: the selection was kept, so we go back to it.
         model.apply(twoSessionSnapshot(alerting: false))
@@ -2475,12 +2518,16 @@ enum SelfTest {
         return s
     }
 
-    private static func twoSessionSnapshot(alerting: Bool) -> HUDSnapshot {
+    /// `promptAt` is the prompt's own `since`, which is what identifies it. Two
+    /// snapshots sharing one are the same question republished; a later one is a
+    /// second question, and the switcher has to tell those apart.
+    private static func twoSessionSnapshot(alerting: Bool, promptAt: Date = Date()) -> HUDSnapshot {
         let alpha = session(
             "alpha",
             state: alerting
                 ? .awaitingPermission(
-                    PermissionAsk(toolName: "Write", kind: .write, target: "/tmp/x", since: Date()))
+                    PermissionAsk(
+                        toolName: "Write", kind: .write, target: "/tmp/x", since: promptAt))
                 : .thinking)
         return HUDSnapshot(primary: alpha, others: [session("beta", state: .thinking)])
     }

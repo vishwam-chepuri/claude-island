@@ -330,7 +330,8 @@ anything else happening counts as resolution.
 
 **Alerts outrank recency.** A session awaiting permission stays on screen even
 if another worktree is more recently active — otherwise the prompt vanishes
-exactly when you need it.
+exactly when you need it. Ranking only; you can still click past it in the
+switcher, and it keeps its rail and its count when you do.
 
 **Subagents share the parent's `session_id`.** A running `Task` interleaves its
 own `Bash`/`Read` events into the parent's stream. Rather than filter them out,
@@ -460,7 +461,7 @@ animations moved.
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
 | Tests | 277 passing |
-| Self-test | 167 checks passing |
+| Self-test | 172 checks passing |
 
 ## Visual language
 
@@ -539,10 +540,19 @@ moves. Five self-test checks guard both halves of this, including that the
 sparse card still fits its own contents — with no reserve left over, a block
 tallied a few points short now clips rather than merely sitting tight.
 
-A permission request always takes over the view, even from an explicit
+A permission request takes over the view when it arrives, even from an explicit
 selection — missing a prompt is worse than losing your place. The selection is
 kept rather than discarded, the takeover is labelled, and the view returns to
 your session once the prompt is answered.
+
+It does not hold you there, though. Clicking any other session steps past the
+prompt and the card goes where you sent it: the prompt keeps its place at the
+top of the switcher, its alert rail and its badge, the card names it in a line
+of its own, and the compact pill carries it as a count. Only a *new* prompt
+takes over again — stepping past one is an answer about that question, not a
+standing instruction to ignore the rest. Held the other way, the switcher was a
+control that looked broken exactly when it was most wanted: the click landed,
+was recorded, and changed nothing on screen.
 
 When no session is active the island is dormant and deliberately unreachable —
 the mouse monitor is torn down entirely, which is what keeps idle CPU at
