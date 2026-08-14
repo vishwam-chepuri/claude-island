@@ -346,8 +346,14 @@ struct ExpandedContent: View {
 
                 MetaLine(session: session, tick: model.tick)
 
-                RevealRow(session: session, model: model)
-                    .padding(.top, 5)
+                // Gone entirely rather than rendered empty: `revealBlockHeight`
+                // takes its height back out of the card at the same time, and a
+                // row left in place with nothing in it would leave the gap the
+                // constant used to reserve.
+                if model.trackSessionApp {
+                    RevealRow(session: session, model: model)
+                        .padding(.top, 5)
+                }
 
                 MeterBlock(
                     label: "CONTEXT",

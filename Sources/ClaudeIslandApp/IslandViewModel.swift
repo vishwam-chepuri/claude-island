@@ -276,13 +276,22 @@ final class IslandViewModel {
         + 12  // "sessions" label row plus its 3pt bottom padding
         + 15  // divider with 7pt above and below
         + 13  // meta line
-        + revealRowHeight + 5  // reveal row, plus its 5pt top padding
         + 28  // context label, its 7pt top padding, and the meter
         + bodyBottomPadding  // 13
-    // The chip row (`chipRowHeight` + 4 for the taller emphasised figure) and
-    // the 5-hour meter are both conditional, so they are added in
+    // The chip row (`chipRowHeight` + 4 for the taller emphasised figure), the
+    // 5-hour meter and the reveal row are all conditional, so they are added in
     // `expandedHeight` rather than tallied here.
     static let expandedChipRowHeight: CGFloat = chipRowHeight + 4
+
+    /// The reveal row and its 5pt top padding, or nothing at all when the
+    /// session's app is not being tracked.
+    ///
+    /// Conditional on a setting rather than on the session, which is the only
+    /// reason it can leave the constant above: the row still must not appear
+    /// for one session and vanish for another, because the card is sized across
+    /// all of them and browsing the switcher would reflow the HUD. Changing the
+    /// setting resizes the card once, which is not browsing.
+    var revealBlockHeight: CGFloat { trackSessionApp ? Self.revealRowHeight + 5 : 0 }
     /// Breathing room between content and the camera cutout.
     static let notchPadding: CGFloat = 12
 
@@ -733,7 +742,8 @@ final class IslandViewModel {
             ? (anyAnswerablePrompt ? Self.answerNoticeHeight : 0)
             : answerBlockHeight(for: asks)
 
-        return bodyTopInset + Self.expandedChromeHeight + usageBlock + answerBlock
+        return bodyTopInset + Self.expandedChromeHeight + revealBlockHeight + usageBlock
+            + answerBlock
             + sessionListHeight + chipBlock + taskBlock
             + Self.nowRowTopPadding + Self.nowRowHeight
             + Self.trailTopPadding + trailHeight(sizedFor: sessions)

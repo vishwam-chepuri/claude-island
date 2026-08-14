@@ -1750,6 +1750,12 @@ enum SelfTest {
 
         model.apply(HUDSnapshot(primary: short, others: [long]))
         model.forcedMode = .expanded
+        // Explicit, and not incidental to the default: every check below is
+        // about the row the card draws when it draws one at all. Left at the
+        // shipped default of off, `refreshOwners` would clear the cache, both
+        // fixtures would read back `.unknown`, and the checks would go on
+        // passing while measuring the disabled label instead of the button.
+        model.trackSessionApp = true
 
         // `apply()` above ran the moment it was called, with `forcedMode` still
         // nil — its own `refreshOwners()` found `mode != .expanded` and left
@@ -1829,6 +1835,25 @@ enum SelfTest {
                 detail: "gone=\(goneRowHeight) owner=\(ownerRowHeight) "
                     + "reserved=\(IslandViewModel.revealRowHeight)"))
 
+        // The card is sized from a hand-tallied constant, so hiding the row
+        // without taking its height back out of that tally would leave a gap
+        // where it used to be. No single-state check can see that: each state
+        // on its own looks self-consistent, and only the difference between
+        // them shows the tally drifting from what is actually drawn.
+        model.select("l")
+        let heightWithRow = model.shapeSize.height
+        model.trackSessionApp = false
+        let heightWithoutRow = model.shapeSize.height
+        model.trackSessionApp = true
+        checks.append(
+            Check(
+                name: "hiding the reveal row shortens the card by exactly the row",
+                passed: abs(
+                    (heightWithRow - heightWithoutRow)
+                        - (IslandViewModel.revealRowHeight + 5)) < 0.5,
+                detail: "with=\(heightWithRow) without=\(heightWithoutRow) "
+                    + "expected difference=\(IslandViewModel.revealRowHeight + 5)"))
+
         model.forcedMode = nil
         model.apply(HUDSnapshot())
 
@@ -1903,6 +1928,25 @@ enum SelfTest {
                 name: "the expanded card is never shorter than its contents",
                 passed: needed <= size.height + 0.5,
                 detail: "content=\(needed) card=\(size.height)"))
+
+        // The same measurement in the other tracking state, because the row is
+        // conditional now and the state this check would otherwise skip is the
+        // shipped default. A tally that only added up while the row was drawn
+        // would pass here and clip for everyone who never switched it on.
+        let wasTracking = model.trackSessionApp
+        model.trackSessionApp = !wasTracking
+        let flippedSize = model.shapeSize
+        let flippedHost = NSHostingView(rootView: ExpandedContent(session: busy, model: model))
+        flippedHost.frame = CGRect(origin: .zero, size: flippedSize)
+        flippedHost.layoutSubtreeIfNeeded()
+        let flippedNeeded = flippedHost.fittingSize.height
+        model.trackSessionApp = wasTracking
+        checks.append(
+            Check(
+                name: "the expanded card fits its contents in the other tracking state too",
+                passed: flippedNeeded <= flippedSize.height + 0.5,
+                detail: "content=\(flippedNeeded) card=\(flippedSize.height) "
+                    + "trackSessionApp=\(!wasTracking)"))
         checks.append(
             Check(
                 name: "the expanded card fits inside its panel",
