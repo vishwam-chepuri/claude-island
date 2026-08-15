@@ -404,6 +404,17 @@ struct ExpandedContent: View {
                 NowRow(session: session, now: model.tick)
                     .padding(.top, 9)
 
+                // Under NOW, not above it: NOW names the call in flight, this
+                // glosses what the session is doing with it, and the mechanical
+                // fact before its gloss is the order the rest of the card
+                // already reads in. Absent entirely on a session that has not
+                // spoken yet — `activityBlockHeight` takes its height back at
+                // the same time, so there is no reserved gap to leave behind.
+                if let activity = session.activity {
+                    ActivityRow(activity: activity)
+                        .padding(.top, IslandViewModel.activityTopPadding)
+                }
+
                 // No trailing Spacer: the trail itself is the flexible region.
                 // A Spacer with minLength 0 collapses to nothing under pressure
                 // and lets everything above it overflow the card, which is how
@@ -863,6 +874,39 @@ struct MetaLine: View {
     /// The branch leads the line whenever there is one.
     private var branchIndex: Int? {
         Format.branch(session.gitBranch) != nil ? 0 : nil
+    }
+}
+
+/// One line on what the session is doing, in prose.
+///
+/// This is the row the agents view has and the HUD did not: NOW can say
+/// `Bash  git rev-list --count origin/main..main` and still leave you guessing
+/// what the session is *up to*. Where Claude Code keeps that line for a
+/// background job, this is its line verbatim; everywhere else it is derived
+/// from the transcript, which is what makes the row appear for an ordinary
+/// terminal session at all.
+///
+/// One line, tail-truncated — a deliberate exception to the card's rule against
+/// abbreviating a label. That rule was written for branch names and titles,
+/// where the string *is* the identity and half of it identifies nothing. This is
+/// a sentence: its opening clause carries the sense, and letting it wrap would
+/// give a prose row a variable height inside a card whose height is a tallied
+/// contract.
+struct ActivityRow: View {
+    let activity: SessionActivity
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "quote.bubble")
+                .font(.system(size: 8))
+                .foregroundStyle(IslandPalette.tertiary)
+            Text(activity.text)
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.8))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
     }
 }
 

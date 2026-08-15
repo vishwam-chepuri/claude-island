@@ -74,6 +74,11 @@ extension JSONValue {
         return nil
     }
 
+    public var arrayValue: [JSONValue]? {
+        if case .array(let a) = self { return a }
+        return nil
+    }
+
     /// First non-empty string found at any of `keys`, in order.
     public func firstString(_ keys: [String]) -> String? {
         for k in keys {

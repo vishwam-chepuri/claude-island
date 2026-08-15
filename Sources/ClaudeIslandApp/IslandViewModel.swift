@@ -331,6 +331,13 @@ final class IslandViewModel {
     static let sessionPeekHeight: CGFloat = 9
     static let nowRowTopPadding: CGFloat = 9
     static let nowRowHeight: CGFloat = 28
+    /// The activity line and the gap above it.
+    ///
+    /// 13 is measured, not chosen — the glyph and the 10pt line settle there,
+    /// and the first attempt at 14 left the card a point taller than its own
+    /// content. `SelfTest` hosts the real row and fails on any drift.
+    static let activityTopPadding: CGFloat = 7
+    static let activityRowHeight: CGFloat = 13
     static let trailTopPadding: CGFloat = 7
     static let trailLabelHeight: CGFloat = 13
     static let trailRowHeight: CGFloat = 17
@@ -817,10 +824,17 @@ final class IslandViewModel {
             ? (anyAnswerablePrompt ? Self.answerNoticeHeight : 0)
             : answerBlockHeight(for: asks)
 
+        // Conditional on the session rather than on a setting, like the task and
+        // chip blocks above it: a session that has said nothing draws no row and
+        // is not charged for one.
+        let activityBlock: CGFloat =
+            sessions.contains { $0.activity != nil }
+            ? Self.activityTopPadding + Self.activityRowHeight : 0
+
         return bodyTopInset + Self.expandedChromeHeight + revealBlockHeight + usageBlock
             + answerBlock
             + sessionListHeight + chipBlock + taskBlock
-            + Self.nowRowTopPadding + Self.nowRowHeight
+            + Self.nowRowTopPadding + Self.nowRowHeight + activityBlock
             + Self.trailTopPadding + trailHeight(sizedFor: sessions)
     }
 

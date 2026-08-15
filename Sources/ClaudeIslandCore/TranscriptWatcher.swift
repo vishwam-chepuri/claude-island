@@ -163,6 +163,7 @@ public final class TranscriptWatcher: @unchecked Sendable {
                 effort: entry.accumulator.effort,
                 tasks: entry.accumulator.tasks,
                 customTitle: entry.accumulator.customTitle,
-                aiTitle: entry.accumulator.aiTitle))
+                aiTitle: entry.accumulator.aiTitle,
+                activity: entry.accumulator.activity))
     }
 }

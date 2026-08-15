@@ -2026,6 +2026,14 @@ enum SelfTest {
             TaskItem(id: "1", subject: "first", status: .completed),
             TaskItem(id: "2", subject: "a reasonably long in-flight task", status: .inProgress),
         ])
+        // Deliberately longer than the row can draw. The activity line's height
+        // contract rests on it staying one line: a string that wrapped would
+        // measure taller than the tally and clip the trail beneath it, so the
+        // fixture is the case that would break it rather than a tidy one.
+        busy.activity = SessionActivity(
+            text: "extracting the classifier's state machine from the CLI bundle and "
+                + "checking each tier against the live job store",
+            source: .jobStore, at: Date())
 
         // Five sessions, so the switcher's viewport is full and one row sits
         // below the fold, and a 5-hour window so the tallest chrome is measured.
@@ -2073,6 +2081,60 @@ enum SelfTest {
                 passed: model.expandedMaxHeight <= NotchGeometryResolver.panelHeight,
                 detail: "tallest=\(model.expandedMaxHeight) panel=\(NotchGeometryResolver.panelHeight)"
             ))
+        // The activity row is conditional on the session, so it carries the same
+        // trap the reveal row does: drawn without being budgeted it clips, and
+        // budgeted without being drawn it leaves a gap where it would have been.
+        // Neither state shows that on its own — only the difference between them.
+        var quiet = busy
+        quiet.activity = nil
+        let fullSnapshot = HUDSnapshot(
+            primary: busy, others: others,
+            rateLimit: RateLimitWindow(
+                usedPercentage: 74, resetsAt: Date().addingTimeInterval(4_320)))
+        model.apply(
+            HUDSnapshot(
+                primary: quiet, others: others,
+                rateLimit: RateLimitWindow(
+                    usedPercentage: 74, resetsAt: Date().addingTimeInterval(4_320))))
+        let withoutActivity = model.shapeSize.height
+        let activityBlock =
+            IslandViewModel.activityTopPadding + IslandViewModel.activityRowHeight
+        checks.append(
+            Check(
+                name: "dropping the activity line shortens the card by exactly the row",
+                passed: abs((size.height - withoutActivity) - activityBlock) < 0.5,
+                detail: "with=\(size.height) without=\(withoutActivity) "
+                    + "expected difference=\(activityBlock)"))
+
+        // Measured, not assumed — the difference check above only proves the
+        // tally agrees with itself, not that the reserved height is the height
+        // the row draws at. Over-budget leaves a gap under NOW; under-budget
+        // eats into the trail.
+        let activityRow = Self.measuredHeight(
+            of: ActivityRow(
+                activity: SessionActivity(
+                    text: "a line long enough that it has to truncate rather than wrap",
+                    source: .jobStore, at: Date())))
+        checks.append(
+            Check(
+                name: "the activity line draws at the height the card reserves",
+                passed: abs(activityRow - IslandViewModel.activityRowHeight) <= 0.5,
+                detail: "row=\(activityRow) reserved=\(IslandViewModel.activityRowHeight)"))
+
+        // And the quieter card must still fit what is left of it, because the
+        // tally has just handed that height back.
+        let quietHost = NSHostingView(rootView: ExpandedContent(session: quiet, model: model))
+        quietHost.frame = CGRect(origin: .zero, size: model.shapeSize)
+        quietHost.layoutSubtreeIfNeeded()
+        checks.append(
+            Check(
+                name: "the expanded card fits a session that has said nothing yet",
+                passed: quietHost.fittingSize.height <= model.shapeSize.height + 0.5,
+                detail: "content=\(quietHost.fittingSize.height) card=\(model.shapeSize.height)"))
+
+        // Restore the fixture the checks below are written against.
+        model.apply(fullSnapshot)
+
         checks.append(
             Check(
                 name: "sessions beyond the switcher's rows are listed, not dropped",
@@ -2208,6 +2270,9 @@ enum SelfTest {
             TaskItem(id: "1", subject: "first", status: .completed),
             TaskItem(id: "2", subject: "a reasonably long in-flight task", status: .inProgress),
         ])
+        busy.activity = SessionActivity(
+            text: "rebuilding the card and re-measuring every row against its budget",
+            source: .transcript, at: Date())
 
         for (mode, label) in [(IslandMode.peek, "peek"), (IslandMode.expanded, "expanded")] {
             model.apply(HUDSnapshot(primary: busy))

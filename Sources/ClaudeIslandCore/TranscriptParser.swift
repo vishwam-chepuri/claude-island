@@ -9,11 +9,13 @@ public struct TranscriptUpdate: Sendable, Equatable {
     public var tasks: TaskProgress
     public var customTitle: String?
     public var aiTitle: String?
+    /// One line on what the session is doing. See `ActivityPhrase`.
+    public var activity: String?
 
     public init(
         sessionID: String, model: String?, tokens: TokenStats,
         gitBranch: String? = nil, effort: String? = nil, tasks: TaskProgress = TaskProgress(),
-        customTitle: String? = nil, aiTitle: String? = nil
+        customTitle: String? = nil, aiTitle: String? = nil, activity: String? = nil
     ) {
         self.sessionID = sessionID
         self.model = model
@@ -23,6 +25,7 @@ public struct TranscriptUpdate: Sendable, Equatable {
         self.tasks = tasks
         self.customTitle = customTitle
         self.aiTitle = aiTitle
+        self.activity = activity
     }
 }
 
@@ -38,6 +41,11 @@ public struct TranscriptAccumulator: Sendable {
     public private(set) var tasks = TaskProgress()
     public private(set) var customTitle: String?
     public private(set) var aiTitle: String?
+    /// Last-wins across the whole transcript, updated block by block in the
+    /// order they were written. "What is it doing" is by definition the most
+    /// recent thing that happened, so there is nothing to accumulate — a later
+    /// block simply replaces an earlier one.
+    public private(set) var activity: String?
 
     /// Claude Code writes one JSONL line per content block, and every line of a
     /// single API response repeats that response's `usage`. Measured on a real
@@ -70,9 +78,24 @@ public struct TranscriptAccumulator: Sendable {
         // that shares its requestId with the response's text and thinking
         // blocks, so folding this into the usage dedupe below would drop them
         // whenever the tool_use block was not the first line of the response.
-        for block in message.content ?? [] where block.type == "tool_use" {
-            guard let name = block.name else { continue }
-            tasks.apply(toolName: name, input: block.input)
+        // Walked in written order, and both arms feed `activity`, so whichever
+        // block came last is what the line ends up saying — prose when the
+        // assistant narrated after its last call, the call when it did not.
+        for block in message.content ?? [] {
+            switch block.type {
+            case "text":
+                if let written = block.text, let line = ActivityPhrase.fromProse(written) {
+                    activity = line
+                }
+            case "tool_use":
+                guard let name = block.name else { continue }
+                tasks.apply(toolName: name, input: block.input)
+                if let line = ActivityPhrase.fromTool(name: name, input: block.input) {
+                    activity = line
+                }
+            default:
+                break
+            }
         }
 
         guard let usage = message.usage else { return }
@@ -140,6 +163,7 @@ public struct TranscriptAccumulator: Sendable {
             let type: String?
             let name: String?
             let input: JSONValue?
+            let text: String?
         }
 
         struct Usage: Decodable {

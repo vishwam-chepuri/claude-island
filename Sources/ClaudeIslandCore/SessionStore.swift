@@ -52,6 +52,9 @@ public actor SessionStore {
     /// Whether a pid still exists. Injected so the sweep can be driven from a
     /// test without spawning and killing real processes.
     private let isProcessAlive: @Sendable (Int32) -> Bool
+    /// The line Claude Code's own classifier wrote for a background session.
+    /// Injected so the tests need no job store on disk.
+    private let jobState: @Sendable (String) -> JobState?
 
     private var continuations: [UUID: AsyncStream<HUDSnapshot>.Continuation] = [:]
     private var sweepTask: Task<Void, Never>?
@@ -80,6 +83,9 @@ public actor SessionStore {
         // Reading that as dead would sweep a session running as another user.
         isProcessAlive: @escaping @Sendable (Int32) -> Bool = { pid in
             kill(pid, 0) == 0 || errno == EPERM
+        },
+        jobState: @escaping @Sendable (String) -> JobState? = {
+            JobStateReader.shared.state(forSessionID: $0)
         }
     ) {
         self.scheduler = scheduler
@@ -87,6 +93,7 @@ public actor SessionStore {
         self.now = now
         self.longContextResolver = longContextResolver
         self.isProcessAlive = isProcessAlive
+        self.jobState = jobState
     }
 
     // MARK: - Observation
@@ -212,10 +219,40 @@ public actor SessionStore {
         if let title = update.customTitle { s.customTitle = title }
         if let title = update.aiTitle { s.aiTitle = title }
         if !update.tasks.isEmpty { s.tasks = update.tasks }
+        if let line = update.activity {
+            s.activity = SessionActivity(text: line, source: .transcript, at: now())
+        }
+        applyJobState(&s)
         s.tokens = update.tokens
         sessions[update.sessionID] = s
         publish()
     }
+
+    /// Let Claude Code's own classifier speak for a session that has one, while
+    /// its reading is still current.
+    ///
+    /// Its prose is the better line — a model wrote it, and it is the exact
+    /// string the agents view shows — but it is also the slower one: the store
+    /// is rewritten on a 15-second debounce, and the model-written tier inside
+    /// it refreshes at most once a minute, backing off to four. So a reading
+    /// that has stopped keeping up gives way to the transcript line, which is
+    /// never more than one file-system event behind.
+    ///
+    /// Read here, on the back of a transcript update, rather than from a timer
+    /// of its own: a session whose classifier is moving is a session writing
+    /// transcript lines, so this samples often enough while costing nothing on
+    /// an idle machine.
+    private func applyJobState(_ s: inout Session) {
+        guard let job = jobState(s.id) else { return }
+        guard now().timeIntervalSince(job.updatedAt) <= Self.jobStateFreshFor else { return }
+        s.activity = SessionActivity(text: job.detail, source: .jobStore, at: job.updatedAt)
+    }
+
+    /// How stale the background store's line may be and still outrank the line
+    /// derived here. Generous against its own cadence deliberately: that tier
+    /// can sit four minutes between refreshes by design, and calling that stale
+    /// would throw away the better line for most of a long turn.
+    static let jobStateFreshFor: TimeInterval = 300
 
     /// Record the facts only a status-line render publishes: the exact context
     /// window, the lines this session has rewritten, and the account's 5-hour

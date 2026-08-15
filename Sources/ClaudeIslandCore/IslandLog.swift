@@ -23,6 +23,12 @@ public enum IslandPaths {
     public static var claudeProjects: URL {
         claudeHome.appendingPathComponent("projects", isDirectory: true)
     }
+    /// Claude Code's background-job store: one directory per `--agent` job,
+    /// holding the `state.json` its agents view reads. See `JobStateReader` for
+    /// what is taken from it and why only background sessions have one.
+    public static var claudeJobs: URL {
+        claudeHome.appendingPathComponent("jobs", isDirectory: true)
+    }
     public static var claudeSettings: URL {
         claudeHome.appendingPathComponent("settings.json")
     }

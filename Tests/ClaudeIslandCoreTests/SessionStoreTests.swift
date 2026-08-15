@@ -3,14 +3,20 @@ import Foundation
 
 /// Owners are reported alive unless a test says otherwise, so no case here
 /// depends on which pids happen to exist on the machine running it.
+///
+/// The job store is stubbed empty for the same reason: the shipped default
+/// reads `~/.claude/jobs`, and letting it through would make these cases depend
+/// on which background sessions the machine running them happens to have.
 private func makeStore(
     _ clock: ClockBox,
-    isProcessAlive: @escaping @Sendable (Int32) -> Bool = { _ in true }
+    isProcessAlive: @escaping @Sendable (Int32) -> Bool = { _ in true },
+    jobState: @escaping @Sendable (String) -> JobState? = { _ in nil }
 ) -> (SessionStore, VirtualScheduler) {
     let scheduler = VirtualScheduler()
     return (
         SessionStore(
-            scheduler: scheduler, now: { clock.value }, isProcessAlive: isProcessAlive),
+            scheduler: scheduler, now: { clock.value }, isProcessAlive: isProcessAlive,
+            jobState: jobState),
         scheduler
     )
 }

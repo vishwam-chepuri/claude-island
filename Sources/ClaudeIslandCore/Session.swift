@@ -90,6 +90,13 @@ public struct Session: Sendable, Equatable, Identifiable {
     /// unconditionally.
     public var linesAdded: Int = 0
     public var linesRemoved: Int = 0
+    /// One line on what this session is doing, drawn only on the expanded card.
+    ///
+    /// Nil until a transcript update or a job-store reading arrives, and drawn
+    /// as nothing at all rather than as an empty row — a session on its first
+    /// turn has genuinely nothing to say, and a heading over blank space says
+    /// less than no heading.
+    public var activity: SessionActivity?
     public var startedAt: Date
     public var lastEventAt: Date
     /// Most recent completed or in-flight tool calls, newest first, capped.
@@ -179,6 +186,10 @@ public enum SessionReducer {
             s.tokens = TokenStats()
             s.linesAdded = 0
             s.linesRemoved = 0
+            // A `/clear` rewrites the transcript from the top, so the line the
+            // old conversation ended on describes work this session can no
+            // longer account for.
+            s.activity = nil
             s.endedAt = nil
             s.startedAt = now
 
