@@ -49,6 +49,9 @@ public actor SessionStore {
     /// million-token variant. Injected so the tier is decided in one place and
     /// the tests need no config file on disk.
     private let longContextResolver: @Sendable (String?, String?) -> Bool
+    /// Whether a pid still exists. Injected so the sweep can be driven from a
+    /// test without spawning and killing real processes.
+    private let isProcessAlive: @Sendable (Int32) -> Bool
 
     private var continuations: [UUID: AsyncStream<HUDSnapshot>.Continuation] = [:]
     private var sweepTask: Task<Void, Never>?
@@ -57,6 +60,11 @@ public actor SessionStore {
     private var revisions: [String: Int] = [:]
     /// The (model, cwd) pair the context tier was last resolved for, per session.
     private var resolvedTiers: [String: String] = [:]
+    /// Ids of sessions that ended, and when. Guards against a straggling hook
+    /// reviving one: the reducer mints a session for any id it does not know, so
+    /// without this a late nudge reappears as a blank row for another 30
+    /// minutes. Only `SessionStart` may clear an entry — see `ingest`.
+    private var tombstones: [String: Date] = [:]
     /// Account-wide, so it lives beside the session table rather than in it —
     /// and outlives any one session, which is the point of a shared budget.
     private var rateLimit: RateLimitWindow?
@@ -67,12 +75,18 @@ public actor SessionStore {
         now: @escaping @Sendable () -> Date = { Date() },
         longContextResolver: @escaping @Sendable (String?, String?) -> Bool = {
             ClaudeConfig.usesLongContext(model: $0, cwd: $1)
+        },
+        // EPERM means the process exists and simply is not ours to signal.
+        // Reading that as dead would sweep a session running as another user.
+        isProcessAlive: @escaping @Sendable (Int32) -> Bool = { pid in
+            kill(pid, 0) == 0 || errno == EPERM
         }
     ) {
         self.scheduler = scheduler
         self.log = log
         self.now = now
         self.longContextResolver = longContextResolver
+        self.isProcessAlive = isProcessAlive
     }
 
     // MARK: - Observation
@@ -125,6 +139,23 @@ public actor SessionStore {
         if case .statusline = envelope.event {
             applyStatusline(envelope)
             return
+        }
+
+        // A hook for a session that already ended has nothing left to describe,
+        // and the reducer would mint a fresh session rather than drop it — a row
+        // with no cwd, model or title, holding the HUD for another 30 minutes.
+        // SessionStart is the one event allowed to raise the dead, because a
+        // resumed or cleared session reuses its id and does announce itself.
+        if sessions[envelope.sessionID] == nil,
+            hasEnded(envelope.sessionID, at: envelope.receivedAt)
+        {
+            guard case .sessionStart = envelope.event else {
+                log.debug(
+                    "ignoring \(envelope.event.name) for ended session "
+                        + "\(envelope.sessionID.prefix(8))")
+                return
+            }
+            tombstones[envelope.sessionID] = nil
         }
 
         let outcome = SessionReducer.apply(envelope, to: sessions[envelope.sessionID])
@@ -255,20 +286,30 @@ public actor SessionStore {
     }
 
     private func fire(_ transition: PendingTransition, id: String, revision: Int) {
-        // A newer event superseded this transition while it was pending.
-        guard revisions[id] == revision, var s = sessions[id] else { return }
+        guard var s = sessions[id] else { return }
 
         switch transition {
+        // The two decay transitions are cosmetic and belong to the event that
+        // scheduled them, so a newer event supersedes them.
         case .promptingToThinking:
-            guard case .prompting = s.state else { return }
+            guard revisions[id] == revision, case .prompting = s.state else { return }
             s.state = .thinking
+
         case .errorToThinking:
-            guard case .error = s.state else { return }
+            guard revisions[id] == revision, case .error = s.state else { return }
             s.state = .thinking
+
+        // Removal is not cosmetic and deliberately ignores the revision. A
+        // background subagent's SubagentStop can land minutes after its parent's
+        // Stop; inside this fade it used to bump the revision, cancel the only
+        // removal anyone had scheduled, and strand the row until the 30-minute
+        // sweep. What actually decides it is whether the session is still ended,
+        // and SessionStart clears `endedAt` — so a session resumed or cleared
+        // under the same id still keeps its place.
         case .removeSession:
-            sessions[id] = nil
-            revisions[id] = nil
-            resolvedTiers[id] = nil
+            guard s.endedAt != nil else { return }
+            forget(id)
+            tombstones[id] = now()
             stopSweepIfIdle()
             publish()
             return
@@ -276,6 +317,27 @@ public actor SessionStore {
 
         sessions[id] = s
         publish()
+    }
+
+    /// Drop every trace of a session. Deliberately does not tombstone: only a
+    /// real `SessionEnd` earns that, because an idle-swept session must stay
+    /// re-adoptable.
+    private func forget(_ id: String) {
+        sessions[id] = nil
+        revisions[id] = nil
+        resolvedTiers[id] = nil
+    }
+
+    /// Whether this id belonged to a session that ended recently enough for a
+    /// straggling hook to still be in flight. Expired entries are dropped as
+    /// they are met, so a lookup is also the only cleanup this table needs.
+    private func hasEnded(_ id: String, at when: Date) -> Bool {
+        guard let ended = tombstones[id] else { return false }
+        guard when.timeIntervalSince(ended) < Timings.endedSessionMemory else {
+            tombstones[id] = nil
+            return false
+        }
+        return true
     }
 
     // MARK: - Expiry
@@ -302,16 +364,49 @@ public actor SessionStore {
 
     public func expireStale() {
         let cutoff = now()
-        let stale = sessions.values.filter { $0.idleFor(now: cutoff) > Timings.sessionExpiry }
-        guard !stale.isEmpty else { return }
-        for s in stale {
-            log.debug("expiring idle session \(s.id.prefix(8))")
-            sessions[s.id] = nil
-            revisions[s.id] = nil
-            resolvedTiers[s.id] = nil
+        tombstones = tombstones.filter {
+            cutoff.timeIntervalSince($0.value) < Timings.endedSessionMemory
+        }
+
+        let doomed = sessions.values.compactMap { s in
+            staleReason(s, at: cutoff).map { (s.id, $0) }
+        }
+        guard !doomed.isEmpty else { return }
+        for (id, reason) in doomed {
+            log.debug("dropping session \(id.prefix(8)): \(reason)")
+            forget(id)
         }
         stopSweepIfIdle()
         publish()
+    }
+
+    /// Why the sweep should drop this session, or nil to keep it.
+    private func staleReason(_ s: Session, at now: Date) -> String? {
+        if s.idleFor(now: now) > Timings.sessionExpiry { return "idle" }
+        if ownerHasExited(s) { return "owner exited" }
+        return nil
+    }
+
+    /// Whether the Claude process that owned this session is gone.
+    ///
+    /// Closing a terminal tab, killing the process or sleeping the machine ends a
+    /// session without any `SessionEnd` reaching us, and waiting out the
+    /// 30-minute idle expiry means half an hour of showing work that finished.
+    /// The pid answers directly.
+    ///
+    /// Element zero is the session's own process: `ownerPIDs` is the hook
+    /// client's ancestry, nearest first, and Claude Code spawns that client
+    /// itself. Measured rather than assumed — a SessionStart hook on this
+    /// machine reports its parent as `claude`, with the shell and terminal above
+    /// it.
+    ///
+    /// An empty ancestry means nobody told us, which is not the same as dead:
+    /// replayed traces and synthetic events both arrive that way and must never
+    /// be swept. A recycled pid can only make a dead owner look alive, which
+    /// costs one more sweep and never hides a live session.
+    private func ownerHasExited(_ s: Session) -> Bool {
+        guard let owner = s.ownerPIDs.first else { return false }
+        return !isProcessAlive(owner)
     }
 
     // MARK: - Introspection (tests, replay)

@@ -97,7 +97,7 @@ The window is a sidebar with one pane per concern:
 General     Event pipeline · Status · Show the HUD · Launch at login
             · Find the app each session is running in
 Appearance  A live preview of the island, posed at each tier
-            · Show it on … · Open on hover after …
+            · Show it on … · Open on hover after … · Show the tool trace
 Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per
             cue, or None to skip that one
 Hooks       Install / update / remove, Copy Hook JSON
@@ -106,10 +106,11 @@ Advanced    Debug log · Pin the HUD to · Reveal Support Folder
 
 **Appearance** poses the real island — the same shape, content views and view
 model the HUD draws with — over invented sessions, at whichever tier you press.
-The two settings under it are the ones the preview is a picture of: it resolves
+The three settings under it are the ones the preview is a picture of: it resolves
 the shape against the display chosen there, so a notched panel previews a notch
-and anything else previews the pill, and the Peek tier is what the hover delay
-stands between the pointer and.
+and anything else previews the pill, the Peek tier is what the hover delay
+stands between the pointer and, and the tool trace is a section of the Expanded
+card that appears and disappears under the switch.
 
 ![The Appearance pane showing the expanded card posed over invented sessions, with tier buttons for Compact, Alert, Peek and Expanded, and the Show it on and Open on hover after rows below](docs/images/settings-appearance.png)
 
@@ -131,6 +132,14 @@ crossing the top of the screen on its way to the menu bar pops the card open in
 passing. Only opening waits: moving away closes it at once, because a card that
 lingered over the window you have just moved to would be in the way with no way
 to dismiss it. Set it to Instant for what earlier builds did.
+
+**Show the tool trace** keeps or drops the *recent* list at the foot of the
+expanded card — every finished tool call, newest first, with what it touched and
+how long it took. On by default. Off is for the reading of the card that finds a
+scrolling list of Read/Grep/Edit to be noise: the card then ends at the call in
+flight and is shorter by the trail, rather than reserving the space and leaving
+it empty. What is running *now* is still named, on the card and on hover — this
+is the history, not the present tense.
 
 **Quit ClaudeIsland** sits in the footer, always visible. With no menu bar icon
 it is the only way to quit short of Activity Monitor, so it must never be
@@ -331,7 +340,8 @@ anything else happening counts as resolution.
 
 **Alerts outrank recency.** A session awaiting permission stays on screen even
 if another worktree is more recently active — otherwise the prompt vanishes
-exactly when you need it.
+exactly when you need it. Ranking only; you can still click past it in the
+switcher, and it keeps its rail and its count when you do.
 
 **Subagents share the parent's `session_id`.** A running `Task` interleaves its
 own `Bash`/`Read` events into the parent's stream. Rather than filter them out,
@@ -460,8 +470,8 @@ animations moved.
 | Compact, animating | 0.2% |
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
-| Tests | 277 passing |
-| Self-test | 167 checks passing |
+| Tests | 287 passing |
+| Self-test | 177 checks passing |
 
 ## Visual language
 
@@ -522,7 +532,8 @@ lines changed, and plan progress with the task currently in flight.
 clickable, each with a state-coloured rail; selecting one shows its detail
 below — optionally including a row offering to raise the session's terminal,
 *Reveal in `<App>`*, or one of three reasons it cannot — and ending in the trail
-of recent tool calls. Click the island again, or anywhere outside, to dismiss.
+of recent tool calls, unless that is switched off under Appearance. Click the
+island again, or anywhere outside, to dismiss.
 
 That row is **off by default**, behind *Find the app each session is running in*
 in General. It reaches the app and never the tab, so several sessions in one
@@ -545,14 +556,26 @@ them would need. Measured across all sessions that too was stable, but a session
 with no plan and no finished calls was then drawn with room for a busy one's
 trail below it — around 150pt of empty black under its own last row. The card
 hangs from the cutout, so height is the axis that can flex: only the bottom edge
-moves. Five self-test checks guard both halves of this, including that the
-sparse card still fits its own contents — with no reserve left over, a block
+moves. Switching the tool trace off is the same arithmetic run deliberately:
+four further checks hold the card to giving back exactly the trail's height,
+drawing nothing where its heading was, and taking both back when the switch
+returns. Five self-test checks guard both halves of the sizing, including that
+the sparse card still fits its own contents — with no reserve left over, a block
 tallied a few points short now clips rather than merely sitting tight.
 
-A permission request always takes over the view, even from an explicit
+A permission request takes over the view when it arrives, even from an explicit
 selection — missing a prompt is worse than losing your place. The selection is
 kept rather than discarded, the takeover is labelled, and the view returns to
 your session once the prompt is answered.
+
+It does not hold you there, though. Clicking any other session steps past the
+prompt and the card goes where you sent it: the prompt keeps its place at the
+top of the switcher, its alert rail and its badge, the card names it in a line
+of its own, and the compact pill carries it as a count. Only a *new* prompt
+takes over again — stepping past one is an answer about that question, not a
+standing instruction to ignore the rest. Held the other way, the switcher was a
+control that looked broken exactly when it was most wanted: the click landed,
+was recorded, and changed nothing on screen.
 
 When no session is active the island is dormant and deliberately unreachable —
 the mouse monitor is torn down entirely, which is what keeps idle CPU at
@@ -580,7 +603,7 @@ failures, two concurrent sessions, subagents, deliberately hostile input
 (malformed lines, unknown future events, embedded secrets), and process
 ancestry surviving envelopes that omit it.
 
-`--selftest` is a 168-check harness for what unit tests cannot exercise: that
+`--selftest` is a 178-check harness for what unit tests cannot exercise: that
 the panel never takes focus, that clicks land where they should, that a settings
 change reaches both disk and the running HUD, and dozens of on-screen layout and
 geometry checks besides. Click-through is verified
@@ -675,6 +698,7 @@ them rather than writing null.
   "inputRequiredSound": { "enabled": true, "name": "Ping" },
   "logging": false,
   "muteWhileTerminalFrontmost": false,
+  "showToolTrace": true,
   "trackSessionApp": false,
   "waitingSound": { "enabled": true, "name": "Pop" }
 }

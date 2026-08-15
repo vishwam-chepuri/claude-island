@@ -284,9 +284,11 @@ enum IslandPreviewFixtures {
 /// real view model — posed with fake sessions on a backdrop that makes it
 /// visible indoors.
 struct IslandPreview: View {
-    /// Read, never written. The only setting the preview reflects is the debug
-    /// tint, and it reflects it rather than offering it: the switch stays in
-    /// Advanced, beside the rest of the development aids.
+    /// Read, never written. Two settings reach the preview's own model this way:
+    /// the debug tint, which it reflects rather than offers — that switch stays
+    /// in Advanced with the rest of the development aids — and the tool trace,
+    /// whose switch is the row directly below this stage and whose whole reason
+    /// for being on this pane is that the preview answers it.
     let store: SettingsStore
 
     @State private var source = IslandPreviewSource()
@@ -347,6 +349,17 @@ struct IslandPreview: View {
         .onChange(of: store.debugTint, initial: true) { _, tinted in
             source.model.debugTint = tinted
         }
+        // The row under this stage. `initial: true` matters more here than for
+        // the tint: with the trace already off, a preview that started out
+        // showing it would put the trail back every time the pane was opened and
+        // only drop it when the switch was touched.
+        //
+        // The card is measured from the model, so this both removes the section
+        // and shortens the shape — and the stage re-fits, because the scale is
+        // computed from `shapeSize` on every pass.
+        .onChange(of: store.showToolTrace, initial: true) { _, showing in
+            source.model.showToolTrace = showing
+        }
     }
 
     /// The stage the island is posed on.
@@ -371,6 +384,29 @@ struct IslandPreview: View {
                     // which the clip below trims.
                     IslandView(model: source.model)
                         .scaleEffect(scale(in: geo.size), anchor: .top)
+                        // Not optional. The card underneath is four different
+                        // layouts crossfading into each other, and every leaf in
+                        // it resolves its own position against this scale. Left
+                        // to do that independently, a browse through the tiers
+                        // followed by a relayout — a resize, a pane switch —
+                        // lands some of those leaves with nothing drawn in them
+                        // at all: the chips keep their plates but lose their
+                        // figures, and the meter's total, the status word and
+                        // the current task go with them, while every bar, glyph
+                        // and ticking figure carries on drawing. It is stable
+                        // once it happens, because those strings never change
+                        // again and so nothing asks for them to be redrawn —
+                        // which is why it reads as damage rather than as a
+                        // flicker. Grouping the geometry resolves the
+                        // whole card against one transform instead, which is
+                        // what makes the scale a property of the card rather
+                        // than of each label inside it.
+                        //
+                        // `geometryGroup` rather than `compositingGroup`: both
+                        // fix it, and only this one leaves the type rendering at
+                        // the scale it is drawn at instead of downsampling a
+                        // flattened 1:1 image of the card.
+                        .geometryGroup()
                         // A picture, not a control. Every gesture the island
                         // carries would land on the preview's own model — a tap
                         // toggles a pin that `forcedMode` already outranks, a

@@ -397,9 +397,41 @@ struct SettingsView: View {
             Section {
                 displayRow
                 hoverDelayRow
+                toolTraceRow
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Whether the expanded card keeps its trail of finished tool calls.
+    ///
+    /// On Appearance under the other two, and last of the three, because it is
+    /// the only one whose effect the preview shows *directly*: press Expanded
+    /// and the recent list is either there or the card is shorter without it.
+    /// The switch is here rather than on General for that reason alone — it is a
+    /// question about what the card contains, answered by the picture above it.
+    ///
+    /// The caption names the section by the heading it carries on the card
+    /// ("recent") and says what stays, because the switch's real risk is being
+    /// read as "stop showing tools" — the NOW row and peek keep naming the call
+    /// in flight, and someone who wanted *that* gone would otherwise flip this,
+    /// see the pill still say `Bash`, and conclude the setting does nothing.
+    private var toolTraceRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Show the tool trace", isOn: $store.showToolTrace)
+            Text(toolTraceCaption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var toolTraceCaption: String {
+        store.showToolTrace
+            ? "The recent list at the foot of the expanded card: every finished tool call, "
+                + "newest first, with what it touched and how long it took."
+            : "The expanded card ends at the call in flight and is shorter by the trail. "
+                + "What is running now is still named there and on hover."
     }
 
     /// The two global gates at the top, then a row per cue.

@@ -214,4 +214,13 @@ public enum Timings {
     public static let sessionEndFade: TimeInterval = 5.0
     public static let sessionExpiry: TimeInterval = 30 * 60
     public static let expirySweepInterval: TimeInterval = 60
+    /// How long a *deliberately ended* session's id is remembered, so a hook
+    /// still in flight cannot mint a blank replacement for it.
+    ///
+    /// Generous because the straggler this defends against is a background
+    /// subagent, and the reducer records one finishing 3m23s after its parent's
+    /// Stop. Only `SessionEnd` arms it — an idle-swept session must stay
+    /// re-adoptable, since the next hook for one of those means the user came
+    /// back rather than that a ghost spoke.
+    public static let endedSessionMemory: TimeInterval = 10 * 60
 }

@@ -37,6 +37,9 @@ final class SettingsStore {
     /// out through `current`, so the pane always shows back whatever it was
     /// handed rather than silently correcting a slider under the pointer.
     var hoverOpenDelayMilliseconds: Int { didSet { persist() } }
+    /// Whether the expanded card draws its trail of finished calls. See
+    /// `IslandSettings.showToolTrace`.
+    var showToolTrace: Bool { didSet { persist() } }
     var doneSound: CueSound { didSet { persist() } }
     var inputRequiredSound: CueSound { didSet { persist() } }
     var waitingSound: CueSound { didSet { persist() } }
@@ -87,6 +90,7 @@ final class SettingsStore {
         trackSessionApp = settings.trackSessionApp
         preferredDisplay = settings.preferredDisplay
         hoverOpenDelayMilliseconds = settings.hoverOpenDelayMilliseconds
+        showToolTrace = settings.showToolTrace
         doneSound = settings.doneSound
         inputRequiredSound = settings.inputRequiredSound
         waitingSound = settings.waitingSound
@@ -107,6 +111,7 @@ final class SettingsStore {
         // out of it. Clamped on the way to both disk and `onChange`, so nothing
         // downstream — least of all a `Timer` interval — has to re-check it.
         s.hoverOpenDelayMilliseconds = HoverDelay.clamped(hoverOpenDelayMilliseconds)
+        s.showToolTrace = showToolTrace
         s.doneSound = doneSound
         s.inputRequiredSound = inputRequiredSound
         s.waitingSound = waitingSound
