@@ -1,10 +1,12 @@
 # ClaudeIsland
 
-<img src="docs/images/icon.png" width="88" align="right" alt="">
+<img src="docs/images/icon.png" width="60" align="right" alt="">
 
 A Dynamic Island-style HUD pinned to the notch that shows, in real time, what
 your running Claude Code sessions are doing.
-.
+
+
+
 
 ![The island resting in the notch: a session glyph, the session name, the elapsed time and the word Working](docs/images/compact.png)
 
