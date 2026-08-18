@@ -7,6 +7,7 @@ your running Claude Code sessions are doing.
 
 ![The island resting in the notch: a session glyph, the session name, the elapsed time and the word Working](docs/images/compact.png)
 
+
 It rests as one line and says which session it is and what that session is doing.
 Every state owns its own word, colour and mark:
 
