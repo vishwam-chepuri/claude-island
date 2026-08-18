@@ -74,7 +74,7 @@ of the event pipeline — whether the socket is listening, how long ago the last
 hook event arrived, how many sessions are tracked — which is the first place to
 look if the island never appears at all.
 
-![The General pane: the event pipeline strip, Status, Show the HUD, and Launch at login](docs/images/settings-general.png)
+![The General pane: the event pipeline strip reading Receiving hook events, then Status, Show the HUD, Launch at login, and Find the app each session is running in](docs/images/settings-general.png)
 
 ### Why it builds from source rather than shipping a binary
 
@@ -101,7 +101,8 @@ Appearance  A live preview of the island, posed at each tier
 Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per
             cue, or None to skip that one
 Hooks       Install / update / remove, Copy Hook JSON
-Advanced    Debug log · Pin the HUD to · Reveal Support Folder
+Advanced    Stay above other notch apps · Debug log · Pin the HUD to
+            · Reveal Support Folder
 ```
 
 **Appearance** poses the real island — the same shape, content views and view
@@ -112,7 +113,7 @@ and anything else previews the pill, the Peek tier is what the hover delay
 stands between the pointer and, and the tool trace is a section of the Expanded
 card that appears and disappears under the switch.
 
-![The Appearance pane showing the expanded card posed over invented sessions, with tier buttons for Compact, Alert, Peek and Expanded, and the Show it on and Open on hover after rows below](docs/images/settings-appearance.png)
+![The Appearance pane showing the expanded card posed over invented sessions, with tier buttons for Compact, Alert, Peek and Expanded, and the Show it on, Open on hover after and Show the tool trace rows below](docs/images/settings-appearance.png)
 
 **Show it on** picks the display. The default follows the menu bar, which on a
 notched Mac is where the cutout is; any other display gets the pill instead —
@@ -470,8 +471,8 @@ animations moved.
 | Compact, animating | 0.2% |
 | Alert, pulsing | 0.33% |
 | Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
-| Tests | 287 passing |
-| Self-test | 177 checks passing |
+| Tests | 318 passing |
+| Self-test | 184 checks passing |
 
 ## Visual language
 
@@ -544,7 +545,26 @@ quiet while a terminal is frontmost* from "any terminal" to "this session's own
 app". Upgrading from a build before this setting existed turns the row off,
 because an absent key reads as off.
 
-![The expanded card: three sessions with coloured rails and their states, then the selected session's detail and a list of recent tool calls](docs/images/expanded.png)
+Under the call in flight sits **one line on what the session is doing**. NOW
+names the call; this says what it is for — `Bash  git rev-list --count
+origin/main..main` is a fact about this second rather than an answer. Two
+producers feed the one field: where Claude Code keeps its own classifier line
+for a background job, that line is lifted verbatim out of `~/.claude/jobs` — the
+same string its agents view shows — and everywhere else, which is every ordinary
+terminal session, it is derived from the transcript in the order Claude Code's
+own cheap tier uses: an end-of-turn `result:` marker, else the last prose over
+eight characters, else a phrase for the call in flight. A session that has not
+spoken yet draws no row at all rather than an empty one, and the card's height
+gives that space back with it.
+
+Expanded only, and one line, tail-truncated. The compact tiers are sized to
+their own text and centred on the camera, so a variable-length prose row there
+would reflow the whole HUD on every tool call; and cutting it short is the
+deliberate exception to the card's rule against abbreviating a label, because a
+sentence's opening clause carries its sense where half a branch name identifies
+nothing.
+
+![The expanded card: three sessions with coloured rails and their states, then the selected session's detail — branch, model, context, lines, plan, the call in flight and a line of prose saying what the session is doing — ending in a list of recent tool calls](docs/images/expanded.png)
 
 The card's **width** is sized across all sessions, not the selected one. Sized
 from the selection it followed that session's name length, and because the shape
@@ -585,7 +605,7 @@ state.
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 277 tests
+swift build && swift run ClaudeIslandTests      # 318 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
@@ -603,7 +623,7 @@ failures, two concurrent sessions, subagents, deliberately hostile input
 (malformed lines, unknown future events, embedded secrets), and process
 ancestry surviving envelopes that omit it.
 
-`--selftest` is a 178-check harness for what unit tests cannot exercise: that
+`--selftest` is a 185-check harness for what unit tests cannot exercise: that
 the panel never takes focus, that clicks land where they should, that a settings
 change reaches both disk and the running HUD, and dozens of on-screen layout and
 geometry checks besides. Click-through is verified
@@ -759,9 +779,13 @@ docs/images/                  the screenshots above
 docs/superpowers/             design documents and plans
 ```
 
-Every island shot above is the shipping views, drawn by the real panel at the
-real notch geometry, posed over invented sessions under a plainly fake home — the
-way the Appearance pane poses its own preview, and for the same reason: a
-screenshot of a live session would put someone else's directory names in front of
-you. The backdrop stands in for the desktop; the cutout is painted black because
-in life those pixels sit behind the bezel.
+Every island shot above is the shipping views, drawn at the real notch geometry,
+posed over invented sessions under a plainly fake home — the way the Appearance
+pane poses its own preview, and for the same reason: a screenshot of a live
+session would put someone else's directory names in front of you. The backdrop
+stands in for the desktop; the cutout is painted black because in life those
+pixels sit behind the bezel.
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE).
