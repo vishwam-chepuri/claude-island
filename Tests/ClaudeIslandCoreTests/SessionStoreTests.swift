@@ -1,22 +1,55 @@
 import ClaudeIslandCore
 import Foundation
 
+/// Mutable stand-in for Claude Code's live-session registry, so a case can have a
+/// session listed on one sweep and gone by the next. A class for the same reason
+/// `ClockBox` is one: the store holds a `@Sendable` closure over it.
+final class LiveBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: LiveSessions
+
+    init(_ initial: LiveSessions = .unavailable) { storage = initial }
+
+    var value: LiveSessions {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage
+        }
+        set {
+            lock.lock()
+            storage = newValue
+            lock.unlock()
+        }
+    }
+
+    /// Claude Code answers, and lists exactly these sessions. No arguments means
+    /// a readable registry with nothing in it — which is an answer, and not the
+    /// same as the `.unavailable` default.
+    func running(_ ids: String...) {
+        value = LiveSessions(ids: Set(ids), isReadable: true)
+    }
+}
+
 /// Owners are reported alive unless a test says otherwise, so no case here
 /// depends on which pids happen to exist on the machine running it.
 ///
 /// The job store is stubbed empty for the same reason: the shipped default
 /// reads `~/.claude/jobs`, and letting it through would make these cases depend
-/// on which background sessions the machine running them happens to have.
+/// on which background sessions the machine running them happens to have. The
+/// live registry defaults to `.unavailable` on the same principle — every case
+/// that means to be judged by it says so.
 private func makeStore(
     _ clock: ClockBox,
     isProcessAlive: @escaping @Sendable (Int32) -> Bool = { _ in true },
-    jobState: @escaping @Sendable (String) -> JobState? = { _ in nil }
+    jobState: @escaping @Sendable (String) -> JobState? = { _ in nil },
+    liveSessions: LiveBox = LiveBox()
 ) -> (SessionStore, VirtualScheduler) {
     let scheduler = VirtualScheduler()
     return (
         SessionStore(
             scheduler: scheduler, now: { clock.value }, isProcessAlive: isProcessAlive,
-            jobState: jobState),
+            jobState: jobState, liveSessions: { liveSessions.value }),
         scheduler
     )
 }
@@ -395,6 +428,170 @@ func registerSessionStoreTests() {
                     sessionID: "a", event: .userPromptSubmit, receivedAt: clock.value))
             await expect(
                 await store.session("a") != nil, "a returning user's session was refused")
+        }
+
+        // The case the registry rule exists for. A session killed while its
+        // permission prompt was on screen announces nothing: no SessionEnd, and
+        // no ancestry to check unless the app tracking is switched on. Before
+        // this, the HUD offered to answer a dead process for thirty minutes.
+        test("A session Claude Code has stopped listing is swept") {
+            let clock = ClockBox(now: base)
+            let live = LiveBox()
+            live.running("a")
+            let (store, _) = makeStore(clock, liveSessions: live)
+
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .permissionRequest, toolName: "Bash", receivedAt: base))
+
+            // One sweep while it is still listed: being listed once is what makes
+            // not being listed evidence.
+            clock.value = base.addingTimeInterval(Timings.liveRegistryGrace + 1)
+            await store.expireStale()
+            await expect(await store.session("a") != nil, "a running session was swept")
+
+            live.running()
+            clock.value = clock.value.addingTimeInterval(Timings.expirySweepInterval)
+            await store.expireStale()
+            await expect(
+                await store.session("a") == nil, "a session that had gone survived the sweep")
+        }
+
+        // The guard against assuming anything about which sessions Claude Code
+        // lists. An older build that keeps no registry, or a launch path it does
+        // not record, must keep exactly the behaviour it had.
+        test("A session the registry has never listed keeps its thirty minutes") {
+            let clock = ClockBox(now: base)
+            let live = LiveBox()
+            live.running("someone-else")
+            let (store, _) = makeStore(clock, liveSessions: live)
+
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .preToolUse, toolName: "Read", receivedAt: base))
+
+            clock.value = base.addingTimeInterval(Timings.liveRegistryGrace + 1)
+            await store.expireStale()
+            await expect(
+                await store.session("a") != nil,
+                "a session this registry never lists was swept on its evidence")
+        }
+
+        // The registry is written a moment after a session starts, so absence
+        // straight after a first event is a race rather than a death.
+        test("A refresh leaves a session alone inside the registry's grace") {
+            let clock = ClockBox(now: base)
+            let live = LiveBox()
+            live.running()
+            let (store, _) = makeStore(clock, liveSessions: live)
+
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .sessionStart, receivedAt: base))
+
+            clock.value = base.addingTimeInterval(Timings.liveRegistryGrace - 1)
+            let result = await store.refresh()
+            await expectEqual(result.dropped, 0)
+            await expect(
+                await store.session("a") != nil, "a session that had just started was dropped")
+        }
+
+        test("A refresh drops what is gone and keeps what is running") {
+            let clock = ClockBox(now: base)
+            let live = LiveBox()
+            live.running("b")
+            let (store, _) = makeStore(clock, liveSessions: live)
+
+            // `a` is not listed and never has been — the sweep would leave it,
+            // and the user pressing refresh is what settles that trade.
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .permissionRequest, toolName: "Bash", receivedAt: base))
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "b", event: .preToolUse, toolName: "Read", receivedAt: base))
+
+            clock.value = base.addingTimeInterval(Timings.liveRegistryGrace + 1)
+            let result = await store.refresh()
+
+            await expect(await store.session("a") == nil, "the dead session survived a refresh")
+            await expect(await store.session("b") != nil, "a running session was refreshed away")
+            await expectEqual(result.dropped, 1)
+            await expectEqual(result.kept, 1)
+            await expectEqual(result.summary, "Dropped 1 stale session — 1 still running.")
+        }
+
+        // A refresh that could not ask must not read like one that asked and
+        // found everything healthy.
+        test("A refresh says when Claude Code's list could not be read") {
+            let clock = ClockBox(now: base)
+            let (store, _) = makeStore(clock, liveSessions: LiveBox(.unavailable))
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .permissionRequest, toolName: "Bash", receivedAt: base))
+
+            clock.value = base.addingTimeInterval(Timings.liveRegistryGrace + 1)
+            let result = await store.refresh()
+
+            await expect(
+                await store.session("a") != nil,
+                "a session was dropped on the strength of a registry that answered nothing")
+            await expectEqual(result.dropped, 0)
+            await expectEqual(result.consultedRegistry, false)
+            await expect(
+                result.summary.contains("could not be read"),
+                "the summary claimed a clean bill of health: \(result.summary)")
+        }
+
+        // Removal after SessionEnd is owned by the scheduled fade. Taking the
+        // session early would skip it, and the fade is what makes a finished
+        // session look finished rather than look like a dropped connection.
+        test("A refresh leaves an ended session to its fade") {
+            let clock = ClockBox(now: base)
+            let live = LiveBox()
+            live.running()
+            let (store, scheduler) = makeStore(clock, liveSessions: live)
+            await store.ingest(HookEnvelope(sessionID: "a", event: .sessionEnd, receivedAt: base))
+
+            clock.value = base.addingTimeInterval(Timings.liveRegistryGrace + 1)
+            let result = await store.refresh()
+            await expectEqual(result.dropped, 0)
+            await expect(await store.session("a") != nil, "the refresh stole the fade")
+
+            await scheduler.advance(to: clock.value)
+            await expect(await store.session("a") == nil, "the fade did not finish the job")
+        }
+
+        test("A refresh with nothing tracked says so") {
+            let clock = ClockBox(now: base)
+            let live = LiveBox()
+            live.running()
+            let (store, _) = makeStore(clock, liveSessions: live)
+            let result = await store.refresh()
+            await expectEqual(result.summary, "No sessions are being tracked.")
+        }
+
+        // Dropped for liveness, not ended: the id must stay re-adoptable, exactly
+        // as it does after an idle sweep. Otherwise a `--resume` of the same id
+        // inside the ten-minute tombstone window comes back as nothing at all.
+        test("A refreshed-away session is re-adopted when it speaks again") {
+            let clock = ClockBox(now: base)
+            let live = LiveBox()
+            live.running()
+            let (store, _) = makeStore(clock, liveSessions: live)
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .preToolUse, toolName: "Read", receivedAt: base))
+
+            clock.value = base.addingTimeInterval(Timings.liveRegistryGrace + 1)
+            await store.refresh()
+            await expect(await store.session("a") == nil, "refresh kept a session that had gone")
+
+            await store.ingest(
+                HookEnvelope(
+                    sessionID: "a", event: .sessionStart, receivedAt: clock.value))
+            await expect(
+                await store.session("a") != nil, "a resumed session was refused as a ghost")
         }
     }
 }

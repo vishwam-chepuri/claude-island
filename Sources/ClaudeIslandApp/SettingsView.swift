@@ -13,6 +13,10 @@ struct SettingsActions {
     var quit: () -> Void
     var revealSupportFolder: () -> Void
     var notifyBinaryPath: () -> String
+    /// Re-checks every tracked session against Claude Code's own list of running
+    /// sessions and drops the ones that have gone. Async because the session
+    /// store is an actor; the answer is what the button reports.
+    var refreshSessions: () async -> SessionRefresh
     /// Rings a cue's chosen sound now. Passed in rather than played here so the
     /// view keeps its promise of owning no side effects, and so mounting the
     /// pane in a test can hand it a no-op and make no noise.
@@ -32,6 +36,12 @@ struct SettingsView: View {
     @State private var hookMessage: String?
     @State private var hookMessageIsError = false
     @State private var writeFailure: String?
+
+    /// What the last refresh did, kept until the next one replaces it. Phrased in
+    /// the past tense (see `SessionRefresh.summary`) precisely because it outlives
+    /// the click: it is a record of what happened, not a claim about now.
+    @State private var refreshMessage: String?
+    @State private var isRefreshing = false
 
     /// Optional only because that is the shape `List` selection takes — "no
     /// pane" is not a state worth rendering. A click on empty sidebar space
@@ -316,7 +326,7 @@ struct SettingsView: View {
     /// are tracked. A dead socket breaks it at the first link and says so in
     /// red; a quiet afternoon breaks it at the second and must not.
     private var healthStrip: some View {
-        Section("Event pipeline") {
+        Section {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: healthSymbol)
                     .foregroundStyle(healthTint)
@@ -348,7 +358,28 @@ struct SettingsView: View {
             // is the end of the pipeline's chain ("did anything become a
             // session"), where Status is what the island is currently drawing.
             // They agree in the healthy case and are read for different reasons.
-            LabeledContent("Sessions tracked", value: "\(pipeline.sessionCount)")
+            //
+            // The button belongs on this row rather than under the section,
+            // because this count is the thing it changes — and the count is also
+            // what makes it worth pressing: a "1" against an empty desk is the
+            // whole complaint.
+            LabeledContent("Sessions tracked") {
+                VStack(alignment: .trailing, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Text("\(pipeline.sessionCount)")
+                            .foregroundStyle(.secondary)
+                        Button("Refresh sessions") { beginRefresh() }
+                            .disabled(isRefreshing)
+                    }
+                    if let refreshMessage {
+                        Text(refreshMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
             LabeledContent("Status line") {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(pipeline.statuslineForwarding ? "Forwarding" : "Not installed")
@@ -364,6 +395,40 @@ struct SettingsView: View {
                     }
                 }
             }
+        } header: {
+            Text("Event pipeline")
+        } footer: {
+            // Says what the button drops and why waiting is not always enough.
+            // The one case it exists for is invisible from here — a session that
+            // was killed while its permission prompt was on screen looks exactly
+            // like one still waiting for an answer — so the row cannot explain
+            // itself and this has to.
+            Text(
+                "Refresh re-checks each tracked session against Claude Code's own list of "
+                    + "running sessions and drops the ones that have gone. The island already "
+                    + "does this by itself every minute; the button is for not waiting, and "
+                    + "for the session it cannot judge on its own. Nothing running is lost — a "
+                    + "live session dropped by mistake is back on its next hook event."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Runs a refresh and keeps its answer.
+    ///
+    /// The button is disabled while one is in flight rather than left to be
+    /// pressed again: the work is a directory read and an actor hop, so a second
+    /// press would land on an answer that had already arrived and replace it with
+    /// an identical one — which reads as the first click not having worked.
+    private func beginRefresh() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        Task {
+            let result = await actions.refreshSessions()
+            refreshMessage = result.summary
+            isRefreshing = false
         }
     }
 

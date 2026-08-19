@@ -813,6 +813,10 @@ enum SelfTest {
             actions: SettingsActions(
                 quit: {}, revealSupportFolder: {},
                 notifyBinaryPath: { "/tmp/claude-island-notify" },
+                // Answers without touching a store, for the same reason as the
+                // sound below: nothing here presses the button, and mounting a
+                // pane must not be able to drop a session from the real HUD.
+                refreshSessions: { .nothingToDo },
                 // A no-op, not the real player: mounting a pane must not be
                 // able to make a noise, and nothing here presses the button.
                 previewSound: { _ in }))

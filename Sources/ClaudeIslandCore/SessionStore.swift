@@ -39,6 +39,56 @@ public struct HUDSnapshot: Sendable, Equatable {
     public var isDormant: Bool { primary == nil }
 }
 
+/// What a user-requested refresh did, so whatever asked for it can say plainly
+/// what happened.
+///
+/// A count on its own is not enough. "Dropped nothing" has two very different
+/// causes — every session really is running, or nobody could be asked — and a
+/// refresh that answers the second while looking like the first is exactly the
+/// kind of quiet failure this app's health strip exists to avoid.
+public struct SessionRefresh: Sendable, Equatable {
+    public var dropped: Int
+    public var kept: Int
+    /// Whether Claude Code's live-session registry could be read. False leaves
+    /// the refresh with only the checks the sweep already had — idle expiry and a
+    /// dead owner pid — and says so.
+    public var consultedRegistry: Bool
+
+    public init(dropped: Int, kept: Int, consultedRegistry: Bool) {
+        self.dropped = dropped
+        self.kept = kept
+        self.consultedRegistry = consultedRegistry
+    }
+
+    /// The answer for a refresh that never reached a store — the app is on its
+    /// way out from under the window that asked. Says "no sessions" rather than
+    /// inventing a registry it did not read.
+    public static let nothingToDo = SessionRefresh(
+        dropped: 0, kept: 0, consultedRegistry: false)
+
+    /// One line for the settings window. Lives here rather than in the view so
+    /// the headless suite covers the wording, like `PipelineHealth`'s labels.
+    public var summary: String {
+        var line: String
+        switch (dropped, kept) {
+        case (0, 0): line = "No sessions are being tracked."
+        case (0, _): line = "Nothing stale — \(plural(kept, "session")) still running."
+        case (_, 0): line = "Dropped \(plural(dropped, "stale session"))."
+        default: line = "Dropped \(plural(dropped, "stale session")) — \(kept) still running."
+        }
+        if !consultedRegistry {
+            line +=
+                " Claude Code's list of running sessions could not be read, so only idle "
+                + "and dead-process sessions were checked."
+        }
+        return line
+    }
+
+    private func plural(_ n: Int, _ noun: String) -> String {
+        "\(n) \(noun)\(n == 1 ? "" : "s")"
+    }
+}
+
 /// Owns every tracked session. The single writer for session state.
 public actor SessionStore {
     private var sessions: [String: Session] = [:]
@@ -55,6 +105,11 @@ public actor SessionStore {
     /// The line Claude Code's own classifier wrote for a background session.
     /// Injected so the tests need no job store on disk.
     private let jobState: @Sendable (String) -> JobState?
+    /// Which sessions Claude Code says are running. Injected so the sweep can be
+    /// driven from a test without a registry directory on disk — and so a
+    /// replayed trace can be handed `.unavailable` rather than being judged
+    /// against whatever is running on the machine replaying it.
+    private let liveSessions: @Sendable () -> LiveSessions
 
     private var continuations: [UUID: AsyncStream<HUDSnapshot>.Continuation] = [:]
     private var sweepTask: Task<Void, Never>?
@@ -68,6 +123,16 @@ public actor SessionStore {
     /// without this a late nudge reappears as a blank row for another 30
     /// minutes. Only `SessionStart` may clear an entry — see `ingest`.
     private var tombstones: [String: Date] = [:]
+    /// Sessions the live registry has been seen to name while we were tracking
+    /// them.
+    ///
+    /// This is what lets the unattended sweep read absence as death without
+    /// having to assume anything about Claude Code's build: a session that was
+    /// once listed and now is not has gone, whereas a session that has never been
+    /// listed proves only that this registry does not list sessions of its kind —
+    /// an older Claude Code, or some future launch path — and is left to the idle
+    /// expiry it had before. See `AbsenceRule`.
+    private var registryHasNamed: Set<String> = []
     /// Account-wide, so it lives beside the session table rather than in it —
     /// and outlives any one session, which is the point of a shared budget.
     private var rateLimit: RateLimitWindow?
@@ -86,7 +151,8 @@ public actor SessionStore {
         },
         jobState: @escaping @Sendable (String) -> JobState? = {
             JobStateReader.shared.state(forSessionID: $0)
-        }
+        },
+        liveSessions: @escaping @Sendable () -> LiveSessions = { LiveSessionRegistry.read() }
     ) {
         self.scheduler = scheduler
         self.log = log
@@ -94,6 +160,7 @@ public actor SessionStore {
         self.longContextResolver = longContextResolver
         self.isProcessAlive = isProcessAlive
         self.jobState = jobState
+        self.liveSessions = liveSessions
     }
 
     // MARK: - Observation
@@ -363,6 +430,7 @@ public actor SessionStore {
         sessions[id] = nil
         revisions[id] = nil
         resolvedTiers[id] = nil
+        registryHasNamed.remove(id)
     }
 
     /// Whether this id belonged to a session that ended recently enough for a
@@ -404,24 +472,105 @@ public actor SessionStore {
         tombstones = tombstones.filter {
             cutoff.timeIntervalSince($0.value) < Timings.endedSessionMemory
         }
+        prune(at: cutoff, live: liveSessions(), absence: .onlyIfNamedBefore)
+    }
+
+    /// Re-checks every tracked session and drops the ones that have gone, because
+    /// the user asked for it now rather than at the sweep's convenience.
+    ///
+    /// The escape hatch for the case the unattended rules are worst at: a session
+    /// killed while a permission prompt was on screen. Nothing announces that —
+    /// `SessionEnd` never fires, the pid check needs ancestry a default install
+    /// does not stamp, and the prompt is not idle enough to expire — so the HUD can
+    /// sit on `allow Bash?` for half an hour, offering to answer a process that no
+    /// longer exists.
+    ///
+    /// Decisive where the sweep is careful, in one way: absence from the registry
+    /// counts even for a session it has never named (`.always`). The cost of
+    /// getting that wrong is bounded and self-healing — a live session dropped
+    /// here is back on its next hook event, because `forget` leaves no tombstone —
+    /// and the user pressing a button marked "refresh" has said which way they
+    /// want that trade made.
+    @discardableResult
+    public func refresh() -> SessionRefresh {
+        let live = liveSessions()
+        let dropped = prune(at: now(), live: live, absence: .always)
+        let result = SessionRefresh(
+            dropped: dropped.count, kept: sessions.count, consultedRegistry: live.isReadable)
+        log.debug("refresh: \(result.summary)")
+        return result
+    }
+
+    /// How much a session's absence from the live registry is allowed to mean.
+    private enum AbsenceRule {
+        /// Absence counts only against a session the registry has previously
+        /// named. Nothing has to be assumed about which sessions Claude Code
+        /// lists: being listed once is what makes not being listed evidence.
+        case onlyIfNamedBefore
+        /// Absence counts against any session. For the manual refresh only — see
+        /// `refresh()`.
+        case always
+    }
+
+    /// Drops every session that is no longer running, and returns which went.
+    ///
+    /// The one place sessions are removed for staleness, shared by the sweep and
+    /// the refresh so the two cannot drift on what "gone" means.
+    @discardableResult
+    private func prune(at cutoff: Date, live: LiveSessions, absence: AbsenceRule) -> [String] {
+        // Recorded before anything is dropped: presence is what earns a session
+        // the right to be judged by its own absence later. Bounded to sessions we
+        // track, because this is not meant to become a second copy of the
+        // registry — it lists sessions with no hooks installed too.
+        for id in live.ids where sessions[id] != nil { registryHasNamed.insert(id) }
 
         let doomed = sessions.values.compactMap { s in
-            staleReason(s, at: cutoff).map { (s.id, $0) }
+            staleReason(s, at: cutoff, live: live, absence: absence).map { (s.id, $0) }
         }
-        guard !doomed.isEmpty else { return }
+        guard !doomed.isEmpty else { return [] }
         for (id, reason) in doomed {
             log.debug("dropping session \(id.prefix(8)): \(reason)")
             forget(id)
         }
         stopSweepIfIdle()
         publish()
+        return doomed.map(\.0)
     }
 
-    /// Why the sweep should drop this session, or nil to keep it.
-    private func staleReason(_ s: Session, at now: Date) -> String? {
+    /// Why this session should be dropped, or nil to keep it.
+    private func staleReason(
+        _ s: Session, at now: Date, live: LiveSessions, absence: AbsenceRule
+    ) -> String? {
         if s.idleFor(now: now) > Timings.sessionExpiry { return "idle" }
         if ownerHasExited(s) { return "owner exited" }
+        if hasStoppedRunning(s, at: now, live: live, absence: absence) { return "not running" }
         return nil
+    }
+
+    /// Whether Claude Code's own live-session registry says this session is over.
+    ///
+    /// Four guards, each closing a way this could drop a session that is fine:
+    ///
+    /// * a registry that could not be read has said nothing, and silence is not
+    ///   evidence — see `LiveSessions.isReadable`;
+    /// * a session inside `liveRegistryGrace` of its last event is left alone,
+    ///   because the registry lags a session's real start and end by about a
+    ///   second at each edge;
+    /// * a session that has already ended is owned by its own scheduled removal,
+    ///   and taking it early would skip the fade;
+    /// * under `.onlyIfNamedBefore`, a session the registry has never listed is
+    ///   never judged by it, so an install whose sessions it does not list keeps
+    ///   exactly the behaviour it had.
+    private func hasStoppedRunning(
+        _ s: Session, at now: Date, live: LiveSessions, absence: AbsenceRule
+    ) -> Bool {
+        guard live.isReadable, s.endedAt == nil, !live.isRunning(s.id),
+            s.idleFor(now: now) > Timings.liveRegistryGrace
+        else { return false }
+        switch absence {
+        case .always: return true
+        case .onlyIfNamedBefore: return registryHasNamed.contains(s.id)
+        }
     }
 
     /// Whether the Claude process that owned this session is gone.

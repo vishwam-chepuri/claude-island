@@ -223,4 +223,15 @@ public enum Timings {
     /// re-adoptable, since the next hook for one of those means the user came
     /// back rather than that a ghost spoke.
     public static let endedSessionMemory: TimeInterval = 10 * 60
+    /// How quiet a session must be before its absence from Claude Code's
+    /// live-session registry is read as death.
+    ///
+    /// The registry lags the truth by about a second at each end of a session —
+    /// the file is written just after the start and deleted just before the exit
+    /// — so acting on absence immediately would sweep a session that had only
+    /// just announced itself. Measured from the last event rather than from the
+    /// start, which also means a session that is genuinely working can never be
+    /// swept by this rule: its own events keep it fresh. Well under the sweep's
+    /// own interval, so it costs a doomed session no extra round.
+    public static let liveRegistryGrace: TimeInterval = 15
 }

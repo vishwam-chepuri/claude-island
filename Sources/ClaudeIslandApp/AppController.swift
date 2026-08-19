@@ -477,6 +477,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             quit: { [weak self] in self?.quit() },
             revealSupportFolder: { [weak self] in self?.revealSupportFolder() },
             notifyBinaryPath: { Self.notifyBinaryPath() },
+            refreshSessions: { [weak self] in await self?.refreshSessions() ?? .nothingToDo },
             previewSound: { [weak self] cue in self?.previewSound(cue) })
         settingsWindow = SettingsWindowController { [settings, model, health] in
             AnyView(SettingsView(store: settings, health: health, model: model, actions: actions))
@@ -596,6 +597,16 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Actions
+
+    /// Drops every tracked session that is no longer running. See
+    /// `SessionStore.refresh()`.
+    ///
+    /// Nothing else here has to be told: the store publishes a snapshot when it
+    /// removes anything, so the island, the health strip's count and the hover
+    /// monitor all follow through `apply` exactly as they do for the sweep.
+    private func refreshSessions() async -> SessionRefresh {
+        await store.refresh()
+    }
 
     private func revealSupportFolder() {
         IslandPaths.ensureRoot()

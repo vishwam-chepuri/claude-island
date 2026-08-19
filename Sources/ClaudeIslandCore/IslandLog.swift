@@ -32,6 +32,13 @@ public enum IslandPaths {
     public static var claudeSettings: URL {
         claudeHome.appendingPathComponent("settings.json")
     }
+    /// Claude Code's live-session registry: one file per running session, named
+    /// for its pid. See `LiveSessionRegistry` for what is read from it, and for
+    /// why absence from it is the only reliable "this session has gone" signal
+    /// available to a default install.
+    public static var claudeSessions: URL {
+        claudeHome.appendingPathComponent("sessions", isDirectory: true)
+    }
 
     @discardableResult
     public static func ensureRoot() -> Bool {

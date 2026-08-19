@@ -97,8 +97,8 @@ nothing on screen would say the app had started.
 The window is a sidebar with one pane per concern:
 
 ```
-General     Event pipeline · Status · Show the HUD · Launch at login
-            · Find the app each session is running in
+General     Event pipeline (· Refresh sessions) · Status · Show the HUD
+            · Launch at login · Find the app each session is running in
 Appearance  A live preview of the island, posed at each tier
             · Show it on … · Open on hover after … · Show the tool trace
 Sounds      Play sounds · Stay quiet while a terminal is frontmost · a sound per
@@ -340,6 +340,24 @@ rather than leaving you to notice a missing button.
 **A permission clears on any subsequent event.** Approve leads to `PostToolUse`,
 deny leads to `UserPromptSubmit`; rather than enumerate every resolution path,
 anything else happening counts as resolution.
+
+**A session that dies quietly is noticed by Claude Code's own session list.**
+`SessionEnd` never fires for a closed tab, a `kill`, or a machine that slept, so
+something else has to notice. The pid check that covers it needs the process
+ancestry the hook client only stamps while *Find the app each session is running
+in* is on — off by default — and without that the only backstop was the
+30-minute idle expiry: half an hour of the HUD offering to answer `allow Bash?`
+for a process that no longer exists.
+
+Claude Code keeps `~/.claude/sessions/<pid>.json` per running session, written
+about a second after the session starts and deleted during its shutdown. The
+sweep reads it once a minute and drops any session it has seen listed there and
+now does not — being listed once is what makes not being listed evidence, so an
+install whose sessions it does not list keeps the behaviour it had. **Refresh
+sessions**, on General, does the same check on demand and is one step more
+decisive: it also drops a session the list has never named. Nothing running is
+lost either way — removal leaves no tombstone, so a live session dropped by
+mistake is back on its next hook event.
 
 **Alerts outrank recency.** A session awaiting permission stays on screen even
 if another worktree is more recently active — otherwise the prompt vanishes

@@ -46,7 +46,12 @@ public struct ReplayDriver: Sendable {
         let (lines, _) = LineSplitter.completeLines(from: data)
         let scheduler = VirtualScheduler()
         let clock = ClockBox(now: baseDate)
-        let store = SessionStore(scheduler: scheduler, log: .disabled, now: { clock.value })
+        // No live registry: a trace's sessions ended long before it was replayed,
+        // and judging them against whatever is running on this machine would make
+        // the golden output depend on it.
+        let store = SessionStore(
+            scheduler: scheduler, log: .disabled, now: { clock.value },
+            liveSessions: { .unavailable })
         let collector = TraceCollector(base: baseDate)
 
         var virtualNow = baseDate
