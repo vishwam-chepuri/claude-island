@@ -491,11 +491,29 @@ animations moved.
 | | |
 |---|---|
 | Idle CPU, no sessions | **0.000%** over 40 s |
-| Compact, animating | 0.2% |
-| Alert, pulsing | 0.33% |
-| Hook client, no listener | 2.49 ms median / 4.67 ms p95 |
-| Tests | 287 passing |
+| Compact, animating (one session) | 0.2% |
+| Alert, pulsing (one session) | 0.33% |
+| Four sessions tracked, two working, forwarder installed | **~0.8%** |
+| Hook client, no listener | **2.00 ms** median / 2.40 ms p95 |
+| …with `--no-ancestry`, which is the installed default | 1.88 ms median / 2.16 ms p95 |
+| Tests | **318** passing |
 | Self-test | 177 checks passing |
+| Cold release build | **39.8 s** on Apple Silicon |
+
+The two CPU regimes are both real and measure different things. The 0.2% and
+0.33% rows are a single session in a controlled state. The ~0.8% row is the
+steady state of an ordinary working day — several sessions tracked at once,
+some of them firing hook events continuously, and the status-line forwarder
+streaming a payload several times a second. Quote the second one when someone
+asks what it costs to run.
+
+Re-measured 2026-08-22 (marked in bold): the hook client, the multi-session
+figure, the test count and the build. The client row moved *down* despite
+having gained the process-ancestry walk since it was last timed. Method for
+the client: 200 invocations of the release binary per variant with `--socket`
+pointed at an absent path, timed around `fork`/`exec` so the figure is the
+cost Claude Code actually pays. The idle and single-session rows are older and
+were not reproduced.
 
 ## Visual language
 
@@ -609,7 +627,7 @@ state.
 ## Verification
 
 ```bash
-swift build && swift run ClaudeIslandTests      # 277 tests
+swift build && swift run ClaudeIslandTests      # 318 tests
 ./dist/.../ClaudeIsland --replay Fixtures/basic-session.jsonl
 ./dist/.../ClaudeIsland --selftest              # focus + click-through
 ./dist/.../ClaudeIsland --probe-screens         # notch geometry per display
