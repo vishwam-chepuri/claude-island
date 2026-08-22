@@ -45,6 +45,27 @@ Piped into `bash`, options have to go after `-s --`, since plain
 `| bash --dry-run` hands `--dry-run` to `bash` itself rather than to the script
 and fails outright.
 
+### Or: Homebrew
+
+```bash
+brew install vishwam-chepuri/tap/claude-island
+claude-island-install
+```
+
+Two commands rather than one, because Homebrew sandboxes builds away from
+`/Applications`: `brew install` compiles the app from source — same reasoning
+as the installer, locally built code is never quarantined — and
+`claude-island-install` finishes what the sandbox can't, swapping the app into
+`/Applications` and making the same hooks offer as step 2 below. Re-run it
+after every `brew upgrade claude-island`; forgetting that leaves the previous
+version installed and working, just stale.
+
+To remove everything:
+
+```bash
+claude-island-install --uninstall && brew uninstall claude-island
+```
+
 ### 2. Say yes when it offers to wire up the hooks
 
 That offer covers two files, not one. It merges ClaudeIsland's entries into
