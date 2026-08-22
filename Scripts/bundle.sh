@@ -16,11 +16,18 @@ APP="$ROOT/dist/ClaudeIsland.app"
 MACOS="$APP/Contents/MacOS"
 RESOURCES="$APP/Contents/Resources"
 
-echo "==> Building ($CONFIG)"
-swift build -c "$CONFIG" --product ClaudeIslandApp
-swift build -c "$CONFIG" --product claude-island-notify
+# Extra `swift build` flags for environments that need them. Homebrew is the
+# motivating case: SwiftPM's own sandbox-exec cannot nest inside Homebrew's
+# build sandbox, so its formula passes --disable-sandbox through here.
+# Deliberately word-split; these flags never contain spaces. The ${arr[@]+...}
+# expansion is for macOS's bash 3.2, where an empty array trips `set -u`.
+read -r -a SWIFT_FLAGS <<< "${CLAUDE_ISLAND_SWIFT_FLAGS:-}"
 
-BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
+echo "==> Building ($CONFIG)"
+swift build -c "$CONFIG" ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"} --product ClaudeIslandApp
+swift build -c "$CONFIG" ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"} --product claude-island-notify
+
+BIN_DIR="$(swift build -c "$CONFIG" ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"} --show-bin-path)"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
@@ -40,10 +47,12 @@ fi
 
 # The tag is the version. Outside a tagged checkout — a fresh shallow clone
 # before any tag exists, or a branch ahead of one — say so rather than claim a
-# release number that was never cut.
-VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0-dev")"
+# release number that was never cut. CLAUDE_ISLAND_VERSION overrides for
+# builds outside a git checkout entirely: a release tarball has no .git, so
+# `git describe` would claim 0.0.0-dev for code that is exactly a release.
+VERSION="${CLAUDE_ISLAND_VERSION:-$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0-dev")}"
 VERSION="${VERSION#v}"
-BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
+BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo "${CLAUDE_ISLAND_VERSION:-dev}")"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
